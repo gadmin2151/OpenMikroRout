@@ -184,6 +184,17 @@ def test_real_iproute_json_prefix_fields_and_linkdown_flags_are_normalized() -> 
     entries = observed_entries(rules, routes)
     assert entries[0]["source"] == "192.168.10.0/24" and entries[0]["suppress"] == 0
     assert entries[1]["destination"] == "0.0.0.0/0" and entries[1]["table"] == 20000
+    routes.append(
+        {
+            "type": "7",
+            "dst": "default",
+            "table": "20000",
+            "protocol": "196",
+            "metric": 32760,
+            "flags": [],
+        }
+    )
+    assert observed_entries([], routes)[1]["type"] == "unreachable"
 
 
 class RoutingKernel:

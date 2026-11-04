@@ -179,11 +179,14 @@ def observed_entries(rules: list[Entry], routes: list[Entry]) -> list[Entry]:
         if not FIRST_TABLE <= table <= LAST_TABLE:
             continue
         allowed = {"type", "dst", "table", "protocol", "scope", "dev", "metric", "flags"}
+        route_type = {"1": "unicast", "7": "unreachable"}.get(
+            str(row.get("type", "unicast")), row.get("type", "unicast")
+        )
         if (
             set(row) - allowed
             or set(row.get("flags", [])) - {"linkdown"}
             or str(row.get("protocol", "")) != str(PROTOCOL)
-            or row.get("type", "unicast") not in ("unicast", "unreachable")
+            or route_type not in ("unicast", "unreachable")
         ):
             raise WireGuardError("WireGuard routing tables contain foreign routes")
         result.append(
@@ -195,7 +198,7 @@ def observed_entries(rules: list[Entry], routes: list[Entry]) -> list[Entry]:
                 else row["dst"],
                 "device": row.get("dev", ""),
                 "metric": int(row.get("metric", 0)),
-                "type": row.get("type", "unicast"),
+                "type": route_type,
             }
         )
     return result
