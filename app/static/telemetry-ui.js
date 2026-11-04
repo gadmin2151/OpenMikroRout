@@ -1,5 +1,7 @@
 /** Read-only network telemetry presentation. Rates are bits/s, byte counters are bytes. */
-const HISTORY_SECONDS = 300;
+const HISTORY_SECONDS = 3600;
+const OVERVIEW_SECONDS = 60;
+const PERIODS = [60, 300, 900, 3600];
 const HISTORY_LIMIT = HISTORY_SECONDS + 1;
 const INTERFACE_LIMIT = 128;
 const MAX_GRAPH_GAP_SECONDS = 15;
@@ -65,22 +67,47 @@ export function appendTelemetryHistory(history, snapshot) {
       .map((item) => ({ name: item.name, ...rates(item) })),
   };
   const restarted =
-    last &&
-    (timestamp < last.timestamp ||
-      current.demo !== last.demo ||
-      (snapshot.sample_seconds === null && previous.length > 1));
+    last && (timestamp < last.timestamp || current.demo !== last.demo);
   const window = restarted
     ? []
     : previous.filter(
         (point) => point.timestamp >= timestamp - HISTORY_SECONDS,
       );
-  // Keep the newest live point within each second, preserving five minutes at 5 Hz.
+  // Keep the newest live point within each second, preserving one hour at 5 Hz.
   if (
     window.length &&
     Math.floor(window.at(-1).timestamp) === Math.floor(timestamp)
   )
     return [...window.slice(0, -1), current];
   return [...window, current].slice(-HISTORY_LIMIT);
+}
+
+/** Stored completed seconds are authoritative; callers append the current live sample last. */
+export function mergeStoredTelemetryHistory(
+  existing,
+  incoming,
+  { replace = false } = {},
+) {
+  const buckets = new Map();
+  const base = replace ? [] : values(existing);
+  const mode =
+    (
+      base.find((point) => finite(point?.timestamp) !== null) ||
+      values(incoming).find((point) => finite(point?.timestamp) !== null)
+    )?.demo === true;
+  for (const point of [...base, ...values(incoming)]) {
+    if (finite(point?.timestamp) === null || (point.demo === true) !== mode)
+      continue;
+    const normalized = appendTelemetryHistory([], point)[0];
+    if (normalized) buckets.set(Math.floor(point.timestamp), normalized);
+  }
+  const sorted = [...buckets.values()].sort(
+    (a, b) => a.timestamp - b.timestamp,
+  );
+  const cutoff = (sorted.at(-1)?.timestamp || 0) - HISTORY_SECONDS;
+  return sorted
+    .filter((point) => point.timestamp >= cutoff)
+    .slice(-HISTORY_LIMIT);
 }
 
 /** Full inventory can finish after a newer fast request; never roll counters back. */
@@ -111,7 +138,7 @@ function patchTelemetryNode(current, next) {
   if (current.nodeType !== 1) return;
   // Native select popup/focus and table scroll stay intact while counters change.
   if (
-    current.id === "telemetry-interface" &&
+    ["telemetry-interface", "telemetry-period"].includes(current.id) &&
     current === current.ownerDocument.activeElement
   )
     return;
@@ -134,14 +161,377 @@ function patchTelemetryNode(current, next) {
   }
 }
 
-/** Patch changed text/SVG attributes instead of recreating the dashboard at 5 Hz. */
+const ANIMATION_MS = 180;
+const animations = new WeakMap();
+
+/** Presentation interpolation only: callers retain the exact collected counters. */
+export function interpolateTelemetryValue(
+  from,
+  to,
+  progress,
+  cumulative = false,
+) {
+  if (finite(from) === null || finite(to) === null || (cumulative && to < from))
+    return to;
+  const amount = Math.max(0, Math.min(1, progress));
+  return amount === 1 ? to : from + (to - from) * amount;
+}
+
+/** Bound large SVGs while retaining actual extrema and every missing-data break. */
+export function downsampleTelemetryPoints(points, maximum = 600) {
+  if (points.length <= maximum) return points;
+  const bucketSize = Math.max(
+    1,
+    Math.ceil(points.length / Math.max(1, Math.floor(maximum / 4))),
+  );
+  const result = [];
+  let segment = [];
+  const flush = () => {
+    for (let start = 0; start < segment.length; start += bucketSize) {
+      const bucket = segment.slice(start, start + bucketSize);
+      let low = 0,
+        high = 0;
+      for (let index = 1; index < bucket.length; index++) {
+        if (bucket[index].y < bucket[low].y) low = index;
+        if (bucket[index].y > bucket[high].y) high = index;
+      }
+      for (const index of [...new Set([0, low, high, bucket.length - 1])].sort(
+        (a, b) => a - b,
+      ))
+        result.push(bucket[index]);
+    }
+    segment = [];
+  };
+  for (const point of points) {
+    if (point === null) {
+      flush();
+      if (result.length && result.at(-1) !== null) result.push(null);
+    } else segment.push(point);
+  }
+  flush();
+  return result;
+}
+
+/** Smooth measured points with monotone cubic slopes; never overshoot a local extreme. */
+export function telemetryCurvePath(points) {
+  const segments = [];
+  let segment = [];
+  for (const point of points) {
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+      if (segment.length) segments.push(segment);
+      segment = [];
+      continue;
+    }
+    if (segment.length && point.x <= segment.at(-1).x) {
+      segments.push(segment);
+      segment = [];
+    }
+    segment.push(point);
+  }
+  if (segment.length) segments.push(segment);
+  return segments
+    .map((rows) => {
+      const deltas = rows
+        .slice(1)
+        .map(
+          (point, index) =>
+            (point.y - rows[index].y) / (point.x - rows[index].x),
+        );
+      const slopes = rows.map((_, index) => {
+        if (!index) return deltas[0] || 0;
+        if (index === rows.length - 1) return deltas.at(-1) || 0;
+        return deltas[index - 1] * deltas[index] <= 0
+          ? 0
+          : (deltas[index - 1] + deltas[index]) / 2;
+      });
+      // Fritsch–Carlson limiting keeps both rising and falling intervals monotone.
+      for (let index = 0; index < deltas.length; index++) {
+        if (!deltas[index]) {
+          slopes[index] = slopes[index + 1] = 0;
+          continue;
+        }
+        const a = slopes[index] / deltas[index],
+          b = slopes[index + 1] / deltas[index];
+        const length = Math.hypot(a, b);
+        if (length > 3) {
+          slopes[index] = ((3 * a) / length) * deltas[index];
+          slopes[index + 1] = ((3 * b) / length) * deltas[index];
+        }
+      }
+      const path = [`M${rows[0].x.toFixed(1)},${rows[0].y.toFixed(1)}`];
+      for (let index = 1; index < rows.length; index++) {
+        const before = rows[index - 1],
+          current = rows[index];
+        const width = (current.x - before.x) / 3;
+        const lower = Math.min(before.y, current.y),
+          upper = Math.max(before.y, current.y);
+        const bound = (value) => Math.max(lower, Math.min(upper, value));
+        path.push(
+          `C${(before.x + width).toFixed(1)},${bound(before.y + slopes[index - 1] * width).toFixed(1)} ${(current.x - width).toFixed(1)},${bound(current.y - slopes[index] * width).toFixed(1)} ${current.x.toFixed(1)},${current.y.toFixed(1)}`,
+        );
+      }
+      return path.join(" ");
+    })
+    .join(" ");
+}
+
+/** Interpolate compatible measured curves without bridging missing-data gaps. */
+export function telemetryPathTween(from, to) {
+  const parse = (path) => {
+    const chunks = [...path.matchAll(/([MLC])([^MLC]*)/g)];
+    if (chunks.map((part) => part[0]).join("") !== path) return [];
+    const result = [];
+    for (const [, command, body] of chunks) {
+      const numbers = body
+        .trim()
+        .split(/[\s,]+/)
+        .map(Number);
+      if (
+        numbers.length !== (command === "C" ? 6 : 2) ||
+        numbers.some((value) => !Number.isFinite(value))
+      )
+        return [];
+      result.push({ command, numbers });
+    }
+    return result;
+  };
+  const before = parse(from),
+    after = parse(to);
+  // A new segment grows from the old endpoint, without inventing older measurements.
+  if (
+    after.length === before.length + 1 &&
+    before.length &&
+    ["L", "C"].includes(after.at(-1).command)
+  ) {
+    const endpoint = before.at(-1).numbers.slice(-2);
+    before.push({
+      command: after.at(-1).command,
+      numbers:
+        after.at(-1).command === "C"
+          ? [...endpoint, ...endpoint, ...endpoint]
+          : endpoint,
+    });
+  }
+  if (
+    !before.length ||
+    before.length !== after.length ||
+    after.some((point, index) => point.command !== before[index].command)
+  )
+    return null;
+  return (progress) => {
+    if (progress >= 1) return to;
+    const amount = Math.max(0, progress);
+    return after
+      .map((point, index) => {
+        const numbers = point.numbers.map((value, coordinate) => {
+          const previous = before[index].numbers[coordinate];
+          return (previous + (value - previous) * amount).toFixed(1);
+        });
+        return (
+          point.command +
+          numbers
+            .map(
+              (value, coordinate) =>
+                `${coordinate ? (coordinate % 2 ? "," : " ") : ""}${value}`,
+            )
+            .join("")
+        );
+      })
+      .join(" ");
+  };
+}
+
+function numberAttributes(key, value, format, e, cumulative = false) {
+  return `data-live-number="${e(key)}" data-live-value="${finite(value) ?? ""}" data-live-format="${format}"${cumulative ? ' data-live-counter="true"' : ""} `;
+}
+function liveNumber(key, value, format, e, cumulative = false) {
+  return `<span ${numberAttributes(key, value, format, e, cumulative)}>${e(formatLiveNumber(value, format))}</span>`;
+}
+function formatLiveNumber(value, format) {
+  if (format === "rate") return formatRate(value);
+  if (format === "bytes") return formatBytes(value);
+  if (format === "pps") return `${count(value)} пак/с`;
+  return count(value);
+}
+
+export function telemetryFittedFontSize(baseSize, availableWidth, textWidth) {
+  if (
+    ![baseSize, availableWidth, textWidth].every(
+      (value) => Number.isFinite(value) && value > 0,
+    )
+  )
+    return baseSize;
+  return Math.min(
+    baseSize,
+    Math.floor(baseSize * Math.min(1, availableWidth / textWidth) * 10) / 10,
+  );
+}
+
+function fitTelemetryValue(node, from, target, format, canvas) {
+  if (!canvas || !node.classList.contains("telemetry-value")) return;
+  const labels = [
+    formatLiveNumber(from, format),
+    formatLiveNumber(target, format),
+  ];
+  const representative = labels.map((text) => {
+    if (text.startsWith("—")) return text;
+    if (["rate", "bytes", "pps"].includes(format))
+      return `999,9 ${text.slice(text.lastIndexOf(" ") + 1)}`;
+    return text.replace(/\d/g, "9");
+  });
+  fitTelemetryText(node, [...labels, ...representative], canvas);
+}
+
+function fitTelemetryText(node, labels, canvas) {
+  if (!canvas || !node.clientWidth) return;
+  const style = node.ownerDocument.defaultView.getComputedStyle(node);
+  const baseSize = Number.parseFloat(style.fontSize);
+  canvas.font = `${style.fontStyle} ${style.fontWeight} ${baseSize}px ${style.fontFamily}`;
+  const longest = labels.reduce(
+    (previous, text) =>
+      canvas.measureText(text).width > canvas.measureText(previous).width
+        ? text
+        : previous,
+    "",
+  );
+  const actualText = node.textContent;
+  // Verify using the real font features (including tabular digits), which Canvas
+  // does not reproduce exactly. This runs at sample rate, never in the RAF loop.
+  node.textContent = longest;
+  let fontSize = baseSize;
+  for (
+    let attempt = 0;
+    attempt < 3 && node.scrollWidth > node.clientWidth;
+    attempt++
+  ) {
+    fontSize = telemetryFittedFontSize(
+      fontSize,
+      node.clientWidth - 1,
+      node.scrollWidth,
+    );
+    node.style.fontSize = `${fontSize}px`;
+  }
+  node.textContent = actualText;
+}
+
+export function stopTelemetryAnimation(container) {
+  const animation = container && animations.get(container);
+  if (!animation) return;
+  if (animation.frame !== null)
+    container.ownerDocument.defaultView.cancelAnimationFrame(animation.frame);
+  animation.finish?.();
+  animations.delete(container);
+}
+
+/** Patch structure at 5 Hz; each animation frame touches only numbers and SVG paths. */
 export function updateTelemetryView(container, ctx) {
-  const template = container.ownerDocument.createElement("template");
+  const owner = container.ownerDocument,
+    browser = owner.defaultView;
+  const previous = animations.get(container);
+  if (previous?.frame !== null && previous?.frame !== undefined)
+    browser.cancelAnimationFrame(previous.frame);
+  const oldPaths = new Map(
+    [...container.querySelectorAll("[data-live-path]")].map((node) => [
+      node.dataset.livePath,
+      node.getAttribute("d"),
+    ]),
+  );
+  const template = owner.createElement("template");
   template.innerHTML = renderTelemetry(ctx);
   const next = template.content.firstElementChild;
   if (container.firstElementChild && next)
     patchTelemetryNode(container.firstElementChild, next);
   else container.replaceChildren(template.content);
+
+  const snapshot = ctx.telemetry;
+  const selection = `${ctx.telemetrySelection || "all"}:${ctx.telemetryExpanded?.kind || ""}:${ctx.telemetryExpanded?.period || ""}`;
+  const animate =
+    previous &&
+    snapshot &&
+    !ctx.telemetryError &&
+    previous.selection === selection &&
+    previous.demo === snapshot.demo &&
+    snapshot.sample_seconds !== null &&
+    snapshot.timestamp >= previous.timestamp &&
+    snapshot.timestamp - previous.timestamp < MAX_GRAPH_GAP_SECONDS &&
+    !owner.hidden &&
+    !browser.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const state = {
+    frame: null,
+    values: new Map(),
+    selection,
+    demo: snapshot?.demo,
+    timestamp: snapshot?.timestamp,
+    finish: null,
+  };
+  const numbers = [],
+    paths = [];
+  const canvas = owner.createElement("canvas").getContext("2d");
+  for (const node of container.querySelectorAll(".telemetry-meta")) {
+    const text = node.textContent;
+    fitTelemetryText(node, [text, text.replace(/\d/g, "9")], canvas);
+  }
+  for (const node of container.querySelectorAll("[data-live-number]")) {
+    const key = node.dataset.liveNumber,
+      format = node.dataset.liveFormat;
+    const target =
+      node.dataset.liveValue === "" ? null : Number(node.dataset.liveValue);
+    const old = previous?.values.get(key);
+    const cumulative = node.dataset.liveCounter === "true";
+    const from =
+      animate && old?.format === format && !(cumulative && target < old.target)
+        ? old.value
+        : target;
+    fitTelemetryValue(node, from, target, format, canvas);
+    const record = { value: target, target, format };
+    state.values.set(key, record);
+    if (finite(from) !== null && finite(target) !== null && from !== target) {
+      numbers.push({ node, from, target, format, record });
+      record.value = from;
+      node.textContent = formatLiveNumber(from, format);
+    }
+  }
+  if (animate)
+    for (const node of container.querySelectorAll("[data-live-path]")) {
+      const target = node.getAttribute("d"),
+        from = oldPaths.get(node.dataset.livePath);
+      const tween =
+        from && from !== target ? telemetryPathTween(from, target) : null;
+      if (tween) {
+        paths.push({ node, target, tween });
+        node.setAttribute("d", tween(0));
+      }
+    }
+  const paint = (progress) => {
+    for (const item of numbers) {
+      item.record.value = interpolateTelemetryValue(
+        item.from,
+        item.target,
+        progress,
+      );
+      const text = formatLiveNumber(item.record.value, item.format);
+      if (item.node.textContent !== text) item.node.textContent = text;
+    }
+    for (const item of paths) item.node.setAttribute("d", item.tween(progress));
+  };
+  state.finish = () => paint(1);
+  animations.set(container, state);
+  if (!numbers.length && !paths.length) return;
+  let started;
+  const frame = (now) => {
+    if (!container.isConnected || owner.hidden) {
+      stopTelemetryAnimation(container);
+      return;
+    }
+    started ??= now;
+    const elapsed = Math.min(1, (now - started) / ANIMATION_MS);
+    const done =
+      elapsed === 1 ||
+      browser.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    paint(done ? 1 : 1 - (1 - elapsed) ** 3);
+    state.frame = done ? null : browser.requestAnimationFrame(frame);
+  };
+  state.frame = browser.requestAnimationFrame(frame);
 }
 
 function selectedMetrics(snapshot, selection) {
@@ -150,8 +540,8 @@ function selectedMetrics(snapshot, selection) {
     values(snapshot?.interfaces).find((item) => item.name === selection) || {}
   );
 }
-function metric(label, value, meta, e) {
-  return `<article class="telemetry-metric"><span class="telemetry-label">${e(label)}</span><strong class="telemetry-value">${e(value)}</strong><small class="telemetry-meta">${e(meta)}</small></article>`;
+function metric(label, value, meta, e, animation = "") {
+  return `<article class="telemetry-metric"><span class="telemetry-label">${e(label)}</span><strong ${animation}title="${e(value)}" class="telemetry-value">${e(value)}</strong><small title="${e(meta)}" class="telemetry-meta">${e(meta)}</small></article>`;
 }
 function duration(value) {
   const seconds = finite(value);
@@ -175,13 +565,38 @@ function scopeLabel(scope) {
   );
 }
 
-function chart(history, selection, kind, e) {
+/** Coarse scale steps keep small new peaks from resizing the entire chart. */
+export function telemetryAxisMaximum(observed) {
+  const maximum = Math.max(
+    1,
+    ...observed.filter((value) => finite(value) !== null),
+  );
+  const magnitude = 10 ** Math.floor(Math.log10(maximum));
+  const normalized = maximum / magnitude;
+  const step =
+    normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return step * magnitude;
+}
+
+function chart(
+  history,
+  selection,
+  kind,
+  e,
+  period = OVERVIEW_SECONDS,
+  expanded = false,
+) {
+  const prefix = `${expanded ? "expanded-" : ""}${kind}`;
   const packet = kind === "packets";
   const keys = packet ? ["rx_pps", "tx_pps"] : ["rx_bps", "tx_bps"];
   const title = packet ? "Пакеты в секунду" : "Скорость трафика";
   const format = packet ? (value) => `${count(value)} пак/с` : formatRate;
-  const rows = values(history)
-    .filter((point) => finite(point?.timestamp) !== null)
+  const available = values(history).filter(
+    (point) => finite(point?.timestamp) !== null,
+  );
+  const lastTime = available.at(-1)?.timestamp || 0;
+  const rows = available
+    .filter((point) => point.timestamp >= lastTime - period)
     .slice(-HISTORY_LIMIT)
     .map((point) => ({
       timestamp: point.timestamp,
@@ -191,38 +606,35 @@ function chart(history, selection, kind, e) {
     keys.map((key) => finite(point[key])),
   );
   const observed = readings.filter((number) => number !== null);
-  const maximum = Math.max(1, ...observed);
+  const maximum = telemetryAxisMaximum(observed);
   const left = 110,
     right = 621,
     top = 14,
     bottom = 150;
-  const firstTime = rows[0]?.timestamp || 0;
-  const span = Math.max(1, (rows.at(-1)?.timestamp || firstTime) - firstTime);
+  const firstTime = lastTime - period;
+  const span = period;
   const x = (point) =>
     left + ((point.timestamp - firstTime) / span) * (right - left);
   const y = (value) => bottom - (value / maximum) * (bottom - top);
   const path = (key) => {
-    let move = true;
+    const points = [];
     let previousTime = null;
-    return rows
-      .map((point) => {
-        const value = finite(point[key]);
-        if (value === null) {
-          move = true;
-          previousTime = null;
-          return "";
-        }
-        if (
-          previousTime !== null &&
-          point.timestamp - previousTime > MAX_GRAPH_GAP_SECONDS
-        )
-          move = true;
-        const segment = `${move ? "M" : "L"}${x(point).toFixed(1)},${y(value).toFixed(1)}`;
-        move = false;
-        previousTime = point.timestamp;
-        return segment;
-      })
-      .join(" ");
+    for (const point of rows) {
+      const value = finite(point[key]);
+      if (value === null) {
+        points.push(null);
+        previousTime = null;
+        continue;
+      }
+      if (
+        previousTime !== null &&
+        point.timestamp - previousTime > MAX_GRAPH_GAP_SECONDS
+      )
+        points.push(null);
+      points.push({ x: x(point), y: y(value) });
+      previousTime = point.timestamp;
+    }
+    return telemetryCurvePath(downsampleTelemetryPoints(points));
   };
   const sufficient =
     rows.filter((point) => keys.some((key) => finite(point[key]) !== null))
@@ -234,14 +646,26 @@ function chart(history, selection, kind, e) {
     })
     .join("");
   const picture = sufficient
-    ? `<svg class="telemetry-chart" viewBox="0 0 640 180" role="img" aria-labelledby="telemetry-${kind}-title telemetry-${kind}-description"><title id="telemetry-${kind}-title">${title}</title><desc id="telemetry-${kind}-description">История RX и TX за ${Math.round(span)} секунд. RX — входящий, TX — исходящий трафик.</desc>${grid}<path class="telemetry-rx-line" d="${path(keys[0])}"/><path class="telemetry-tx-line" d="${path(keys[1])}"/><text class="telemetry-axis" x="${left}" y="173">${Math.round(span)} с назад</text><text class="telemetry-axis" x="${right}" y="173" text-anchor="end">Сейчас</text></svg>`
+    ? `<svg class="telemetry-chart" viewBox="0 0 640 180" role="img" aria-labelledby="telemetry-${prefix}-title telemetry-${prefix}-description"><title id="telemetry-${prefix}-title">${title}</title><desc id="telemetry-${prefix}-description">История RX и TX за ${Math.round(span)} секунд. RX — входящий, TX — исходящий трафик.</desc>${grid}<path data-live-path="${prefix}-rx" class="telemetry-rx-line" d="${path(keys[0])}"/><path data-live-path="${prefix}-tx" class="telemetry-tx-line" d="${path(keys[1])}"/><text class="telemetry-axis" x="${left}" y="173">${period === 3600 ? "1 час" : `${period / 60} мин`} назад</text><text class="telemetry-axis" x="${right}" y="173" text-anchor="end">Сейчас</text></svg>`
     : `<div class="telemetry-chart-empty">Собираем историю графика…<small>График появится после двух измерений.</small></div>`;
   const last = rows.at(-1) || {};
-  return `<article class="telemetry-panel"><div class="telemetry-panel-heading"><h3>${title}</h3><small>${packet ? "RX / TX · пак/с" : "RX / TX · бит/с"}</small></div><div class="telemetry-chart-box">${picture}</div><div class="telemetry-legend"><span class="telemetry-rx-key">RX <b>${e(format(last[keys[0]]))}</b></span><span class="telemetry-tx-key">TX <b>${e(format(last[keys[1]]))}</b></span></div></article>`;
+  return `<article class="telemetry-panel"><div class="telemetry-panel-heading"><h3>${title}</h3><small>${packet ? "RX / TX · пак/с" : "RX / TX · бит/с"} · ${period === 3600 ? "1 час" : `${period / 60} мин`}</small>${expanded ? "" : `<button type="button" class="small telemetry-expand-button" data-action="telemetry-expand" data-kind="${kind}" aria-label="Развернуть график: ${title}">Развернуть</button>`}</div><div class="telemetry-chart-box">${picture}</div><div class="telemetry-legend"><span class="telemetry-rx-key">RX <b ${numberAttributes(`${prefix}-rx`, last[keys[0]], packet ? "pps" : "rate", e)}>${e(format(last[keys[0]]))}</b></span><span class="telemetry-tx-key">TX <b ${numberAttributes(`${prefix}-tx`, last[keys[1]], packet ? "pps" : "rate", e)}>${e(format(last[keys[1]]))}</b></span></div></article>`;
 }
+
+export function renderExpandedTelemetry(ctx) {
+  const expanded = ctx.telemetryExpanded;
+  if (!expanded || !["speed", "packets"].includes(expanded.kind)) return "";
+  const period = PERIODS.includes(expanded.period)
+    ? expanded.period
+    : OVERVIEW_SECONDS;
+  const title =
+    expanded.kind === "packets" ? "Пакеты в секунду" : "Скорость трафика";
+  return `<div class="telemetry-expanded-backdrop"><section class="telemetry-expanded" role="dialog" aria-modal="true" aria-labelledby="telemetry-expanded-title" tabindex="-1"><header class="telemetry-expanded-heading"><div><h2 id="telemetry-expanded-title">${title}</h2><p>${ctx.e(ctx.telemetrySelection === "all" || !ctx.telemetrySelection ? "Все выбранные интерфейсы" : ctx.telemetrySelection)}</p></div><div class="telemetry-expanded-controls"><label for="telemetry-period">Период</label><select id="telemetry-period" aria-label="Период графика">${PERIODS.map((value) => `<option value="${value}"${period === value ? " selected" : ""}>${value === 3600 ? "1 час" : `${value / 60} мин`}</option>`).join("")}</select><button type="button" class="icon ghost" data-action="telemetry-collapse" aria-label="Закрыть график" title="Закрыть график">×</button></div></header>${chart(ctx.telemetryHistory, ctx.telemetrySelection || "all", expanded.kind, ctx.e, period, true)}<p class="telemetry-note">История хранится в базе данных роутера до 1 часа. Пустая область означает отсутствие сохранённых измерений.</p></section></div>`;
+}
+
 function interfaceTable(snapshot, e) {
   const rows = values(snapshot?.interfaces).slice(0, INTERFACE_LIMIT);
-  return `<article class="telemetry-panel"><div class="telemetry-panel-heading"><h3>Трафик по интерфейсам</h3><small>Скорость и накопленные счётчики</small></div><div class="telemetry-table-scroll"><table class="telemetry-table"><thead><tr><th>Интерфейс</th><th>Статус</th><th class="numeric">RX · скорость</th><th class="numeric">TX · скорость</th><th class="numeric">Получено</th><th class="numeric">Отправлено</th><th class="numeric">Пакеты RX / TX</th></tr></thead><tbody>${rows.map((item) => `<tr><td><strong class="mono">${e(item.name)}</strong><small>${item.physical ? "Физический" : "Виртуальный / системный"}</small></td><td><span class="telemetry-status ${item.state === "UP" ? "" : "down"}">${e(item.state || "UNKNOWN")}</span></td><td class="numeric">${e(formatRate(item.rx_bps))}</td><td class="numeric">${e(formatRate(item.tx_bps))}</td><td class="numeric">${e(formatBytes(item.rx_bytes))}</td><td class="numeric">${e(formatBytes(item.tx_bytes))}</td><td class="numeric">${e(count(item.rx_packets))} / ${e(count(item.tx_packets))}</td></tr>`).join("") || '<tr><td colspan="7" class="telemetry-table-empty">Счётчики интерфейсов пока недоступны.</td></tr>'}</tbody></table></div></article>`;
+  return `<article class="telemetry-panel"><div class="telemetry-panel-heading"><h3>Трафик по интерфейсам</h3><small>Скорость и накопленные счётчики</small></div><div class="telemetry-table-scroll"><table class="telemetry-table telemetry-interface-table"><thead><tr><th>Интерфейс</th><th>Статус</th><th class="numeric">RX · скорость</th><th class="numeric">TX · скорость</th><th class="numeric">Получено</th><th class="numeric">Отправлено</th><th class="numeric">Пакеты RX / TX</th></tr></thead><tbody>${rows.map((item) => `<tr><td><strong class="mono">${e(item.name)}</strong><small>${item.physical ? "Физический" : "Виртуальный / системный"}</small></td><td><span class="telemetry-status ${item.state === "UP" ? "" : "down"}">${e(item.state || "UNKNOWN")}</span></td><td class="numeric">${liveNumber(`${item.name}:rx_bps`, item.rx_bps, "rate", e)}</td><td class="numeric">${liveNumber(`${item.name}:tx_bps`, item.tx_bps, "rate", e)}</td><td class="numeric">${liveNumber(`${item.name}:rx_bytes`, item.rx_bytes, "bytes", e, true)}</td><td class="numeric">${liveNumber(`${item.name}:tx_bytes`, item.tx_bytes, "bytes", e, true)}</td><td class="numeric">${liveNumber(`${item.name}:rx_packets`, item.rx_packets, "count", e, true)} / ${liveNumber(`${item.name}:tx_packets`, item.tx_packets, "count", e, true)}</td></tr>`).join("") || '<tr><td colspan="7" class="telemetry-table-empty">Счётчики интерфейсов пока недоступны.</td></tr>'}</tbody></table></div></article>`;
 }
 function destinations(snapshot, e) {
   const top = snapshot?.top_destinations || {};
@@ -292,38 +716,50 @@ export function renderTelemetry(ctx) {
       formatRate(stats.rx_bps),
       `Получено: ${formatBytes(stats.rx_bytes)}`,
       e,
+      numberAttributes("summary-rx", stats.rx_bps, "rate", e),
     ),
     metric(
       "Исходящая скорость · TX",
       formatRate(stats.tx_bps),
       `Отправлено: ${formatBytes(stats.tx_bytes)}`,
       e,
+      numberAttributes("summary-tx", stats.tx_bps, "rate", e),
     ),
     metric(
       "Пакеты / с",
       count(packetRate),
       `Всего RX / TX: ${count(stats.rx_packets)} / ${count(stats.tx_packets)}`,
       e,
+      numberAttributes("summary-packets", packetRate, "count", e),
     ),
     metric(
       "Активные соединения",
       count(connections.active),
       `Лимит таблицы: ${count(connections.limit)}`,
       e,
+      numberAttributes("summary-connections", connections.active, "count", e),
     ),
     metric(
       "Устройства",
       count(observed.count),
       `Действующих аренд DHCP: ${count(observed.dhcp_leases)}`,
       e,
+      numberAttributes("summary-devices", observed.count, "count", e),
     ),
     metric(
       "Накопленный трафик",
       formatBytes(sum(stats.rx_bytes, stats.tx_bytes)),
       effectiveSelection === "all" ? scope : effectiveSelection,
       e,
+      numberAttributes(
+        "summary-bytes",
+        sum(stats.rx_bytes, stats.tx_bytes),
+        "bytes",
+        e,
+        true,
+      ),
     ),
   ].join(
     "",
-  )}</div><div class="telemetry-chart-grid">${chart(ctx.telemetryHistory, effectiveSelection, "speed", e)}${chart(ctx.telemetryHistory, effectiveSelection, "packets", e)}</div><p class="telemetry-chart-footer">RX — получено интерфейсом, TX — отправлено. История хранится в этой вкладке: до 5 минут, одна точка в секунду. Счётчики трафика накоплены с момента запуска / сброса интерфейса.</p>${interfaceTable(snapshot, e)}<div class="telemetry-detail-grid">${destinations(snapshot, e)}${devices(snapshot, e)}</div><div class="telemetry-system"><span>Время работы <strong>${e(duration(system.uptime_seconds))}</strong></span><span>CPU <strong>${finite(system.cpu_percent) === null ? "—" : `${e(decimal.format(system.cpu_percent))}%`}</strong></span><span>RAM <strong>${e(formatBytes(system.memory_used_bytes))} / ${e(formatBytes(system.memory_total_bytes))}${memoryPercent === null ? "" : ` · ${e(decimal.format(memoryPercent))}%`}</strong></span></div></div></div>`;
+  )}</div><div class="telemetry-chart-grid">${chart(ctx.telemetryHistory, effectiveSelection, "speed", e)}${chart(ctx.telemetryHistory, effectiveSelection, "packets", e)}</div><p class="telemetry-chart-footer">RX — получено интерфейсом, TX — отправлено. В обзоре — последняя минута. Разверните график для выбора периода до 1 часа. История сохраняется в базе данных роутера, одна точка в секунду. Счётчики трафика накоплены с момента запуска / сброса интерфейса.<span class="telemetry-history-status" role="status">${ctx.telemetryHistoryError ? `История временно недоступна: ${e(ctx.telemetryHistoryError)}` : ""}</span></p>${interfaceTable(snapshot, e)}<div class="telemetry-detail-grid">${destinations(snapshot, e)}${devices(snapshot, e)}</div><div class="telemetry-system"><span>Время работы <strong>${e(duration(system.uptime_seconds))}</strong></span><span>CPU <strong>${finite(system.cpu_percent) === null ? "—" : `${e(decimal.format(system.cpu_percent))}%`}</strong></span><span>RAM <strong>${e(formatBytes(system.memory_used_bytes))} / ${e(formatBytes(system.memory_total_bytes))}${memoryPercent === null ? "" : ` · ${e(decimal.format(memoryPercent))}%`}</strong></span></div></div>${renderExpandedTelemetry(ctx)}</div>`;
 }

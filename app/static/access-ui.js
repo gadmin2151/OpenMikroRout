@@ -10,6 +10,8 @@ const readActions = new Set([
   "preview",
   "export",
   "telemetry-refresh",
+  "telemetry-expand",
+  "telemetry-collapse",
   "columns",
   "columns-reset",
   "columns-save",

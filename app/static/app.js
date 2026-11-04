@@ -3,13 +3,15 @@ import { reorderRules } from "./rule-order.js";
 import {
   appendTelemetryHistory,
   mergeTelemetrySnapshot,
+  mergeStoredTelemetryHistory,
+  stopTelemetryAnimation,
   updateTelemetryView,
-} from "./telemetry-ui.js?v=4";
+} from "./telemetry-ui.js?v=5";
 import {
   hasWriteAccess,
   isReadAction,
   applyReadAccess,
-} from "./access-ui.js?v=2";
+} from "./access-ui.js?v=3";
 import { renderUsers, handleUsersAction } from "./users-ui.js?v=2";
 import { renderSecurity, handleSecurityAction } from "./security-ui.js?v=1";
 import {
@@ -31,7 +33,7 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=7";
+} from "./router-pages.js?v=8";
 
 const paths = {
   grip: "M8 5h.01 M16 5h.01 M8 12h.01 M16 12h.01 M8 19h.01 M16 19h.01",
@@ -110,6 +112,11 @@ let telemetry = null,
   telemetryHistory = [],
   telemetryError = "",
   telemetrySelection = "all",
+  telemetryExpanded = null,
+  telemetryHistoryError = "",
+  historyController = null,
+  historyCursor = null,
+  historyPeriod = 60,
   telemetryRequest = null,
   telemetryController = null,
   fastTelemetryRequest = null,
@@ -133,6 +140,7 @@ function applyAccessControls() {
   applyReadAccess(document, state);
 }
 function clearSession() {
+  stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   resetUpdates();
   resetConnections();
   loginUsername = currentUser()?.username || loginUsername;
@@ -144,6 +152,12 @@ function clearSession() {
   securityStatus = null;
   telemetryController?.abort();
   fastTelemetryController?.abort();
+  historyController?.abort();
+  historyController = null;
+  historyCursor = null;
+  telemetryHistoryError = "";
+  telemetryExpanded = null;
+  document.body.classList.remove("telemetry-expanded-open");
   telemetry = null;
   telemetryHistory = [];
   telemetryError = "";
@@ -417,6 +431,8 @@ function routerContext() {
     telemetryHistory,
     telemetryError,
     telemetrySelection,
+    telemetryExpanded,
+    telemetryHistoryError,
     users,
     usersError,
     securityStatus,
@@ -440,6 +456,7 @@ function routerContext() {
   };
 }
 function render() {
+  stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   if (!state) return;
   const previousNavigation = document.querySelector(".sidebar-navigation");
   if (previousNavigation) sidebarScroll = previousNavigation.scrollTop;
@@ -703,6 +720,7 @@ function secondsLeft() {
 function dialogFrame(title, subtitle, content, footer = "", tabs = "") {
   dialog.className = "";
   dialog.innerHTML = `<div class="dialog-head"><div><h2 id="dialog-title">${e(title)}</h2>${subtitle ? `<p>${e(subtitle)}</p>` : ""}</div><button class="icon ghost" data-action="close" aria-label="Закрыть">${icon("x")}</button></div>${tabs}<div class="dialog-content">${content}</div><div class="dialog-error hidden" role="alert"></div><div class="dialog-footer">${footer || '<button data-action="close">Закрыть</button>'}</div>`;
+  stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   if (!dialog.open) dialog.showModal();
   applyAccessControls();
 }
@@ -925,6 +943,70 @@ function updateTelemetry() {
   if (!container || view !== "overview" || dialog.open) return;
   updateTelemetryView(container, routerContext());
 }
+function closeTelemetryChart() {
+  const kind = telemetryExpanded?.kind;
+  telemetryExpanded = null;
+  document.body.classList.remove("telemetry-expanded-open");
+  updateTelemetry();
+  if (kind)
+    document
+      .querySelector(`[data-action="telemetry-expand"][data-kind="${kind}"]`)
+      ?.focus({ preventScroll: true });
+}
+async function refreshTelemetryHistory(replace = false) {
+  if (!alive || !state || view !== "overview" || document.hidden) return;
+  const seconds = telemetryExpanded?.period || 60;
+  replace ||= historyPeriod !== seconds || historyCursor === null;
+  if (historyController && !replace) return;
+  historyController?.abort();
+  const controller = new AbortController();
+  historyController = controller;
+  const generation = authGeneration;
+  const query = new URLSearchParams({ seconds: String(seconds) });
+  if (telemetrySelection !== "all") query.set("interface", telemetrySelection);
+  if (!replace && historyCursor !== null)
+    query.set("after", String(historyCursor));
+  try {
+    const result = await api(`telemetry/history?${query}`, {
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
+    });
+    if (
+      controller.signal.aborted ||
+      generation !== authGeneration ||
+      view !== "overview"
+    )
+      return;
+    if (!result.available)
+      throw new Error(result.error || "История недоступна");
+    if (historyCursor !== null && result.timestamp < historyCursor) {
+      // The server clock moved backwards; restart the cursor on the next poll.
+      historyCursor = null;
+      telemetryHistory = [];
+      telemetry = null;
+      return;
+    }
+    telemetryHistory = mergeStoredTelemetryHistory(
+      telemetryHistory,
+      result.points,
+      { replace },
+    );
+    if (
+      telemetry &&
+      telemetry.timestamp >= (telemetryHistory.at(-1)?.timestamp || 0)
+    )
+      telemetryHistory = appendTelemetryHistory(telemetryHistory, telemetry);
+    if (result.points.length) historyCursor = result.points.at(-1).timestamp;
+    historyPeriod = seconds;
+    telemetryHistoryError = "";
+  } catch (failure) {
+    if (!controller.signal.aborted && generation === authGeneration)
+      telemetryHistoryError = failure.message || "Не удалось загрузить историю";
+  } finally {
+    if (historyController === controller) historyController = null;
+    if (!controller.signal.aborted && generation === authGeneration)
+      updateTelemetry();
+  }
+}
 async function refreshTelemetry(fast = false) {
   const inFlight = fast ? fastTelemetryRequest : telemetryRequest;
   if (inFlight) return inFlight;
@@ -940,7 +1022,9 @@ async function refreshTelemetry(fast = false) {
       });
       if (!alive || !state || controller.signal.aborted) return;
       telemetry = mergeTelemetrySnapshot(telemetry, snapshot);
-      telemetryHistory = appendTelemetryHistory(telemetryHistory, telemetry);
+      // A stored-history response may be newer than this in-flight live request.
+      if (telemetry.timestamp >= (telemetryHistory.at(-1)?.timestamp || 0))
+        telemetryHistory = appendTelemetryHistory(telemetryHistory, telemetry);
       telemetryError = "";
       if (
         telemetrySelection !== "all" &&
@@ -1037,7 +1121,7 @@ async function refresh(manual = false) {
     await refreshUsers();
     render();
   }
-  await refreshTelemetry();
+  await Promise.all([refreshTelemetry(), refreshTelemetryHistory()]);
   if (view === "connections" && !dialog.open)
     await refreshConnections(routerContext());
   if (view === "updates") await refreshUpdates(routerContext());
@@ -1080,7 +1164,23 @@ async function handleAction(button) {
     return;
   }
   if (action === "telemetry-refresh") {
-    await refreshTelemetry();
+    await Promise.all([refreshTelemetry(), refreshTelemetryHistory(true)]);
+    return;
+  }
+  if (action === "telemetry-expand") {
+    const kind = button.dataset.kind;
+    if (!["speed", "packets"].includes(kind) || view !== "overview") return;
+    telemetryExpanded = { kind, period: 60 };
+    document.body.classList.add("telemetry-expanded-open");
+    updateTelemetry();
+    document
+      .querySelector('[data-action="telemetry-collapse"]')
+      ?.focus({ preventScroll: true });
+    void refreshTelemetryHistory(true);
+    return;
+  }
+  if (action === "telemetry-collapse") {
+    closeTelemetryChart();
     return;
   }
   if (action === "columns") {
@@ -1120,6 +1220,8 @@ async function handleAction(button) {
   if (action === "view") {
     const nextView = button.dataset.view;
     if (["users", "updates"].includes(nextView) && !canWrite()) return;
+    closeTelemetryChart();
+    historyController?.abort();
     view = nextView;
     if (view === "security") await refreshSecurity();
     if (window.matchMedia("(max-width: 680px)").matches)
@@ -1591,6 +1693,28 @@ document.addEventListener("dblclick", (event) => {
     openEditor(row.dataset.rule);
 });
 document.addEventListener("keydown", (event) => {
+  if (telemetryExpanded) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeTelemetryChart();
+    } else if (event.key === "Tab") {
+      const controls = [
+        ...document.querySelectorAll(
+          ".telemetry-expanded button,.telemetry-expanded select",
+        ),
+      ];
+      const first = controls[0],
+        last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
+    return;
+  }
   if (event.key === "Enter" && event.target.matches("[data-rule]")) {
     event.preventDefault();
     openEditor(event.target.dataset.rule);
@@ -1637,9 +1761,20 @@ document.addEventListener("input", (event) => {
 });
 document.addEventListener("change", (event) => {
   const node = event.target;
+  if (node.id === "telemetry-period" && telemetryExpanded) {
+    const period = Number(node.value);
+    if ([60, 300, 900, 3600].includes(period)) {
+      telemetryExpanded = { ...telemetryExpanded, period };
+      updateTelemetry();
+      void refreshTelemetryHistory(true);
+    }
+    return;
+  }
   if (node.id === "telemetry-interface") {
     telemetrySelection = node.value;
+    historyCursor = null;
     updateTelemetry();
+    void refreshTelemetryHistory(true);
     return;
   }
   if (
@@ -1831,8 +1966,10 @@ function startPolling() {
 startPolling();
 window.addEventListener("pagehide", () => {
   alive = false;
+  stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   telemetryController?.abort();
   fastTelemetryController?.abort();
+  historyController?.abort();
   clearInterval(pollTimer);
   clearInterval(telemetryTimer);
   clearInterval(countdownTimer);
@@ -1846,8 +1983,10 @@ window.addEventListener("pageshow", () => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
+    stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
     telemetryController?.abort();
     fastTelemetryController?.abort();
+    historyController?.abort();
   } else {
     void refreshTelemetry(true);
     void poll();

@@ -41,6 +41,7 @@ from app.models import Configuration, ConfirmRequest, LoginRequest, RevisionRequ
 from app.runtime import RouterRuntime, create_runtime
 from app.storage import Store
 from app.telemetry import TelemetryCollector, TelemetrySnapshot
+from app.telemetry_history import HistoryResponse, TelemetryHistory
 from app.totp import CredentialProof, TotpEnrollment, TotpRecovery, TotpStatus
 from app.updates import UpdateApply, UpdateError, UpdateJob, UpdateService, UpdateStatus
 from app.version import VERSION
@@ -128,6 +129,7 @@ def create_app(
     )
     service = FirewallService(store, driver, runtime=runtime)
     telemetry = TelemetryCollector(settings.mode, settings.data_dir)
+    telemetry_history = TelemetryHistory(telemetry, settings.data_dir)
     connections = ConnectionMonitor(
         settings.mode == "demo" or injected_driver, enabled=settings.monitor_enabled
     )
@@ -177,10 +179,12 @@ def create_app(
             thread = threading.Thread(target=watchdog, daemon=True, name="router-rollback")
             thread.start()
             connections.start()
+            telemetry_history.start()
             try:
                 yield
             finally:
                 stop.set()
+                telemetry_history.stop()
                 connections.stop()
                 thread.join(timeout=20)
                 if store.read("pending"):
@@ -197,6 +201,7 @@ def create_app(
     app.state.service = service
     app.state.connections = connections
     app.state.updates = updates
+    app.state.telemetry_history = telemetry_history
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 
     @app.middleware("http")
@@ -476,6 +481,14 @@ def create_app(
     @app.get("/api/telemetry", dependencies=[Depends(authenticated)])
     def router_telemetry(fast: bool = False) -> TelemetrySnapshot:
         return telemetry.snapshot(fast=fast)
+
+    @app.get("/api/telemetry/history", dependencies=[Depends(authenticated)])
+    def router_telemetry_history(
+        seconds: Annotated[int, Query(ge=60, le=3600)] = 60,
+        after: Annotated[float | None, Query(ge=0, allow_inf_nan=False)] = None,
+        interface: Annotated[str, Query(max_length=15, pattern=r"^[A-Za-z0-9_.:@-]*$")] = "",
+    ) -> HistoryResponse:
+        return telemetry_history.snapshot(seconds, after, interface)
 
     @app.get("/api/connections", dependencies=[Depends(authenticated)])
     def incoming_connections(query: Annotated[ConnectionQuery, Query()]) -> ConnectionSnapshot:

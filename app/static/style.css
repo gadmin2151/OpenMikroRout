@@ -2539,6 +2539,9 @@ dialog::backdrop {
   gap: 13px;
 }
 .telemetry-metric {
+  container-type: inline-size;
+  display: grid;
+  grid-template-rows: 36px 44px 43px;
   min-width: 0;
   padding: 17px;
   border: 1px solid var(--line);
@@ -2550,24 +2553,29 @@ dialog::backdrop {
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
+  overflow: hidden;
 }
 .telemetry-value {
   display: block;
   margin-top: 9px;
   color: var(--text);
-  font-size: clamp(22px, 1.8vw, 28px);
+  font-size: clamp(18px, 13cqi, 28px);
   line-height: 1.25;
   font-weight: 600;
   letter-spacing: -0.6px;
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .telemetry-meta {
   display: block;
+  white-space: nowrap;
   margin-top: 7px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
 }
 .telemetry-chart-grid,
 .telemetry-detail-grid {
@@ -2607,12 +2615,13 @@ dialog::backdrop {
   line-height: 1.5;
 }
 .telemetry-chart-box {
+  height: 220px;
   padding: 16px 14px 0;
   overflow-x: auto;
 }
 .telemetry-chart-empty {
   display: flex;
-  min-height: 170px;
+  height: 180px;
   padding: 25px;
   flex-direction: column;
   align-items: center;
@@ -2631,8 +2640,7 @@ svg.telemetry-chart {
   display: block;
   width: 100%;
   min-width: 440px;
-  height: auto;
-  aspect-ratio: 640 / 180;
+  height: 180px;
   fill: none;
   stroke: none;
   stroke-width: 1;
@@ -2665,8 +2673,8 @@ svg.telemetry-chart {
   stroke-dasharray: 6 4;
 }
 .telemetry-legend {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
   gap: 16px;
   padding: 13px 18px;
@@ -2679,6 +2687,13 @@ svg.telemetry-chart {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.telemetry-legend b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 .telemetry-rx-key::before,
 .telemetry-tx-key::before {
@@ -2708,6 +2723,7 @@ svg.telemetry-chart {
 }
 .telemetry-table-scroll {
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 .telemetry-table-scroll:has(> .telemetry-device-table) {
   max-height: 340px;
@@ -2725,6 +2741,19 @@ svg.telemetry-chart {
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;
+}
+.telemetry-interface-table {
+  table-layout: fixed;
+  min-width: 1100px;
+}
+.telemetry-interface-table th:first-child {
+  width: 21%;
+}
+.telemetry-interface-table th:nth-child(2) {
+  width: 9%;
+}
+.telemetry-interface-table th:last-child {
+  width: 26%;
 }
 .telemetry-table th {
   padding: 10px 15px;
@@ -2836,7 +2865,7 @@ svg.telemetry-chart {
     padding: 14px;
   }
   .telemetry-value {
-    font-size: 24px;
+    font-size: clamp(18px, 13cqi, 24px);
   }
   .telemetry-controls {
     justify-content: flex-start;
@@ -2849,6 +2878,9 @@ svg.telemetry-chart {
   }
 }
 @media (max-width: 420px) {
+  .telemetry-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .telemetry-controls,
   .telemetry-controls label,
   .telemetry-controls select {
@@ -3238,4 +3270,85 @@ body.is-readonly .access-note > svg,
 .feature-heading > svg {
   width: 28px;
   height: 28px;
+}
+
+/* Keep live number widths steady while their values animate between measurements. */
+.telemetry-dashboard [data-live-number] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Expanded charts share the same live data and retain a fixed plotting frame. */
+body.telemetry-expanded-open {
+  overflow: hidden;
+}
+.telemetry-expanded-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #10233480;
+}
+.telemetry-expanded {
+  width: min(1200px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 18px 60px #10233430;
+}
+.telemetry-expanded-heading,
+.telemetry-expanded-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.telemetry-expanded-heading {
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.telemetry-expanded-heading h2 {
+  font-size: 22px;
+}
+.telemetry-expanded-heading p {
+  margin-top: 6px;
+  color: var(--muted);
+}
+.telemetry-expanded-controls select {
+  width: 125px;
+}
+.telemetry-expanded .telemetry-chart-box {
+  height: clamp(220px, 50dvh, 500px);
+}
+.telemetry-expanded svg.telemetry-chart {
+  height: 100%;
+}
+.telemetry-expanded .telemetry-chart-empty {
+  height: 100%;
+}
+.telemetry-history-status {
+  display: block;
+  flex-basis: 100%;
+  min-height: 21px;
+  max-height: 21px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--warning);
+}
+@media (max-width: 680px) {
+  .telemetry-expanded-backdrop {
+    padding: 10px;
+  }
+  .telemetry-expanded {
+    padding: 16px;
+    max-height: calc(100dvh - 20px);
+  }
+  .telemetry-expanded-controls {
+    gap: 10px;
+  }
 }
