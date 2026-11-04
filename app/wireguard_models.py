@@ -110,8 +110,10 @@ def validate_wireguard(interfaces: list[WireGuardInterface], peers: list[WireGua
             raise ValueError("At most 128 peers per WireGuard interface are supported")
         if peer.enabled:
             ranges = networks.setdefault(peer.interface, [])
+            current = []
             for prefix in peer.allowed_ips:
                 network = ipaddress.IPv4Network(prefix)
                 if any(network.overlaps(other) for other in ranges):
                     raise ValueError("Allowed IP ranges of enabled peers cannot overlap")
-                ranges.append(network)
+                current.append(network)
+            ranges.extend(current)

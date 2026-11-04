@@ -86,6 +86,9 @@ def test_configuration_references_require_the_correct_key_and_public_half(tmp_pa
 def test_peer_ranges_and_link_types_have_predictable_constraints(tmp_path: Path) -> None:
     _, config = configured(tmp_path)
     data = config.model_dump(mode="json")
+    data["wireguard_peers"][0]["allowed_ips"] = ["10.99.0.0/24", "10.99.0.2/32"]
+    NetworkConfiguration.model_validate(data)  # Redundant ranges on the same peer are valid.
+    data = config.model_dump(mode="json")
     duplicate = {
         **data["wireguard_peers"][0],
         "id": str(uuid4()),

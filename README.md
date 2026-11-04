@@ -394,10 +394,10 @@ JSON-схема существующей SQLite-базы обновляется 
 состав импортируемого черновика показан перед подтверждением.
 Подтверждённые настройки восстанавливаются при следующем старте Linux-сервиса.
 
-## Ограничения версии 0.2
+## Ограничения версии 0.4
 
-- Только IPv4. Нет управления VPN, PPPoE, DHCP-клиентом WAN, динамической маршрутизацией,
-  QoS/queues, Wi-Fi и IPv6; существующие такие интерфейсы могут отображаться.
+- Только IPv4; VPN поддерживается через WireGuard. PPPoE, DHCP-клиент WAN,
+  динамическая маршрутизация, QoS/queues, Wi-Fi и IPv6 не входят в этот выпуск.
 - VLAN — создание 802.1Q интерфейсов. Per-port PVID / tagged / untagged filtering
   bridge ещё не реализован. Virtual interface поддерживает только `dummy`.
 - Parent или VLAN ID существующего одноимённого VLAN не заменяется разрушительно:
@@ -407,7 +407,8 @@ JSON-схема существующей SQLite-базы обновляется 
 - Один активный DHCP-сервер на интерфейс; активные DHCP-сети не пересекаются.
   Локальный DNS знает имена настроенных статических резервирований; динамическая
   регистрация имён из DHCP leases в DNS не реализована.
-- Нет отрицания списков, DNS-имён в address lists, netmap, mangle/raw и packet marks.
+- Нет отрицания списков, DNS-имён в address lists, netmap и ручного управления
+  mangle/raw / packet marks. Служебные marks WireGuard настраиваются автоматически.
   До 512 NAT и 512 filter-правил; максимум 256 комбинаций адресов/интерфейсов на одно
   правило и 4096 правил после разворачивания списков суммарно.
 - NAT учитывает первые пакеты соединений; изменения действуют на новые соединения.
@@ -431,16 +432,21 @@ pnpm check
 владение ресурсами, DHCP/DNS-конфигурации, частичные ошибки применения,
 восстановление после перезапуска и миграция базы. Frontend сборки не требует.
 
-Три дополнительных kernel-теста запускаются вручную на Linux с root, iproute2,
-iptables и util-linux. Каждый создаёт новый network namespace:
+Дополнительные kernel-тесты запускаются на Linux с root, iproute2, iptables,
+wireguard-tools, dnsmasq, ping, traceroute и util-linux. Каждый создаёт новый
+network namespace:
 
 ```sh
 sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest \
-  tests/test_kernel.py tests/test_links.py tests/test_networking.py -q
+  tests/test_kernel.py tests/test_links.py tests/test_networking.py tests/test_wireguard_kernel.py -q
 ```
 
 В macOS kernel-тесты пропускаются; GitHub CI запускает их в отдельных Linux network
-namespace. `docker compose config --quiet` проверяет конфигурацию без запуска контейнера.
+namespace. Проверяются реальный WireGuard handshake и IPv4-трафик, source routing
+при strict reverse-path filtering, kill switch, отключение и откат пересозданного
+туннеля, DNS-ответы с TTL и сетевые инструменты. CI также собирает Docker-образ
+и проверяет демозапуск без capabilities и внешней сети. `docker compose config --quiet`
+проверяет конфигурацию без запуска контейнера.
 Unit-тесты и проверка синтаксиса dnsmasq не заменяют проверку выдачи DHCP leases,
 DNS-трафика и VLAN на конкретном оборудовании.
 
@@ -575,3 +581,8 @@ Bootstrap сохраняет environment и units, устанавливает о
 | `GET /api/connections` | read или full; query-фильтры, kind=active/attempts |
 | `GET /api/updates`, `POST /api/updates/check` | full |
 | `POST /api/updates/apply` | full, check_id, пароль и при необходимости код 2FA |
+| `GET /api/wireguard/status` | read или full; только публичное состояние применённых туннелей |
+| `POST /api/wireguard/server`, `/import`, `/peers` | full; revision, сохранение общего черновика |
+| `POST /api/wireguard/keys` | full; создание / импорт зашифрованного ключа, ответ только с UUID и Public Key |
+| `POST /api/wireguard/export` | full; object_id, client, proof с паролем и включённым вторым фактором |
+| `POST /api/tools/run` | full; tool, одиночный IPv4 / hostname, порт для TCP |
