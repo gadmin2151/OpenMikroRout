@@ -1480,7 +1480,7 @@ async function handleAction(button) {
       dialogFrame(
         "Предпросмотр конфигурации",
         "Проверка не изменяет правила хоста.",
-        `<p class="preview-note">${isDemo() ? "Синтаксис конфигурации проверен приложением. Проверка ядром доступна только в Linux." : "Проверка iptables-restore --test успешно пройдена."} Ниже — NAT, Firewall Filter, виртуальные интерфейсы и настройки IP / DHCP / DNS из общего черновика.</p><pre class="code-preview">${e(result.script)}</pre>${result.router ? `<h3 class="preview-section-title">Firewall Filter</h3><pre class="code-preview">${e(result.router.filter_script || "")}</pre><h3 class="preview-section-title">Links · Bridge / VLAN / Virtual</h3><pre class="code-preview">${e(JSON.stringify(result.router.links || {}, null, 2))}</pre><h3 class="preview-section-title">IP · DHCP · DNS · Routes</h3><pre class="code-preview">${e(JSON.stringify(result.router.network || {}, null, 2))}</pre>` : result.network ? `<h3 class="preview-section-title">Network configuration</h3><pre class="code-preview">${e(JSON.stringify(result.network, null, 2))}</pre>` : ""}`,
+        `<p class="preview-note">${isDemo() ? "Синтаксис конфигурации проверен приложением. Проверка ядром доступна только в Linux." : "Проверка iptables-restore --test успешно пройдена."} Ниже — NAT, Firewall Filter, виртуальные интерфейсы и настройки IP / DHCP / DNS из общего черновика.</p><pre class="code-preview">${e(result.script)}</pre>${result.router ? `<h3 class="preview-section-title">Firewall Filter</h3><pre class="code-preview">${e(result.router.filter_script || "")}</pre><h3 class="preview-section-title">Links · Bridge / VLAN / Virtual</h3><pre class="code-preview">${e(JSON.stringify(result.router.links || {}, null, 2))}</pre><h3 class="preview-section-title">IP · DHCP · DNS · Routes</h3><pre class="code-preview">${e(JSON.stringify(result.router.network || {}, null, 2))}</pre>${result.router.wireguard ? `<h3 class="preview-section-title">WireGuard · interfaces / peers</h3><pre class="code-preview">${e(JSON.stringify(result.router.wireguard, null, 2))}</pre>` : ""}${result.router.vpn_routes ? `<h3 class="preview-section-title">WireGuard · source routing</h3><pre class="code-preview">${e(JSON.stringify(result.router.vpn_routes, null, 2))}</pre>` : ""}` : result.network ? `<h3 class="preview-section-title">Network configuration</h3><pre class="code-preview">${e(JSON.stringify(result.network, null, 2))}</pre>` : ""}`,
       );
       return;
     }
@@ -1963,6 +1963,17 @@ document.addEventListener("submit", (event) => {
       dataset: { action: "user-save" },
       disabled: false,
     }).catch((error) => toast(error.message, true));
+    return;
+  }
+  if (["wg-form", "wg-export-proof", "tools-form"].includes(event.target.id)) {
+    const button =
+      event.target.id === "tools-form"
+        ? document.querySelector('[data-action="tools-run"]')
+        : dialog.querySelector(
+            '[data-action="wg-server-save"],[data-action="wg-import-save"],[data-action="wg-interface-save"],[data-action="wg-peer-save"],[data-action="wg-export-confirm"]',
+          );
+    if (button)
+      void handleAction(button).catch((error) => toast(error.message, true));
     return;
   }
   if (

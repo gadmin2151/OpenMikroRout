@@ -111,6 +111,12 @@ def test_wireguard_stderr_and_dump_secret_columns_are_never_returned(tmp_path: P
     status = parse_wireguard_status("wg-test", output, 1010)
     assert status["peers"][0]["connected"]
     assert private not in str(status) and psk not in str(status)
+    assert (
+        parse_wireguard_status("wg-test", output.replace("\t25\n", "\toff\n"), 1010)["peers"][0][
+            "persistent_keepalive"
+        ]
+        == 0
+    )
     with patch(
         "app.wireguard.subprocess.run",
         return_value=subprocess.CompletedProcess(["wg"], 1, "", private),

@@ -123,7 +123,7 @@ def parse_wireguard_status(name: str, output: str, now: float) -> dict[str, Any]
                     "handshake_age_seconds": age,
                     "rx_bytes": int(row[5]),
                     "tx_bytes": int(row[6]),
-                    "persistent_keepalive": int(row[7]),
+                    "persistent_keepalive": 0 if row[7] == "off" else int(row[7]),
                     "connected": age is not None and age <= 180,
                 }
             )
