@@ -23,6 +23,7 @@ from app.link_models import (
     LinkConfiguration,
     ManagedLink,
     Vlan,
+    WireGuardInterface,
     ordered_links,
     planned_interface_names,
 )
@@ -58,7 +59,10 @@ class ObservedLink(TypedDict):
 
 def link_configuration(config: LinkConfiguration) -> LinkConfiguration:
     return LinkConfiguration(
-        bridges=config.bridges, vlans=config.vlans, virtual_interfaces=config.virtual_interfaces
+        bridges=config.bridges,
+        vlans=config.vlans,
+        virtual_interfaces=config.virtual_interfaces,
+        wireguard_interfaces=config.wireguard_interfaces,
     )
 
 
@@ -67,6 +71,8 @@ def ownership(link: ManagedLink) -> str:
 
 
 def link_kind(link: ManagedLink) -> str:
+    if isinstance(link, WireGuardInterface):
+        return "wireguard"
     return "bridge" if isinstance(link, Bridge) else "vlan" if isinstance(link, Vlan) else "dummy"
 
 
@@ -245,6 +251,8 @@ class LinuxLinkDriver:
             for name in references:
                 if name not in live and name not in target_items:
                     raise FirewallError(f"Interface {name} does not exist")
+                if name in live and live[name]["kind"] == "wireguard":
+                    raise FirewallError("WireGuard cannot be a bridge port or VLAN parent")
                 if name in previous_items and name not in target_items:
                     raise FirewallError(
                         f"Interface {name} is still referenced and cannot be removed"

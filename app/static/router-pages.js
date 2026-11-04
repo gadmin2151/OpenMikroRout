@@ -41,6 +41,10 @@ export const routerViews = {
     "Активные аренды и постоянные привязки IP к MAC-адресам.",
   ],
   dns: ["DNS & Routing", "Кэширующий DNS, upstream-серверы и IPv4 forwarding."],
+  dns_static: [
+    "DNS Static",
+    "Локальные IPv4 A-записи для устройств и сервисов.",
+  ],
   interface_lists: [
     "Interface Lists",
     "Группы WAN, LAN и других интерфейсов для правил Firewall.",
@@ -52,6 +56,26 @@ export const routerViews = {
 };
 
 const itemSchemas = {
+  dns_static: {
+    title: "Static DNS Record",
+    label: "Добавить запись",
+    icon: "list",
+    fields: [
+      ["name", "DNS Name", "text", "nas.home", true],
+      ["address", "IPv4 Address", "text", "192.168.10.20", true],
+      ["ttl", "TTL · seconds", "number", 300, true],
+      ["enabled", "Enabled", "bool", true],
+      ["comment", "Comment", "text", ""],
+    ],
+    columns: [
+      ["name", "Name"],
+      ["address", "Address"],
+      ["ttl", "TTL"],
+      ["enabled", "Status"],
+      ["comment", "Comment"],
+    ],
+    note: "Записи обслуживаются локальным DNS OpenMikroRout. Включите DNS в Settings и настройте адрес роутера как DNS у клиентов. Допускается несколько A-записей с одним именем.",
+  },
   addresses: {
     title: "IP Address",
     label: "Назначить IP",
@@ -310,9 +334,12 @@ export function interfaceNames(ctx) {
   return [
     ...new Set([
       ...(ctx.interfaces || []).map((item) => item.name),
-      ...["bridges", "vlans", "virtual_interfaces"].flatMap((kind) =>
-        (network[kind] || []).map((item) => item.name),
-      ),
+      ...[
+        "bridges",
+        "vlans",
+        "virtual_interfaces",
+        "wireguard_interfaces",
+      ].flatMap((kind) => (network[kind] || []).map((item) => item.name)),
     ]),
   ];
 }

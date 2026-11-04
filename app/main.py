@@ -36,6 +36,7 @@ from app.auth import (
 from app.compiler import FirewallError
 from app.connections import ConnectionMonitor, ConnectionQuery, ConnectionSnapshot
 from app.demo import demo_config
+from app.diagnostics import DiagnosticRequest, NetworkDiagnostics
 from app.firewall import Conflict, DemoDriver, Driver, FirewallService, LinuxDriver
 from app.models import Configuration, ConfirmRequest, LoginRequest, RevisionRequest, SaveRequest
 from app.runtime import RouterRuntime, create_runtime
@@ -45,6 +46,8 @@ from app.telemetry_history import HistoryResponse, TelemetryHistory
 from app.totp import CredentialProof, TotpEnrollment, TotpRecovery, TotpStatus
 from app.updates import UpdateApply, UpdateError, UpdateJob, UpdateService, UpdateStatus
 from app.version import VERSION
+from app.wireguard_api import wireguard_router
+from app.wireguard_vault import WireGuardVault
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -123,11 +126,25 @@ def create_app(
     store = Store(settings.data_dir / f"{settings.mode}.sqlite3", initial)
     injected_driver = driver is not None
     applied = Configuration.model_validate(store.read("applied"))
+    wireguard_vault = WireGuardVault(
+        settings.data_dir, demo=settings.mode == "demo" or injected_driver
+    )
     driver = driver or (DemoDriver(applied) if settings.mode == "demo" else LinuxDriver())
     runtime = runtime or create_runtime(
-        settings.data_dir, applied, settings.mode == "demo" or injected_driver
+        settings.data_dir, applied, settings.mode == "demo" or injected_driver, wireguard_vault
     )
-    service = FirewallService(store, driver, runtime=runtime)
+
+    def validate_private_references(config: Configuration) -> None:
+        try:
+            wireguard_vault.validate(config.network)
+        except (ValueError, RuntimeError) as exc:
+            raise Conflict(
+                "WireGuard key references are missing or do not match their public keys"
+            ) from exc
+
+    service = FirewallService(
+        store, driver, runtime=runtime, config_validator=validate_private_references
+    )
     telemetry = TelemetryCollector(settings.mode, settings.data_dir)
     telemetry_history = TelemetryHistory(telemetry, settings.data_dir)
     connections = ConnectionMonitor(
@@ -137,6 +154,7 @@ def create_app(
         settings.mode == "linux" and settings.updates_enabled and not injected_driver,
         settings.update_config,
     )
+    diagnostics = NetworkDiagnostics(settings.mode == "demo" or injected_driver)
     stop = threading.Event()
     auth = AuthService(
         settings.data_dir,
@@ -297,6 +315,12 @@ def create_app(
         if auth.enabled and user is not None and user.role != "full":
             raise HTTPException(403, "Full access is required")
         return user
+
+    app.include_router(wireguard_router(service, wireguard_vault, auth, full_access, authenticated))
+
+    @app.post("/api/tools/run", dependencies=[Depends(full_access)])
+    def diagnostic(body: DiagnosticRequest) -> dict[str, Any]:
+        return diagnostics.run(body)
 
     @app.exception_handler(AuthError)
     async def auth_handler(_: Request, exc: AuthError) -> JSONResponse:

@@ -35,6 +35,8 @@ export function linkReferences(config, name) {
     if (item.interface === name) add("Route", item.destination);
   for (const item of network.dhcp_servers || [])
     if (item.interface === name) add("DHCP Server", item.name);
+  for (const item of network.wireguard_peers || [])
+    if (item.interface === name) add("WireGuard Peer", item.name);
   if ((network.dns?.listen_interfaces || []).includes(name))
     add("DNS Listen Interface", name);
   for (const item of network.vlans || [])
@@ -55,7 +57,15 @@ export function linkReferences(config, name) {
 }
 
 export function assertLinkRemoval(config, kind, id) {
-  if (!["bridges", "vlans", "virtual_interfaces"].includes(kind)) return;
+  if (
+    ![
+      "bridges",
+      "vlans",
+      "virtual_interfaces",
+      "wireguard_interfaces",
+    ].includes(kind)
+  )
+    return;
   const item = (config.network?.[kind] || []).find((item) => item.id === id);
   if (!item) return;
   const refs = linkReferences(config, item.name);

@@ -190,6 +190,9 @@ def dnsmasq_configs(config: NetworkConfiguration, directory: Path) -> dict[str, 
                 if config.dns.local_domain:
                     name += "." + config.dns.local_domain
                 lines.append(f"host-record={name},{reservation.address}")
+        for record in config.dns_static:
+            if record.enabled:
+                lines.append(f"host-record={record.name},{record.address},{record.ttl}")
         result["dns"] = "\n".join(lines) + "\n"
     return result
 

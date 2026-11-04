@@ -1,5 +1,14 @@
 import { assertDraftRevision, prepareImportedConfig } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
+import { renderTools, handleToolsAction, resetTools } from "./tools-ui.js?v=1";
+import {
+  renderWireGuard,
+  refreshWireGuard,
+  resetWireGuard,
+  clearWireGuardSecrets,
+  handleWireGuardAction,
+  handleWireGuardChange,
+} from "./wireguard-ui.js?v=1";
 import {
   appendTelemetryHistory,
   mergeTelemetrySnapshot,
@@ -11,7 +20,7 @@ import {
   hasWriteAccess,
   isReadAction,
   applyReadAccess,
-} from "./access-ui.js?v=3";
+} from "./access-ui.js?v=4";
 import { renderUsers, handleUsersAction } from "./users-ui.js?v=2";
 import { renderSecurity, handleSecurityAction } from "./security-ui.js?v=1";
 import {
@@ -33,7 +42,7 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=9";
+} from "./router-pages.js?v=10";
 
 const paths = {
   grip: "M8 5h.01 M16 5h.01 M8 12h.01 M16 12h.01 M8 19h.01 M16 19h.01",
@@ -144,6 +153,8 @@ function clearSession() {
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   resetUpdates();
   resetConnections();
+  resetWireGuard();
+  resetTools();
   loginUsername = currentUser()?.username || loginUsername;
   authGeneration++;
   state = null;
@@ -359,7 +370,7 @@ function navGroup(id, label, ico, content) {
   return `<button class="nav-group-toggle" data-action="nav-group" data-group="${id}" aria-expanded="${expanded}" aria-controls="nav-group-${id}">${icon(ico)}${label}<span class="nav-group-arrow">${icon("chevron")}</span></button><div class="nav-group-children" id="nav-group-${id}" ${expanded ? "" : "hidden"}>${content}</div>`;
 }
 function renderNavigation(count) {
-  return `${navButton("overview", "Обзор", "grid")}${navButton("interfaces", "Interfaces", "network", interfaces.length, ["interfaces", "vlans", "virtual_interfaces", "interface_lists"])}${navButton("bridges", "Bridge", "network", count("bridges"), ["bridges", "bridge_ports"])}${navGroup(
+  return `${navButton("overview", "Обзор", "grid")}${navButton("interfaces", "Interfaces", "network", interfaces.length, ["interfaces", "vlans", "virtual_interfaces", "interface_lists"])}${navButton("bridges", "Bridge", "network", count("bridges"), ["bridges", "bridge_ports"])}${navButton("wireguard", "WireGuard", "lock", count("wireguard_interfaces"), ["wireguard", "wireguard_peers"])}${navGroup(
     "ip",
     "IP",
     "network",
@@ -374,7 +385,10 @@ function renderNavigation(count) {
         ["dhcp_servers", "dhcp_networks", "leases"],
       ),
       navButton("pools", "Pool", "list", count("pools")),
-      navButton("dns", "DNS & Forwarding", "activity"),
+      navButton("dns", "DNS & Forwarding", "activity", "", [
+        "dns",
+        "dns_static",
+      ]),
       navButton(
         "filter",
         "Firewall",
@@ -383,7 +397,7 @@ function renderNavigation(count) {
         ["filter", "rules", "lists", "connections"],
       ),
     ].join(""),
-  )}${navGroup("system", "System", "server", `${state.auth_enabled ? navButton("security", "Security", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
+  )}${navButton("tools", "Tools", "terminal")}${navGroup("system", "System", "server", `${state.auth_enabled ? navButton("security", "Security", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
 }
 async function refreshSecurity() {
   if (state?.current_user) securityStatus = await api("me/totp");
@@ -467,6 +481,7 @@ function routerContext() {
     toast,
     run,
     saveConfig,
+    acceptState,
     render,
   };
 }
@@ -511,6 +526,18 @@ function render() {
       updates: [
         "Updates",
         "Подписанные обновления из GitHub с резервной копией и откатом.",
+      ],
+      wireguard: [
+        "WireGuard",
+        "VPN-сервер, клиент и site-to-site · IPv4 · ключи и peers.",
+      ],
+      wireguard_peers: [
+        "WireGuard Peers",
+        "Устройства и удалённые сети, handshake и счётчики туннелей.",
+      ],
+      tools: [
+        "Tools",
+        "Ping, traceroute, DNS, маршруты и проверка TCP-соединений.",
       ],
     }[view] ||
     routerViews.overview;
@@ -558,25 +585,39 @@ function render() {
       ["dhcp_networks", "Networks", "network", count("dhcp_servers")],
       ["leases", "Leases", "clock", (networkStatus.leases || []).length],
     ];
+  else if (["wireguard", "wireguard_peers"].includes(view))
+    tabs = [
+      ["wireguard", "Interfaces", "network", count("wireguard_interfaces")],
+      ["wireguard_peers", "Peers", "user", count("wireguard_peers")],
+    ];
+  else if (["dns", "dns_static"].includes(view))
+    tabs = [
+      ["dns", "Settings", "activity", ""],
+      ["dns_static", "Static", "list", count("dns_static")],
+    ];
   else tabs = [];
   const body =
-    view === "updates"
-      ? renderUpdates(routerContext())
-      : view === "connections"
-        ? renderConnections(routerContext())
-        : view === "security"
-          ? renderSecurity(routerContext())
-          : view === "rules"
-            ? renderRules()
-            : view === "lists"
-              ? renderLists()
-              : view === "interfaces"
-                ? renderInterfaces()
-                : view === "audit"
-                  ? renderAudit()
-                  : view === "users"
-                    ? renderUsers(routerContext())
-                    : renderRouterView(view, routerContext());
+    view === "tools"
+      ? renderTools(routerContext())
+      : ["wireguard", "wireguard_peers"].includes(view)
+        ? renderWireGuard(routerContext(), view === "wireguard_peers")
+        : view === "updates"
+          ? renderUpdates(routerContext())
+          : view === "connections"
+            ? renderConnections(routerContext())
+            : view === "security"
+              ? renderSecurity(routerContext())
+              : view === "rules"
+                ? renderRules()
+                : view === "lists"
+                  ? renderLists()
+                  : view === "interfaces"
+                    ? renderInterfaces()
+                    : view === "audit"
+                      ? renderAudit()
+                      : view === "users"
+                        ? renderUsers(routerContext())
+                        : renderRouterView(view, routerContext());
   root.innerHTML = `<div class="app-shell">
     <aside class="sidebar ${sidebarOpen ? "open" : ""}" id="sidebar">${brandMarkup()}
       <div class="workspace"><div class="workspace-icon">${icon("server")}</div><div><b>${isDemo() ? "Demo Router" : e(state.hostname)}</b><small>${isDemo() ? "DEMO WORKSPACE" : "LINUX GATEWAY"}</small></div></div>
@@ -1141,6 +1182,8 @@ async function refresh(manual = false) {
   if (view === "connections" && !dialog.open)
     await refreshConnections(routerContext());
   if (view === "updates") await refreshUpdates(routerContext());
+  if (["wireguard", "wireguard_peers"].includes(view))
+    await refreshWireGuard(routerContext());
 }
 
 async function handleAction(button) {
@@ -1155,6 +1198,8 @@ async function handleAction(button) {
   if (await handleSecurityAction(button, routerContext())) return;
   if (await handleConnectionsAction(button, routerContext())) return;
   if (await handleUpdatesAction(button, routerContext())) return;
+  if (await handleWireGuardAction(button, routerContext())) return;
+  if (await handleToolsAction(button, routerContext())) return;
   if (await handleRouterAction(button, routerContext())) return;
   if (action === "close") {
     dialog.close();
@@ -1813,6 +1858,9 @@ document.addEventListener("change", (event) => {
   )
     return;
   handleRouterChange(event, routerContext());
+  void handleWireGuardChange(event, routerContext()).catch((error) =>
+    toast(error.message, true),
+  );
   if (node.dataset.select) {
     node.checked
       ? selected.add(node.dataset.select)
@@ -2025,9 +2073,12 @@ document.addEventListener("visibilitychange", () => {
 });
 
 dialog.addEventListener("close", () => {
+  clearWireGuardSecrets();
   if (
     !dialog.open &&
-    dialog.querySelector("#security-recovery-codes,#security-setup-form")
+    dialog.querySelector(
+      "#security-recovery-codes,#security-setup-form,#wg-form,#wg-export-proof,#wg-private-profile",
+    )
   )
     dialog.innerHTML = "";
   if (!dialog.open && state && ["security", "updates"].includes(view)) render();

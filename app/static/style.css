@@ -3500,3 +3500,309 @@ body.telemetry-expanded-open {
     gap: 10px;
   }
 }
+
+/* WireGuard and network tools share the router's matte, light workspace. */
+.wg-toolbar {
+  flex-wrap: wrap;
+}
+.wg-toolbar-space {
+  flex: 1;
+}
+.wg-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px 24px;
+  padding: 16px 23px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-alt);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.wg-summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.wg-summary b {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.wg-summary svg {
+  width: 16px;
+  height: 16px;
+}
+.wg-table {
+  min-width: 850px;
+}
+.wg-table td {
+  vertical-align: middle;
+}
+.wg-table strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+.wg-table-sub {
+  display: block;
+  margin-top: 6px;
+  max-width: 220px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.wg-public-key {
+  display: block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.wg-counter {
+  min-width: 142px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.wg-endpoint {
+  min-width: 160px;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wg-peer-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 145px;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wg-peer-state::before {
+  content: "";
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #8291a0;
+}
+.wg-peer-state.connected {
+  color: #1d7057;
+}
+.wg-peer-state.connected::before {
+  background: #298065;
+}
+.wg-route-badge {
+  display: inline-block;
+  border: 1px solid #cddcec;
+  background: #edf3f9;
+  color: #385978;
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.wg-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 24px;
+  padding: 20px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+.wg-guide > div {
+  padding: 0 20px;
+  min-width: 0;
+}
+.wg-guide > div + div {
+  border-left: 1px solid var(--line);
+}
+.wg-guide svg {
+  width: 17px;
+  height: 17px;
+  color: #527699;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.wg-guide strong {
+  font-size: 13px;
+}
+.wg-guide p {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.75;
+}
+.wg-form {
+  gap: 18px;
+}
+.wg-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 17px 20px;
+}
+.winbox-form.wg-form .field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+}
+.winbox-form.wg-form .field > span {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+}
+.wg-form .wg-wide {
+  grid-column: 1 / -1;
+}
+.wg-form textarea {
+  resize: vertical;
+  min-height: 70px;
+  line-height: 1.6;
+}
+.wg-form textarea[name="profile"] {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.wg-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13px;
+  cursor: pointer;
+}
+.wg-check input {
+  flex: 0 0 15px;
+  width: 15px;
+  min-height: 0;
+  height: 15px;
+  margin-top: 2px;
+}
+.wg-check small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+  margin-top: 5px;
+}
+.wg-private-profile {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.wg-private-profile:has(.wg-qr) {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+.wg-private-profile:not(:has(.wg-qr)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.wg-qr {
+  width: 220px;
+  height: 220px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.wg-private-profile textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 250px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.wg-status-notice:not(.hidden) {
+  margin: 18px 23px;
+}
+.tools-form {
+  display: grid;
+  grid-template-columns: 150px minmax(160px, 1fr) 140px auto;
+  align-items: start;
+  gap: 15px;
+  margin: 26px 0;
+}
+.tools-form > button {
+  margin-top: 24px;
+  min-height: 37px;
+}
+.tools-port small {
+  font-size: 10px;
+}
+.tools-result {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.tools-result-heading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 18px;
+  background: var(--surface-alt);
+  font-size: 12px;
+}
+.tools-result-heading span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.tools-result pre {
+  min-height: 260px;
+  max-height: 480px;
+  overflow: auto;
+  padding: 20px;
+  margin: 0;
+  background: #f9fbfd;
+  color: #2d4357;
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .tools-form {
+    grid-template-columns: 140px minmax(0, 1fr);
+  }
+  .tools-form > button {
+    margin-top: 24px;
+  }
+}
+@media (max-width: 680px) {
+  .wg-form-grid,
+  .wg-private-profile:has(.wg-qr),
+  .wg-guide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wg-qr {
+    justify-self: center;
+  }
+  .wg-guide {
+    margin: 16px;
+    padding: 0 18px;
+  }
+  .wg-guide > div {
+    padding: 18px 0;
+  }
+  .wg-guide > div + div {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .wg-summary {
+    padding: 14px 16px;
+    gap: 12px 18px;
+  }
+  .wg-toolbar-space {
+    display: none;
+  }
+  .tools-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tools-form > button {
+    margin-top: 0;
+  }
+}

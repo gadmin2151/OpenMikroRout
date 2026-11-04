@@ -8,7 +8,9 @@ from uuid import UUID, uuid4
 
 from pydantic import Field, field_validator, model_validator
 
+from app.ipv4 import domain_name, ipv4, subnet
 from app.link_models import LinkConfiguration, LinkModel
+from app.wireguard_models import WireGuardPeer, validate_wireguard
 
 NAME_PATTERN = r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$"
 ADDRESS_LABEL_SUFFIX = ":o"
@@ -23,23 +25,6 @@ def interface_name(value: str) -> str:
     if not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,14}", value):
         raise ValueError("Enter a Linux interface name, e.g. eth1, br0 or eth0.10")
     return value
-
-
-def ipv4(value: str) -> str:
-    try:
-        address = ipaddress.IPv4Address(value)
-    except ValueError as exc:
-        raise ValueError("Enter a valid IPv4 address") from exc
-    if address.is_unspecified or address.is_multicast or int(address) == 0xFFFFFFFF:
-        raise ValueError("Use a unicast IPv4 address")
-    return str(address)
-
-
-def subnet(value: str) -> str:
-    try:
-        return str(ipaddress.IPv4Network(value, strict=False))
-    except ValueError as exc:
-        raise ValueError("Enter an IPv4 subnet, e.g. 192.168.10.0/24") from exc
 
 
 class IpAddress(LinkModel):
@@ -240,6 +225,18 @@ class DnsSettings(LinkModel):
         return self
 
 
+class DnsStaticRecord(LinkModel):
+    id: UUID = Field(default_factory=uuid4)
+    enabled: bool = True
+    name: str = Field(min_length=1, max_length=253)
+    address: str = Field(min_length=1, max_length=15)
+    ttl: int = Field(default=300, ge=0, le=86400)
+    comment: str = Field(default="", max_length=200)
+
+    _name = field_validator("name")(domain_name)
+    _address = field_validator("address")(ipv4)
+
+
 class NetworkConfiguration(LinkConfiguration):
     addresses: list[IpAddress] = Field(default_factory=list, max_length=128)
     routes: list[StaticRoute] = Field(default_factory=list, max_length=128)
@@ -248,7 +245,9 @@ class NetworkConfiguration(LinkConfiguration):
     dhcp_servers: list[DhcpServer] = Field(default_factory=list, max_length=32)
     dhcp_reservations: list[DhcpReservation] = Field(default_factory=list, max_length=512)
     dns: DnsSettings = Field(default_factory=DnsSettings)
+    dns_static: list[DnsStaticRecord] = Field(default_factory=list, max_length=512)
     forwarding: bool | None = None
+    wireguard_peers: list[WireGuardPeer] = Field(default_factory=list, max_length=256)
 
     @model_validator(mode="after")
     def validate_network_references(self) -> Self:
@@ -262,10 +261,17 @@ class NetworkConfiguration(LinkConfiguration):
             self.bridges,
             self.vlans,
             self.virtual_interfaces,
+            self.wireguard_interfaces,
+            self.wireguard_peers,
+            self.dns_static,
         ]
         ids = [str(item.id) for collection in collections for item in collection]
         if len(ids) != len(set(ids)):
             raise ValueError("Network object identifiers must be unique")
+        validate_wireguard(self.wireguard_interfaces, self.wireguard_peers)
+        records = [(item.name, item.address) for item in self.dns_static if item.enabled]
+        if len(records) != len(set(records)):
+            raise ValueError("Enabled DNS static records must not repeat a name/address pair")
         for collection in (self.interface_lists, self.pools, self.dhcp_servers):
             names = [item.name for item in collection]
             if len(names) != len(set(names)):
@@ -273,7 +279,12 @@ class NetworkConfiguration(LinkConfiguration):
         addresses = [item for item in self.addresses if item.enabled]
         disabled_links = {
             item.name
-            for item in (*self.bridges, *self.vlans, *self.virtual_interfaces)
+            for item in (
+                *self.bridges,
+                *self.vlans,
+                *self.virtual_interfaces,
+                *self.wireguard_interfaces,
+            )
             if not item.enabled
         }
         # A VLAN cannot carry services while any managed VLAN/bridge parent is down.
@@ -285,6 +296,8 @@ class NetworkConfiguration(LinkConfiguration):
                 break
             disabled_links.update(descendants)
         active_services = {item.interface for item in self.dhcp_servers if item.enabled}
+        if active_services & {item.name for item in self.wireguard_interfaces}:
+            raise ValueError("WireGuard clients use per-peer addresses, not a DHCP server")
         if self.dns.enabled:
             active_services.update(self.dns.listen_interfaces)
         active_services.update(item.interface for item in self.routes if item.enabled)

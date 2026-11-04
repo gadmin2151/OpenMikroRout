@@ -24,7 +24,7 @@ jobs:
       - name: Install verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends iptables iproute2 dnsmasq-base conntrack
+          sudo apt-get install -y --no-install-recommends iptables iproute2 dnsmasq-base conntrack wireguard-tools iputils-ping traceroute
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements-dev.lock
           npm install --global pnpm@12.16.1
@@ -37,6 +37,6 @@ jobs:
           .venv/bin/pytest -q
           .venv/bin/python -m pip check
       - name: Isolated Linux network tests
-        run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py -q
+        run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py tests/test_wireguard_kernel.py -q
       - name: Interface checks
         run: pnpm check

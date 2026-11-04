@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from app.compiler import FirewallError, counters, patch, rollback_patch
@@ -116,12 +117,14 @@ class FirewallService:
         driver: Driver,
         confirm_seconds: int = 60,
         runtime: RouterRuntime | None = None,
+        config_validator: Callable[[Configuration], None] | None = None,
     ) -> None:
         self.store = store
         self.driver = driver
         self.confirm_seconds = confirm_seconds
         self.lock = threading.RLock()
         self.runtime = runtime
+        self.config_validator = config_validator
 
     def config(self) -> Configuration:
         return Configuration.model_validate(self.store.read("config"))
@@ -135,6 +138,8 @@ class FirewallService:
     def save(self, config: Configuration, revision: int) -> dict[str, Any]:
         with self.lock:
             self.check_revision(revision)
+            if self.config_validator:
+                self.config_validator(config)
             try:
                 validate_link_removals(self.config(), config)
             except ValueError as exc:

@@ -10,6 +10,7 @@ def link_names(config: Configuration) -> set[str]:
             *config.network.bridges,
             *config.network.vlans,
             *config.network.virtual_interfaces,
+            *config.network.wireguard_interfaces,
         )
     }
 
@@ -17,6 +18,9 @@ def link_names(config: Configuration) -> set[str]:
 def interface_references(config: Configuration, name: str) -> list[str]:
     references: list[str] = []
     network = config.network
+    for peer in network.wireguard_peers:
+        if peer.interface == name:
+            references.append(f"WireGuard peer {peer.name}")
     for address in network.addresses:
         if address.interface == name:
             references.append(f"IP address {address.address}")
