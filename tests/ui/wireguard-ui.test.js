@@ -25,6 +25,8 @@ function context(write = true) {
   return {
     state: { revision: 1, auth_enabled: false, config: { network: {} } },
     canWrite: () => write,
+    generation: 0,
+    getGeneration: () => 0,
     e,
     icon: () => "",
     offline: false,

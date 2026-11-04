@@ -326,6 +326,7 @@ export async function handleWireGuardAction(button, ctx) {
     return true;
   }
   await ctx.run(async () => {
+    const generation = ctx.generation;
     if (action === "wg-export") {
       editing = {
         object_id: button.dataset.id,
@@ -355,6 +356,7 @@ export async function handleWireGuardAction(button, ctx) {
         method: "POST",
         body: JSON.stringify({ ...editing, proof: credentials }),
       });
+      if (ctx.getGeneration() !== generation) return;
       clearProof(ctx);
       privateProfile = result;
       ctx.dialogFrame(
@@ -518,10 +520,13 @@ export async function handleWireGuardAction(button, ctx) {
             (row) => (row.id === item.id ? item : row),
           );
         } else throw new Error("Неизвестное действие WireGuard.");
+        if (ctx.getGeneration() !== generation) return;
         await ctx.saveConfig(config, editing.revision);
       }
+      if (ctx.getGeneration() !== generation) return;
       if (result) ctx.acceptState(result);
     }
+    if (ctx.getGeneration() !== generation) return;
     ctx.dialog.close();
     ctx.toast(
       "WireGuard сохранён в черновик. Проверьте и примените настройки.",

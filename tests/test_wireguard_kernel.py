@@ -206,4 +206,14 @@ def test_real_wireguard_handshake_ipv4_policy_kill_switch_and_recovery() -> None
 if __name__ == "__main__":
     assert sys.argv[1:] == ["--namespace"]
     with tempfile.TemporaryDirectory() as temporary:
-        namespace_scenario(Path(temporary))
+        try:
+            namespace_scenario(Path(temporary))
+        except Exception:
+            # Only public routes/rules from this disposable namespace, never wg dump.
+            print("Namespace IP rules:", command("ip", "-4", "-N", "-j", "rule"), file=sys.stderr)
+            print(
+                "Namespace IP routes:",
+                command("ip", "-4", "-N", "-j", "route", "show", "table", "all"),
+                file=sys.stderr,
+            )
+            raise

@@ -1,3 +1,4 @@
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from pydantic import SecretStr
 from app.main import Settings, create_app
 from app.network_models import DnsStaticRecord, NetworkConfiguration
 from app.networking import dnsmasq_configs
+from app.totp import code_at
 from app.wireguard_keys import generate_key
 from app.wireguard_profiles import parse_profile
 
@@ -238,3 +240,31 @@ def test_static_dns_records_validate_and_render_only_when_enabled(tmp_path: Path
     network = NetworkConfiguration.model_validate(data)
     text = dnsmasq_configs(network, tmp_path)["dns"]
     assert text and "host-record=nas.home,192.168.10.20,60" in text and "off.home" not in text
+
+
+def test_private_export_enforces_enabled_totp_and_recovery_replay_protection(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(data_dir=tmp_path, auth_enabled=True, password=PASSWORD)
+    with TestClient(create_app(settings)) as client:
+        assert (
+            client.post(
+                "/api/login", headers=HEADERS, json={"username": "admin", "password": PASSWORD}
+            ).status_code
+            == 200
+        )
+        post(client, "server", {"revision": 0, "endpoint": "vpn.example.com"})
+        saved = post(client, "peers", {"revision": 1, "interface": "wg-server", "name": "Phone"})
+        peer_id = saved["config"]["network"]["wireguard_peers"][0]["id"]
+        setup = client.post("/api/me/totp/setup", headers=HEADERS, json={"password": PASSWORD})
+        assert setup.status_code == 200
+        code = code_at(setup.json()["secret"], int(time.time() // 30))
+        confirmed = client.post(
+            "/api/me/totp/confirm", headers=HEADERS, json={"password": PASSWORD, "code": code}
+        )
+        assert confirmed.status_code == 200
+        body = {"object_id": peer_id, "proof": {"password": PASSWORD}}
+        assert client.post("/api/wireguard/export", headers=HEADERS, json=body).status_code == 403
+        body["proof"]["code"] = confirmed.json()["recovery_codes"][0]
+        assert client.post("/api/wireguard/export", headers=HEADERS, json=body).status_code == 200
+        assert client.post("/api/wireguard/export", headers=HEADERS, json=body).status_code == 403
