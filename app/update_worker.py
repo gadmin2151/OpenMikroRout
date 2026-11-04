@@ -18,6 +18,7 @@ import tomllib
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 
@@ -128,7 +129,9 @@ def router_ready(data_dir: Path) -> bool:
     if not path.exists():
         return False
     try:
-        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5) as db:
+        with closing(
+            sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        ) as db:
             rows = {
                 key: json.loads(value)
                 for key, value in db.execute(
@@ -339,8 +342,8 @@ class UpdateWorker:
         )
         for source in self.config.data_dir.glob("*.sqlite3"):
             with (
-                sqlite3.connect(source) as original,
-                sqlite3.connect(destination / source.name) as target,
+                closing(sqlite3.connect(source)) as original,
+                closing(sqlite3.connect(destination / source.name)) as target,
             ):
                 original.backup(target)
             (destination / source.name).chmod(0o600)

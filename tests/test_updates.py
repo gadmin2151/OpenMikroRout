@@ -7,6 +7,7 @@ import sqlite3
 import tarfile
 import time
 from configparser import ConfigParser
+from contextlib import closing
 from graphlib import TopologicalSorter
 from pathlib import Path
 from unittest.mock import patch
@@ -23,6 +24,7 @@ from app.update_worker import (
     UpdateWorker,
     extract_package,
     installed_version,
+    router_ready,
     sync_snapshot,
     validate_requirements,
 )
@@ -301,6 +303,53 @@ def test_successful_update_preserves_users_keys_and_configuration(tmp_path: Path
     assert (config.data_dir / "linux.sqlite3").read_bytes() == before
     assert (config.backup_dir / ("c" * 32) / "data/auth.sqlite3").exists()
     assert control.calls == ["stop", "start:0.4.0", "health:0.4.0"]
+
+
+def test_backup_closes_wal_connections_before_syncing_snapshot(tmp_path: Path) -> None:
+    config, source = installation(tmp_path)
+    worker = UpdateWorker(config, Control(config), client=source)
+    backup = config.backup_dir / "closed-connections"
+    original_connect = sqlite3.connect
+    retained: list[sqlite3.Connection] = []
+
+    def retain_connection(path: Path) -> sqlite3.Connection:
+        connection = original_connect(path)
+        retained.append(connection)
+        return connection
+
+    def check_closed_then_sync(path: Path) -> None:
+        assert retained
+        # Retain handles so garbage collection cannot hide missing explicit closes.
+        for connection in retained:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 1")
+        assert not list((path / "data").glob("*.sqlite3-wal"))
+        assert not list((path / "data").glob("*.sqlite3-shm"))
+        sync_snapshot(path)
+
+    # Keep the source open with committed records still in its WAL throughout the backup.
+    with closing(original_connect(config.data_dir / "wal.sqlite3")) as source_db:
+        source_db.execute("PRAGMA journal_mode=WAL")
+        source_db.execute("CREATE TABLE records (value TEXT)")
+        source_db.execute("INSERT INTO records VALUES ('committed in WAL')")
+        source_db.commit()
+        assert (config.data_dir / "wal.sqlite3-wal").exists()
+        with (
+            patch("app.update_worker.sqlite3.connect", side_effect=retain_connection),
+            patch("app.update_worker.sync_snapshot", side_effect=check_closed_then_sync),
+        ):
+            worker._backup(backup)
+    with closing(original_connect(backup / "data/wal.sqlite3")) as restored:
+        assert restored.execute("SELECT value FROM records").fetchall() == [("committed in WAL",)]
+
+
+def test_router_readiness_closes_its_database_handle(tmp_path: Path) -> None:
+    config, _ = installation(tmp_path)
+    connection = sqlite3.connect(config.data_dir / "linux.sqlite3")
+    with patch("app.update_worker.sqlite3.connect", return_value=connection):
+        assert router_ready(config.data_dir)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.execute("SELECT 1")
 
 
 def test_staged_release_sync_failure_keeps_running_version(tmp_path: Path) -> None:

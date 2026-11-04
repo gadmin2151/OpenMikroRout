@@ -1,8 +1,10 @@
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import Settings, create_app
@@ -90,7 +92,7 @@ def test_responses_include_only_the_requested_series_without_losing_stored_inter
     ]
     assert stored.snapshot(interface="missing").points[0].interfaces == []
     assert stored.snapshot().points[0].traffic == point.traffic
-    with sqlite3.connect(stored.path) as db:
+    with closing(sqlite3.connect(stored.path)) as db:
         assert '"eth0"' in db.execute("SELECT payload FROM samples").fetchone()[0]
         assert '"eth1"' in db.execute("SELECT payload FROM samples").fetchone()[0]
 
@@ -128,7 +130,7 @@ def test_history_retention_query_limits_and_incremental_cursor(tmp_path: Path) -
     with patch.object(stored.source, "snapshot", return_value=sample(clock, 2000)):
         stored.record()
     assert len(stored.snapshot(3600).points) == 1
-    with sqlite3.connect(stored.path) as db:
+    with closing(sqlite3.connect(stored.path)) as db:
         assert db.execute("SELECT count(*) FROM samples").fetchone()[0] == 1
     assert stored.snapshot(after=clock()).points == []
     for index in range(12):
@@ -144,6 +146,30 @@ def test_demo_and_live_history_are_separate(tmp_path: Path) -> None:
     assert demo.path != live.path
     assert demo.snapshot().demo and demo.snapshot().points[0].demo
     assert live.snapshot().points == []
+
+
+def test_connections_close_after_reads_writes_and_invalid_stored_data(tmp_path: Path) -> None:
+    clock = Clock()
+    stored = history(tmp_path, clock)
+    connections: list[sqlite3.Connection] = []
+
+    def connect() -> sqlite3.Connection:
+        connection = sqlite3.connect(stored.path)
+        connections.append(connection)
+        return connection
+
+    with patch.object(stored, "_connect", side_effect=connect):
+        with patch.object(stored.source, "snapshot", return_value=sample(clock, 1000)):
+            stored.record()
+        assert stored.snapshot().available
+        with closing(sqlite3.connect(stored.path)) as db, db:
+            db.execute("UPDATE samples SET payload = ?", ("invalid JSON",))
+        assert not stored.snapshot(seconds=300).available
+
+    assert len(connections) == 4  # Initialization, write, read, failing read.
+    for connection in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connection.execute("SELECT 1")
 
 
 def test_corrupt_history_is_reported_without_disrupting_router(tmp_path: Path) -> None:

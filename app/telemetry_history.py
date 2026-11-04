@@ -11,6 +11,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -114,7 +115,7 @@ class TelemetryHistory:
             os.close(descriptor)
         # SQLite creates WAL/SHM with the database's mode, so protect it before opening.
         self.path.chmod(0o600)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=NORMAL")
             db.execute(
@@ -167,7 +168,7 @@ class TelemetryHistory:
             raise ValueError("Telemetry sample exceeds the history size limit")
         with self.lock:
             self._initialize()
-            with self._connect() as db:
+            with closing(self._connect()) as db, db:
                 db.execute(
                     "INSERT OR REPLACE INTO samples VALUES (?, ?, ?)",
                     (math.floor(point.timestamp), point.timestamp, payload),
@@ -202,7 +203,7 @@ class TelemetryHistory:
                 self._initialize()
                 cutoff = max(now - seconds, after if after is not None else now - seconds)
                 points = []
-                with self._connect() as db:
+                with closing(self._connect()) as db:
                     rows = db.execute(
                         "SELECT payload FROM samples WHERE bucket >= ? AND bucket <= ? "
                         "AND timestamp > ? AND timestamp <= ? ORDER BY bucket LIMIT ?",
