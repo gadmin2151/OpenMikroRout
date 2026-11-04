@@ -1,0 +1,488 @@
+"""Persistent hashed accounts and bounded, revocable in-memory login sessions."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import os
+import re
+import secrets
+import sqlite3
+import threading
+import time
+from collections import OrderedDict
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal, Self, cast
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+
+Role = Literal["read", "full"]
+HASH_ITERATIONS = 600_000
+SESSION_SECONDS = 28_800
+MAX_USERS = 128
+MAX_SESSIONS = 100
+MAX_ATTEMPT_KEYS = 2048
+USERNAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+
+
+class AuthError(Exception):
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+def normalize_username(value: str) -> str:
+    value = value.strip()
+    if not re.fullmatch(USERNAME_PATTERN, value):
+        raise ValueError("Username must be 1–64 letters, digits, dots, underscores or hyphens")
+    return value.lower()
+
+
+def validate_password(value: str) -> str:
+    if not 12 <= len(value) <= 512:
+        raise ValueError("Password must contain 12–512 characters")
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ValueError("Password contains invalid Unicode") from exc
+    return value
+
+
+def password_hash(password: str) -> str:
+    validate_password(password)
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, HASH_ITERATIONS)
+    return "$".join(
+        (
+            "pbkdf2_sha256",
+            str(HASH_ITERATIONS),
+            base64.b64encode(salt).decode(),
+            base64.b64encode(digest).decode(),
+        )
+    )
+
+
+def password_matches(password: str, encoded: str) -> bool:
+    try:
+        algorithm, work, salt_text, digest_text = encoded.split("$")
+        iterations = int(work)
+        salt = base64.b64decode(salt_text, validate=True)
+        expected = base64.b64decode(digest_text, validate=True)
+        if algorithm != "pbkdf2_sha256" or not HASH_ITERATIONS <= iterations <= 5_000_000:
+            return False
+        if len(salt) != 16 or len(expected) != 32:
+            return False
+    except (ValueError, TypeError):
+        return False
+    try:
+        password_bytes = password.encode("utf-8")
+    except UnicodeError:
+        return False
+    actual = hashlib.pbkdf2_hmac("sha256", password_bytes, salt, iterations)
+    return hmac.compare_digest(actual, expected)
+
+
+class PublicUser(BaseModel):
+    id: str
+    username: str
+    role: Role
+
+
+class ManagedUser(PublicUser):
+    enabled: bool
+    created_at: float
+
+
+class UserList(BaseModel):
+    users: list[ManagedUser]
+
+
+class SessionResponse(BaseModel):
+    auth_enabled: bool
+    user: PublicUser | None
+
+
+class LoginResponse(SessionResponse):
+    ok: bool = True
+
+
+class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=1, max_length=64)
+    password: SecretStr = Field(min_length=12, max_length=512)
+    role: Role = "read"
+
+    @field_validator("username")
+    @classmethod
+    def username_value(cls, value: str) -> str:
+        return normalize_username(value)
+
+    @field_validator("password")
+    @classmethod
+    def password_value(cls, value: SecretStr) -> SecretStr:
+        validate_password(value.get_secret_value())
+        return value
+
+
+class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str | None = Field(default=None, min_length=1, max_length=64)
+    password: SecretStr | None = Field(default=None, min_length=12, max_length=512)
+    role: Role | None = None
+    enabled: bool | None = Field(default=None, strict=True)
+
+    @field_validator("username")
+    @classmethod
+    def username_value(cls, value: str | None) -> str | None:
+        return normalize_username(value) if value is not None else None
+
+    @field_validator("password")
+    @classmethod
+    def password_value(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None:
+            validate_password(value.get_secret_value())
+        return value
+
+    @model_validator(mode="after")
+    def provided_values(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("Provide at least one account field")
+        if any(getattr(self, name) is None for name in self.model_fields_set):
+            raise ValueError("Account fields cannot be null")
+        return self
+
+
+@dataclass(frozen=True)
+class UserRecord:
+    id: str
+    username: str
+    role: Role
+    enabled: bool
+    created_at: float
+    version: int
+    password: str = field(repr=False)
+
+    def public(self) -> PublicUser:
+        return PublicUser(id=self.id, username=self.username, role=self.role)
+
+    def managed(self) -> ManagedUser:
+        return ManagedUser(
+            **self.public().model_dump(), enabled=self.enabled, created_at=self.created_at
+        )
+
+
+def record(row: sqlite3.Row) -> UserRecord:
+    return UserRecord(
+        id=str(row["id"]),
+        username=str(row["username"]),
+        role=cast(Role, row["role"]),
+        enabled=bool(row["enabled"]),
+        created_at=float(row["created_at"]),
+        version=int(row["version"]),
+        password=str(row["password_hash"]),
+    )
+
+
+class AuthStore:
+    @staticmethod
+    def has_users(path: Path) -> bool:
+        if not path.exists():
+            return False
+        try:
+            db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+            try:
+                return bool(db.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+            finally:
+                db.close()
+        except sqlite3.Error as exc:
+            # An unreadable existing identity database must never open anonymous access.
+            raise RuntimeError(
+                "Cannot read the account database; authentication remains required"
+            ) from exc
+
+    def has_enabled_full(self) -> bool:
+        with self.connection() as db:
+            return bool(
+                db.execute("SELECT COUNT(*) FROM users WHERE enabled=1 AND role='full'").fetchone()[
+                    0
+                ]
+            )
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            os.close(descriptor)
+        path.chmod(0o600)
+        with self.connection(write=True) as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('read','full')),
+                enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+                created_at REAL NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1 CHECK(version > 0)
+            )""")
+
+    @contextmanager
+    def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
+        try:
+            db = sqlite3.connect(self.path, timeout=5)
+        except sqlite3.Error as exc:
+            raise AuthError(503, "Account storage is unavailable") from exc
+        db.row_factory = sqlite3.Row
+        try:
+            if write:
+                db.execute("BEGIN IMMEDIATE")
+            yield db
+            db.commit()
+        except sqlite3.IntegrityError as exc:
+            db.rollback()
+            raise AuthError(409, "Username is already in use") from exc
+        except sqlite3.Error as exc:
+            db.rollback()
+            raise AuthError(503, "Account storage is unavailable") from exc
+        finally:
+            db.close()
+
+    def bootstrap(
+        self, username: str, password: str, read_username: str, read_password: str
+    ) -> None:
+        with self.connection() as db:
+            if db.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+                return
+        admin = (normalize_username(username), password_hash(password), "full")
+        reader = (
+            (normalize_username(read_username), password_hash(read_password), "read")
+            if read_password
+            else None
+        )
+        if reader and reader[0] == admin[0]:
+            raise RuntimeError("Administrator and read-only usernames must differ")
+        with self.connection(write=True) as db:
+            if db.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+                return
+            for name, digest, role in [admin, *([reader] if reader else [])]:
+                db.execute(
+                    "INSERT INTO users (id,username,password_hash,role,created_at) "
+                    "VALUES (?,?,?,?,?)",
+                    (str(uuid4()), name, digest, role, time.time()),
+                )
+
+    def by_name(self, username: str) -> UserRecord | None:
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        return record(row) if row is not None else None
+
+    def by_id(self, user_id: str) -> UserRecord | None:
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return record(row) if row is not None else None
+
+    def list_users(self) -> list[ManagedUser]:
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT * FROM users ORDER BY username LIMIT ?", (MAX_USERS,)
+            ).fetchall()
+        return [record(row).managed() for row in rows]
+
+    def create(self, body: UserCreate, digest: str) -> ManagedUser:
+        user_id = str(uuid4())
+        with self.connection(write=True) as db:
+            if db.execute("SELECT COUNT(*) FROM users").fetchone()[0] >= MAX_USERS:
+                raise AuthError(409, "Account limit reached")
+            db.execute(
+                "INSERT INTO users (id,username,password_hash,role,created_at) VALUES (?,?,?,?,?)",
+                (user_id, body.username, digest, body.role, time.time()),
+            )
+            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            assert row is not None
+            return record(row).managed()
+
+    @staticmethod
+    def guard_last_full(db: sqlite3.Connection, current: UserRecord) -> None:
+        if current.enabled and current.role == "full":
+            count = db.execute(
+                "SELECT COUNT(*) FROM users WHERE enabled = 1 AND role = 'full'"
+            ).fetchone()[0]
+            if count <= 1:
+                raise AuthError(409, "The last enabled full-access account must remain available")
+
+    def update(self, user_id: str, body: UserUpdate, digest: str | None) -> ManagedUser:
+        with self.connection(write=True) as db:
+            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row is None:
+                raise AuthError(404, "Account not found")
+            current = record(row)
+            role = body.role if body.role is not None else current.role
+            enabled = body.enabled if body.enabled is not None else current.enabled
+            if role != "full" or not enabled:
+                self.guard_last_full(db, current)
+            name = body.username if body.username is not None else current.username
+            # Any account edit invalidates all existing sessions for that identity.
+            db.execute(
+                "UPDATE users SET username=?,password_hash=?,role=?,enabled=?,version=version+1 "
+                "WHERE id=?",
+                (name, digest or current.password, role, int(enabled), user_id),
+            )
+            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            assert row is not None
+            return record(row).managed()
+
+    def delete(self, user_id: str, actor_id: str | None) -> None:
+        with self.connection(write=True) as db:
+            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row is None:
+                raise AuthError(404, "Account not found")
+            current = record(row)
+            self.guard_last_full(db, current)
+            if user_id == actor_id:
+                raise AuthError(
+                    409, "Sign in with another full-access account before deleting this account"
+                )
+            db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+
+@dataclass(frozen=True)
+class LoginSession:
+    user_id: str
+    version: int
+    expires: float
+
+
+class AuthService:
+    def __init__(
+        self,
+        data_dir: Path,
+        enabled: bool,
+        username: str,
+        password: str,
+        read_username: str = "viewer",
+        read_password: str = "",
+        *,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self.enabled = enabled or AuthStore.has_users(data_dir / "auth.sqlite3")
+        self.clock = clock
+        self.store = AuthStore(data_dir / "auth.sqlite3") if self.enabled else None
+        self.lock = threading.Lock()
+        self.hash_slots = threading.BoundedSemaphore(2)
+        self.sessions: dict[str, LoginSession] = {}
+        self.attempts: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
+        self.dummy = password_hash(secrets.token_urlsafe(32)) if self.enabled else ""
+        if self.store:
+            self.store.bootstrap(username, password, read_username, read_password)
+            if not self.store.has_enabled_full():
+                raise RuntimeError("The account database requires an enabled full-access account")
+
+    def require_store(self) -> AuthStore:
+        if self.store is None:
+            raise AuthError(409, "Enable authentication before managing accounts")
+        return self.store
+
+    def resolve(self, token: str) -> PublicUser | None:
+        if not self.enabled or not token or len(token) > 256:
+            return None
+        key = hashlib.sha256(token.encode()).hexdigest()
+        with self.lock:
+            session = self.sessions.get(key)
+            if session is None:
+                return None
+            if session.expires <= self.clock():
+                del self.sessions[key]
+                return None
+        current = self.require_store().by_id(session.user_id)
+        if current is None or not current.enabled or current.version != session.version:
+            with self.lock:
+                self.sessions.pop(key, None)
+            return None
+        return current.public()
+
+    def login(
+        self, username: str, password: str, client: str
+    ) -> tuple[str | None, PublicUser | None]:
+        if not self.enabled:
+            return None, None
+        username = normalize_username(username)
+        now = self.clock()
+        keys = ((client[:128], ""), (client[:128], username))
+        with self.lock:
+            for key in keys:
+                recent = [at for at in self.attempts.get(key, []) if now - at < 60]
+                if len(recent) >= 5:
+                    raise AuthError(429, "Too many attempts. Try again in a minute.")
+                self.attempts[key] = [*recent, now]
+                self.attempts.move_to_end(key)
+            while len(self.attempts) > MAX_ATTEMPT_KEYS:
+                self.attempts.popitem(last=False)
+        if not self.hash_slots.acquire(blocking=False):
+            raise AuthError(429, "Authentication is busy. Try again shortly.")
+        try:
+            user = self.require_store().by_name(username)
+            valid = password_matches(password, user.password if user else self.dummy)
+        finally:
+            self.hash_slots.release()
+        if not user or not valid or not user.enabled:
+            raise AuthError(401, "Incorrect username or password")
+        with self.lock:
+            current = self.require_store().by_id(user.id)
+            if current is None or not current.enabled or current.version != user.version:
+                raise AuthError(401, "Incorrect username or password")
+            for key in keys:
+                self.attempts.pop(key, None)
+            self.sessions = {
+                key: value for key, value in self.sessions.items() if value.expires > now
+            }
+            if len(self.sessions) >= MAX_SESSIONS:
+                raise AuthError(429, "Session limit reached")
+            token = secrets.token_urlsafe(32)
+            self.sessions[hashlib.sha256(token.encode()).hexdigest()] = LoginSession(
+                user.id, user.version, now + SESSION_SECONDS
+            )
+        return token, user.public()
+
+    def logout(self, token: str) -> None:
+        with self.lock:
+            self.sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)
+
+    def revoke_user(self, user_id: str) -> None:
+        with self.lock:
+            self.sessions = {
+                key: session for key, session in self.sessions.items() if session.user_id != user_id
+            }
+
+    def delete(self, user_id: str, actor_id: str | None) -> None:
+        self.require_store().delete(user_id, actor_id)
+        self.revoke_user(user_id)
+
+    def create(self, body: UserCreate) -> ManagedUser:
+        if not self.hash_slots.acquire(blocking=False):
+            raise AuthError(429, "Account service is busy. Try again shortly.")
+        try:
+            digest = password_hash(body.password.get_secret_value())
+        finally:
+            self.hash_slots.release()
+        return self.require_store().create(body, digest)
+
+    def update(self, user_id: str, body: UserUpdate) -> ManagedUser:
+        digest = None
+        if body.password is not None:
+            if not self.hash_slots.acquire(blocking=False):
+                raise AuthError(429, "Account service is busy. Try again shortly.")
+            try:
+                digest = password_hash(body.password.get_secret_value())
+            finally:
+                self.hash_slots.release()
+        result = self.require_store().update(user_id, body, digest)
+        self.revoke_user(user_id)
+        return result

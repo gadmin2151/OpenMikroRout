@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="title">
+<title id="title">OpenMikroRout — Network M</title>
+<defs>
+  <linearGradient id="surface" x1="7" y1="2" x2="56" y2="64" gradientUnits="userSpaceOnUse"><stop stop-color="#213D42"/><stop offset="1" stop-color="#101715"/></linearGradient>
+  <linearGradient id="cyan" x1="16" y1="12" x2="49" y2="52" gradientUnits="userSpaceOnUse"><stop stop-color="#8DECF1"/><stop offset=".45" stop-color="#28D7EF"/><stop offset="1" stop-color="#168EA8"/></linearGradient>
+  <linearGradient id="mint" x1="20" y1="17" x2="48" y2="52" gradientUnits="userSpaceOnUse"><stop stop-color="#E6FFF1"/><stop offset=".5" stop-color="#A3EBCF"/><stop offset="1" stop-color="#50BC9F"/></linearGradient>
+</defs>
+<rect x="1" y="1" width="62" height="62" rx="18" fill="url(#surface)"/>
+<rect x="1.5" y="1.5" width="61" height="61" rx="17.5" stroke="#C5F4DC" stroke-opacity=".1"/>
+
+<path d="M11 47V23a8 8 0 0 1 13.7-5.7L32 25l7.3-7.7A8 8 0 0 1 53 23v24h-9V24L32 36 20 24v23h-9Z" fill="url(#cyan)"/>
+<path d="m32 36 12-12v23h9V23a8 8 0 0 0-13.7-5.7L32 25v11Z" fill="url(#mint)"/>
+<path d="m16 26 4-2v23h-4V26Z" fill="#168EA8"/>
+<path d="m44 24 4 2v21h-4V24Z" fill="#57C1AA"/>
+<rect x="10" y="43" width="11" height="7" rx="2.5" fill="#6BE1E8"/>
+<rect x="43" y="43" width="11" height="7" rx="2.5" fill="#C5F4DC"/>
+<path d="m17 18 3.7-1a4 4 0 0 1 2.8 1.2L32 27" stroke="#E6FFF1" stroke-opacity=".38" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,24 @@
+# OpenMikroRout — abstract G concepts
+
+Generated with the built-in imagegen tool. Both assets are raster PNG concepts.
+Style reference: `10-navy-g.png`. Latest user direction: a more abstract G in the same dark-blue technological style.
+
+## 11-g-fold · G Fold
+
+Use case: logo-brand, creative geometric redesign with style reference.
+Input image 1 is a STYLE REFERENCE ONLY: keep its deep navy-blue material, cool silver-blue bevels, subtle electric blue edge highlights, restrained sculptural depth and plain near-black navy background. Completely rethink the silhouette; the user rejected the literal block letter G and wants a more ABSTRACT, distinctive technological brand mark.
+Brand: OpenMikroRout, open network routing software.
+Palette: predominantly deep DARK NAVY BLUE #17375E and #244C78, steel-blue bevels #4779AC, cool silver-blue accents #B9D2EC. Deep blue is the main color. Strong visible contrast against #07111F. Premium saturated cool blue, no green, mint, teal, purple, rainbow or orange.
+Composition: exactly ONE compact emblem centered in a square, filling about 65 percent with generous equal margins. No rounded-square tile behind it. Crisp broad shapes, clean negative space and very few large surfaces. Near frontal slight 3D sculptural depth, no extreme perspective. Designed to work as a software app symbol.
+Constraints: No typeset letter, no font glyph, no literal chunky G ring, no surrounding frame, no arrowheads, no circular-arrow or refresh sign, no WiFi, chains, shield, cube, router equipment, circuit pattern, tiny nodes or sparks. No text, words, captions, numbers or watermark. No scenery or branding mockup. Original design, no imitation of Google G, Logitech G, MikroTik or other existing marks.
+Primary concept: make an ABSTRACT FOLDED EMBLEM with a latent G discovered in its negative space, not a letter drawn as an outline. TWO broad interlocking angular folded ribbons of different lengths form a compact asymmetric open architectural knot. One folds upward and wraps over, the shorter folds inward horizontally beneath it, leaving a spacious off-center open spiral-shaped void that subtly suggests G. The outer silhouette is faceted and irregular, like a sophisticated origami network gateway, with one deliberate open gap. The inward fold suggests a routed packet path. It must read first as a striking sculptural technology symbol and only secondarily as G. Coherent engineered shape, broad dark-blue faces, sharp restrained luminous blue bevels. NOT an octagonal or circular band. No recognizable font construction.
+
+## 12-g-flow · G Flow
+
+Use case: logo-brand, creative geometric redesign with style reference.
+Input image 1 is a STYLE REFERENCE ONLY: keep its deep navy-blue material, cool silver-blue bevels, subtle electric blue edge highlights, restrained sculptural depth and plain near-black navy background. Completely rethink the silhouette; the user rejected the literal block letter G and wants a more ABSTRACT, distinctive technological brand mark.
+Brand: OpenMikroRout, open network routing software.
+Palette: predominantly deep DARK NAVY BLUE #17375E and #244C78, steel-blue bevels #4779AC, cool silver-blue accents #B9D2EC. Deep blue is the main color. Strong visible contrast against #07111F. Premium saturated cool blue, no green, mint, teal, purple, rainbow or orange.
+Composition: exactly ONE compact emblem centered in a square, filling about 65 percent with generous equal margins. No rounded-square tile behind it. Crisp broad shapes, clean negative space and very few large surfaces. Near frontal slight 3D sculptural depth, no extreme perspective. Designed to work as a software app symbol.
+Constraints: No typeset letter, no font glyph, no literal chunky G ring, no surrounding frame, no arrowheads, no circular-arrow or refresh sign, no WiFi, chains, shield, cube, router equipment, circuit pattern, tiny nodes or sparks. No text, words, captions, numbers or watermark. No scenery or branding mockup. Original design, no imitation of Google G, Logitech G, MikroTik or other existing marks.
+Primary concept: design an ABSTRACT FLOW MARK from THREE separate bold tapered planes sweeping around a shared empty center. An asymmetric compact near-square silhouette with one large opening to the right and one short inner plane projecting into the void. The G is only hinted through the placement of gaps and the inward plane; never draw a continuous G outline. One upright curved folded plane, one lower diagonal swept plane and one small inner rectangular-fold plane act as converging network traffic streams. Each part feels like a solid precise prismatic blue ribbon with just one fold, not a drawn stroke. Dynamic and intentional, original integrated mark, minimal and emblematic. Make it very different from a block font G, a triangle, a turbine, or a generic circle. Clear graphic silhouette, generous space between three bold masses. Satin navy body and precise silver-blue edges.

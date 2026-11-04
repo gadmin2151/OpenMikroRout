@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="title">
+<title id="title">OpenMikroRout — Router Wave</title>
+<defs>
+  <linearGradient id="surface" x1="7" y1="2" x2="56" y2="64" gradientUnits="userSpaceOnUse"><stop stop-color="#213D42"/><stop offset="1" stop-color="#101715"/></linearGradient>
+  <linearGradient id="cyan" x1="16" y1="12" x2="49" y2="52" gradientUnits="userSpaceOnUse"><stop stop-color="#8DECF1"/><stop offset=".45" stop-color="#28D7EF"/><stop offset="1" stop-color="#168EA8"/></linearGradient>
+  <linearGradient id="mint" x1="20" y1="17" x2="48" y2="52" gradientUnits="userSpaceOnUse"><stop stop-color="#E6FFF1"/><stop offset=".5" stop-color="#A3EBCF"/><stop offset="1" stop-color="#50BC9F"/></linearGradient>
+</defs>
+<rect x="1" y="1" width="62" height="62" rx="18" fill="url(#surface)"/>
+<rect x="1.5" y="1.5" width="61" height="61" rx="17.5" stroke="#C5F4DC" stroke-opacity=".1"/>
+
+<path d="M17 21a21 21 0 0 1 30 0M23 27a13 13 0 0 1 18 0" stroke="url(#cyan)" stroke-width="5" stroke-linecap="round"/>
+<path d="M14.5 37a6 6 0 0 1 5.8-4.5h23.4a6 6 0 0 1 5.8 4.5l3 11.5a4 4 0 0 1-3.9 5H15.4a4 4 0 0 1-3.9-5l3-11.5Z" fill="url(#mint)"/>
+<path d="M17 47h30" stroke="#205449" stroke-opacity=".6" stroke-width="2" stroke-linecap="round"/>
+<rect x="20" y="39" width="5" height="5" rx="1.25" fill="#205449"/>
+<rect x="29.5" y="39" width="5" height="5" rx="1.25" fill="#205449"/>
+<rect x="39" y="39" width="5" height="5" rx="1.25" fill="#205449"/>
+<path d="M19 34h25" stroke="#E6FFF1" stroke-opacity=".7" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

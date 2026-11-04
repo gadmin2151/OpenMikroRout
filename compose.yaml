@@ -1,0 +1,42 @@
+services:
+  # Retain the service and volume names for upgrades from NAT Panel.
+  nat-panel:
+    build: .
+    # Linux only. This namespace is required to manage the HOST firewall.
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      OMR_MODE: linux
+      # Required only for initial account creation; saved users persist in /data.
+      OMR_ADMIN_PASSWORD: ${OMR_ADMIN_PASSWORD:-${NAT_ADMIN_PASSWORD:-}}
+      OMR_ADMIN_USERNAME: ${OMR_ADMIN_USERNAME:-${NAT_ADMIN_USERNAME:-admin}}
+      OMR_READ_USERNAME: ${OMR_READ_USERNAME:-${NAT_READ_USERNAME:-viewer}}
+      OMR_READ_PASSWORD: ${OMR_READ_PASSWORD:-${NAT_READ_PASSWORD:-}}
+      OMR_ALLOWED_HOSTS: ${OMR_ALLOWED_HOSTS:-${NAT_ALLOWED_HOSTS:-localhost,127.0.0.1}}
+      OMR_SECURE_COOKIE: ${OMR_SECURE_COOKIE:-${NAT_SECURE_COOKIE:-0}}
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW, NET_BIND_SERVICE, SETUID, SETGID]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /run:size=1m,mode=755
+    volumes:
+      - nat-data:/data
+      - type: bind
+        source: /run/xtables.lock
+        target: /run/xtables.lock
+        bind:
+          create_host_path: false
+      # Only this sysctl is writable; forwarding is changed only when explicitly configured.
+      - type: bind
+        source: /proc/sys/net/ipv4/ip_forward
+        target: /proc/sys/net/ipv4/ip_forward
+        bind:
+          create_host_path: false
+    mem_limit: 256m
+    cpus: 1.0
+    stop_grace_period: 45s
+
+volumes:
+  nat-data:

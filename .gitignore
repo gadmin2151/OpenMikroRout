@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.py[cod]
+data/
+.env
+.DS_Store
+coverage.xml
+node_modules/
+dist/
+.local/
+*.sqlite3*
+*.key
+*.pem

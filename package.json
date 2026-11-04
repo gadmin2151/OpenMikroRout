@@ -1,0 +1,15 @@
+{
+  "name": "openmikrorout-ui-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check app/static/app.js && eslint app/static/*.js tests/ui/*.js && node --test tests/ui/*.test.js && prettier --check app/static tests/ui package.json eslint.config.js",
+    "format": "prettier --write app/static tests/ui package.json eslint.config.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.14.0",
+    "prettier": "3.9.10"
+  },
+  "packageManager": "pnpm@12.16.1"
+}

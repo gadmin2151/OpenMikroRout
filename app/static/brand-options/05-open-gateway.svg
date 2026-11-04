@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="title">
+  <title id="title">OpenMikroRout — Open Gateway</title>
+  <defs>
+    <linearGradient id="surface" x1="8" y1="3" x2="58" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#213D42"/>
+      <stop offset="1" stop-color="#101715"/>
+    </linearGradient>
+    <linearGradient id="gateway" x1="18" y1="13" x2="42" y2="51" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9CF1E1"/>
+      <stop offset=".48" stop-color="#28D7EF"/>
+      <stop offset="1" stop-color="#1A9EB4"/>
+    </linearGradient>
+    <linearGradient id="route" x1="26" y1="31" x2="53" y2="43" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E6FFF1"/>
+      <stop offset="1" stop-color="#82DDB5"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="18" fill="url(#surface)"/>
+  <path d="M40 17H26a9 9 0 0 0-9 9v12a9 9 0 0 0 9 9h14" stroke="url(#gateway)" stroke-width="8" stroke-linecap="round"/>
+  <path d="M27 32h24m-7-7 7 7-7 7" stroke="url(#route)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M40 17v5m0 20v5" stroke="#82DDB5" stroke-width="8" stroke-linecap="round"/>
+</svg>

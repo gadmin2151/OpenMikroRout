@@ -1,0 +1,32 @@
+[Unit]
+Description=OpenMikroRout - Linux router web console (legacy installation paths)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nat-panel
+EnvironmentFile=/etc/nat-panel.env
+Environment=NAT_MODE=linux
+Environment=NAT_DATA_DIR=/var/lib/nat-panel
+ExecStart=/opt/nat-panel/.venv/bin/python -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8088 --workers 1 --no-access-log --no-proxy-headers
+Restart=always
+RestartSec=2
+TimeoutStopSec=45
+UMask=0077
+StateDirectory=nat-panel
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=no
+ReadOnlyPaths=/proc/sys
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+# iptables uses /run/xtables.lock. Do not isolate this lock from host iptables.
+ReadWritePaths=/var/lib/nat-panel /run /proc/sys/net/ipv4/ip_forward
+
+[Install]
+WantedBy=multi-user.target
