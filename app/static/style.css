@@ -11,15 +11,15 @@
   font-synthesis: none;
   font-size: 14px;
   line-height: 1.45;
-  --canvas: #f6f8f9;
+  --canvas: #f5f7f9;
   --nav: #162d43;
   --surface: #ffffff;
-  --surface-alt: #f1f5f5;
+  --surface-alt: #f3f6f7;
   --surface-hover: #edf3f0;
   --field: #ffffff;
   --line: #dce4e7;
   --control-line: #7e929b;
-  --text: #24363d;
+  --text: #21343d;
   --text-secondary: #3e5660;
   --muted: #52656d;
   --accent: #1c725f;
@@ -48,6 +48,7 @@
 }
 html {
   scrollbar-color: var(--control-line) var(--canvas);
+  scrollbar-gutter: stable;
 }
 select option,
 select optgroup {
@@ -82,7 +83,7 @@ button {
 }
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.55;
 }
 button,
 input,
@@ -435,6 +436,7 @@ a {
   height: 27px;
 }
 .main {
+  min-width: 0;
   margin-left: 224px;
   width: calc(100% - 224px);
 }
@@ -469,6 +471,7 @@ a {
   border-left: 1px solid var(--line);
 }
 .mode-chip {
+  white-space: nowrap;
   border: 1px solid var(--warning-line);
   background: var(--warning-bg);
   color: var(--warning);
@@ -494,6 +497,7 @@ a {
   justify-content: space-between;
   margin-bottom: 28px;
   gap: 15px;
+  flex-wrap: wrap;
 }
 .eyebrow {
   font-size: 11px;
@@ -507,6 +511,43 @@ a {
   color: var(--muted);
   margin-top: 9px;
   line-height: 1.6;
+}
+.configuration-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.configuration-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.configuration-stat strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.configuration-help {
+  margin-top: 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.configuration-help > summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: 6px 0;
+}
+.configuration-help > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
 }
 .heading-buttons {
   display: flex;
@@ -633,6 +674,8 @@ a {
   display: flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 .toolbar-start .separator {
   height: 20px;
@@ -683,10 +726,13 @@ a {
   white-space: nowrap;
 }
 .rules-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   background: var(--surface-alt);
 }
 .rules-table th {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 550;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--line);
@@ -707,7 +753,7 @@ a {
 .rules-table td {
   padding: 16px 12px;
   border-bottom: 1px solid var(--line);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
   height: 66px;
 }
@@ -1148,7 +1194,7 @@ dialog {
   width: 780px;
   max-width: calc(100vw - 34px);
   max-height: calc(100vh - 50px);
-  box-shadow: 0 12px 36px #02081480;
+  box-shadow: 0 16px 48px #172d4333;
   color: var(--text);
   background: var(--surface);
   border-color: var(--control-line);
@@ -1211,7 +1257,7 @@ dialog::backdrop {
   min-width: 0;
 }
 .field > span {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
   font-weight: 500;
 }
@@ -1225,7 +1271,7 @@ dialog::backdrop {
 }
 .field input,
 .field select {
-  font-size: 12px;
+  font-size: 13px;
   min-height: 37px;
 }
 .form-divider {
@@ -1442,6 +1488,9 @@ dialog::backdrop {
 .mobile-menu {
   display: none;
 }
+.sidebar-scrim {
+  display: none;
+}
 .btn-label {
   display: inline;
 }
@@ -1575,6 +1624,21 @@ dialog::backdrop {
   }
 }
 @media (max-width: 680px) {
+  body.mobile-navigation-open {
+    overflow: hidden;
+  }
+  .sidebar.open + .sidebar-scrim,
+  .sidebar.open + .sidebar-scrim:hover {
+    display: block;
+    position: fixed;
+    inset: 0;
+    left: 224px;
+    z-index: 19;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #102d4566;
+  }
   .sidebar {
     display: none;
     width: 224px;
@@ -1603,9 +1667,21 @@ dialog::backdrop {
   }
   .breadcrumbs {
     gap: 7px;
+    min-width: 0;
+    flex: 1;
+  }
+  .breadcrumbs > span,
+  .breadcrumbs > svg {
+    display: none;
+  }
+  .breadcrumbs b {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .topbar-right {
     gap: 7px;
+    flex-shrink: 0;
   }
   .topbar-right .divider {
     display: none;
@@ -1843,7 +1919,7 @@ dialog::backdrop {
   background: var(--surface-alt);
 }
 .winbox-editor .dialog-head h2 {
-  font-size: 14px;
+  font-size: 16px;
 }
 .winbox-editor .dialog-head p {
   font-size: 12px;
@@ -1880,19 +1956,19 @@ dialog::backdrop {
 }
 .winbox-form .field > span {
   text-align: right;
-  font-size: 12px;
+  font-size: 13px;
 }
 .winbox-form .field > small {
   grid-column: 2;
 }
 .winbox-form .field input,
 .winbox-form .field select {
-  min-height: 31px;
+  min-height: 34px;
   padding: 6px 9px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .winbox-form .field textarea {
-  font-size: 12px;
+  font-size: 13px;
   padding: 6px 9px;
 }
 .winbox-form .field-note {
@@ -1992,6 +2068,28 @@ dialog::backdrop {
   gap: 18px 25px;
   padding: 5px;
 }
+@media (max-width: 480px) {
+  .winbox-form .field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+  .winbox-form .field > span {
+    text-align: left;
+    font-size: 13px;
+  }
+  .winbox-form .field > small {
+    grid-column: 1;
+  }
+  .winbox-form .field input,
+  .winbox-form .field select,
+  .winbox-form .field textarea {
+    min-height: 38px;
+    font-size: 16px;
+  }
+  .rule-actions button {
+    min-height: 38px;
+  }
+}
 .rules-table [hidden] {
   display: none;
 }
@@ -2088,7 +2186,7 @@ dialog::backdrop {
 .sidebar-navigation .nav-item {
   padding: 8px 12px;
   margin-bottom: 2px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .sidebar-navigation .nav-item svg {
   width: 16px;
@@ -2121,6 +2219,8 @@ dialog::backdrop {
 }
 .router-table-scroll {
   min-height: 150px;
+  max-height: min(65vh, 720px);
+  scrollbar-gutter: stable;
 }
 .router-table {
   font-size: 12px;
@@ -2541,9 +2641,9 @@ dialog::backdrop {
 .telemetry-metric {
   container-type: inline-size;
   display: grid;
-  grid-template-rows: 36px 44px 43px;
+  grid-template-rows: 40px 46px 40px;
   min-width: 0;
-  padding: 17px;
+  padding: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-alt);
@@ -2551,15 +2651,16 @@ dialog::backdrop {
 .telemetry-label {
   display: block;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   overflow: hidden;
 }
 .telemetry-value {
-  display: block;
-  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  margin-top: 0;
   color: var(--text);
-  font-size: clamp(18px, 13cqi, 28px);
+  font-size: clamp(22px, 13cqi, 30px);
   line-height: 1.25;
   font-weight: 600;
   letter-spacing: -0.6px;
@@ -2568,14 +2669,45 @@ dialog::backdrop {
   overflow: hidden;
 }
 .telemetry-meta {
-  display: block;
+  display: grid;
+  grid-template-rows: 16px 19px;
+  gap: 2px;
   white-space: nowrap;
-  margin-top: 7px;
+  margin-top: 4px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
   overflow: hidden;
   font-variant-numeric: tabular-nums;
+}
+.telemetry-meta-label,
+.telemetry-meta-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.telemetry-meta-value {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+.telemetry-number-digit {
+  display: inline-block;
+  width: 1ch;
+  height: 1.25em;
+  overflow: hidden;
+  flex-shrink: 0;
+  letter-spacing: 0;
+}
+.telemetry-number-reel,
+.telemetry-number-reel > span {
+  display: block;
+  line-height: 1.25em;
+  height: 1.25em;
+}
+.telemetry-number-literal {
+  white-space: pre;
+  flex-shrink: 0;
 }
 .telemetry-chart-grid,
 .telemetry-detail-grid {
@@ -2760,11 +2892,12 @@ svg.telemetry-chart {
   border-bottom: 1px solid var(--line);
   background: var(--field);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
 .telemetry-table td {
+  font-size: 13px;
   padding: 12px 15px;
   border-bottom: 1px solid var(--line);
   vertical-align: top;
@@ -2829,14 +2962,24 @@ svg.telemetry-chart {
   font-weight: 600;
 }
 .overview-intro-compact {
-  padding: 20px 24px;
+  padding: 12px 24px;
 }
 .overview-intro-compact .overview-brand img {
-  width: 58px;
-  height: 58px;
+  width: 34px;
+  height: 34px;
 }
 .overview-intro-compact .overview-brand h2 {
-  font-size: 23px;
+  font-size: 16px;
+}
+.overview-intro-compact .overview-brand p {
+  margin-top: 2px;
+  font-size: 12px;
+}
+.content:has(#telemetry-overview) > .page-heading .eyebrow {
+  display: none;
+}
+.content:has(#telemetry-overview) > .page-heading {
+  margin-bottom: 20px;
 }
 
 @media (max-width: 1400px) {
@@ -2848,6 +2991,11 @@ svg.telemetry-chart {
   .telemetry-chart-grid,
   .telemetry-detail-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 1000px) {
+  .telemetry-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 760px) {
@@ -2865,7 +3013,7 @@ svg.telemetry-chart {
     padding: 14px;
   }
   .telemetry-value {
-    font-size: clamp(18px, 13cqi, 24px);
+    font-size: clamp(22px, 13cqi, 26px);
   }
   .telemetry-controls {
     justify-content: flex-start;
@@ -2874,7 +3022,7 @@ svg.telemetry-chart {
     flex-wrap: wrap;
   }
   .overview-intro-compact {
-    padding: 20px 17px;
+    padding: 12px 17px;
   }
 }
 @media (max-width: 420px) {

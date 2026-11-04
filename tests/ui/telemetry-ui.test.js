@@ -307,6 +307,8 @@ test("counter resets and unavailable readings are never animated into fabricated
 });
 
 test("SVG transitions interpolate scale changes and grow a new measured point", () => {
+  assert.equal(telemetryPathTween(undefined, "M1,2 L3,4"), null);
+  assert.equal(telemetryPathTween("M1,2 L3,4", null), null);
   const target = "M10.0,30.0 L30.0,50.0";
   const tween = telemetryPathTween("M0.0,10.0 L10.0,20.0", target);
   assert.equal(tween(0.5), "M5.0,20.0 L20.0,35.0");

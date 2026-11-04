@@ -6,41 +6,43 @@ The interface uses the supporting label “OPEN NETWORK ROUTER”.
 
 ## Selected application mark
 
-The selected symbol is the user's supplied dark-blue, bevelled **G** on a
-near-black navy background. The supplied PNG is copied unchanged into the project;
-it is not traced, redrawn or regenerated during integration. Its large open centre,
-silver-blue planes and precise bright-blue edges define the application palette.
+The selected symbol is **Folded Route**: a continuous metallic-blue ribbon that
+folds into an open angular loop, crosses its centre and exits towards the upper
+right. It represents an open network and packet forwarding. The near-black navy
+background, silver-blue faces and deep-blue folded planes retain the application
+palette. The user-selected PNG is copied unchanged into the project; it is not
+traced, redrawn, cropped or regenerated during integration.
 
 The original concept was made with the built-in imagegen tool. Its final prompt is
-preserved in [G-PROMPT.md](app/static/brand-options/navy/G-PROMPT.md). The selected
+preserved in [FOLDED-ROUTE-PROMPT.md](app/static/brand-options/FOLDED-ROUTE-PROMPT.md). The selected
 attachment is the application master; it is a raster asset, not an SVG master.
 
-| Asset | Purpose |
-| --- | --- |
-| [app/static/logo.png](app/static/logo.png) | User-selected G; shared by sidebar, overview, login and browser icon |
-| `brandMarkup()` in [app/static/app.js](app/static/app.js) | HTML wordmark and supporting label |
-| [app/static/style.css](app/static/style.css) | Matte navy navigation with a light workspace and readable controls |
+| Asset                                                     | Purpose                                                                         |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| [app/static/logo.png](app/static/logo.png)                | User-selected Folded Route; shared by sidebar, overview, login and browser icon |
+| `brandMarkup()` in [app/static/app.js](app/static/app.js) | HTML wordmark and supporting label                                              |
+| [app/static/style.css](app/static/style.css)              | Matte navy navigation with a light workspace and readable controls              |
 
 Images use an accessible OpenMikroRout name. Preserve the PNG's square proportions
 and internal spacing. The displayed logo uses a 30% corner radius at every size,
 matching the user's rounded-square reference. Use the full wordmark where space allows and the symbol alone
 for the browser icon. All runtime image references point to the same local PNG,
 so the browser can reuse the downloaded image. Versioned asset URLs refresh the
-previous theme and logo after an application reload.
+previous logo after an application reload. The current image URL is `/logo.png?v=5`.
 
 The older [logo.svg](app/static/logo.svg) and [favicon.svg](app/static/favicon.svg)
 remain as historical routing-hub artwork; the application uses the selected PNG.
 
 ## Palette
 
-| Role | Colours in the source artwork |
-| --- | --- |
-| Sidebar | Matte navy `#162D43`, selected blue `#294D70` |
-| Workspace and panels | Almost white `#F6F8F9`, white `#FFFFFF` |
-| Workspace actions | Green `#237D69`, darker hover `#1A6958` |
-| Workspace text | Dark `#24363D`, secondary `#3E5660`, muted `#52656D` |
-| Sidebar text | Cool silver-blue and pale blue highlights |
-| Semantic status | Separate green success, amber warnings and red errors |
+| Role                 | Colours in the source artwork                         |
+| -------------------- | ----------------------------------------------------- |
+| Sidebar              | Matte navy `#162D43`, selected blue `#294D70`         |
+| Workspace and panels | Almost white `#F5F7F9`, white `#FFFFFF`               |
+| Workspace actions    | Green `#237D69`, darker hover `#1A6958`               |
+| Workspace text       | Dark `#21343D`, secondary `#3E5660`, muted `#52656D`  |
+| Sidebar text         | Cool silver-blue and pale blue highlights             |
+| Semantic status      | Separate green success, amber warnings and red errors |
 
 The final user choice keeps blue on the logo and left navigation. The right
 workspace, tables, forms, WinBox-style tabs, dialogs and login use matte light
@@ -58,14 +60,14 @@ The initial six SVG directions were rejected during visual review. They remain
 available in [the first-round gallery](app/static/brand-options/round-1.html),
 including their 16, 24 and 32 pixel sizes. These remain exploration assets.
 
-| Option | SVG | Concept |
-| --- | --- | --- |
-| 01 · Open Route | [01-open-route.svg](app/static/brand-options/01-open-route.svg) | Open network loop with an outgoing route |
-| 02 · Route Switch | [02-route-switch.svg](app/static/brand-options/02-route-switch.svg) | Two traffic directions and packet forwarding |
-| 03 · Network M | [03-network-m.svg](app/static/brand-options/03-network-m.svg) | An M formed by connected interface paths |
-| 04 · Router Wave | [04-router-wave.svg](app/static/brand-options/04-router-wave.svg) | Router ports and wireless coverage |
-| 05 · Open Gateway | [05-open-gateway.svg](app/static/brand-options/05-open-gateway.svg) | Open gateway with a route passing through it |
-| 06 · Link Fabric | [06-link-fabric.svg](app/static/brand-options/06-link-fabric.svg) | Interconnected links forming a compact network |
+| Option            | SVG                                                                 | Concept                                        |
+| ----------------- | ------------------------------------------------------------------- | ---------------------------------------------- |
+| 01 · Open Route   | [01-open-route.svg](app/static/brand-options/01-open-route.svg)     | Open network loop with an outgoing route       |
+| 02 · Route Switch | [02-route-switch.svg](app/static/brand-options/02-route-switch.svg) | Two traffic directions and packet forwarding   |
+| 03 · Network M    | [03-network-m.svg](app/static/brand-options/03-network-m.svg)       | An M formed by connected interface paths       |
+| 04 · Router Wave  | [04-router-wave.svg](app/static/brand-options/04-router-wave.svg)   | Router ports and wireless coverage             |
+| 05 · Open Gateway | [05-open-gateway.svg](app/static/brand-options/05-open-gateway.svg) | Open gateway with a route passing through it   |
+| 06 · Link Fabric  | [06-link-fabric.svg](app/static/brand-options/06-link-fabric.svg)   | Interconnected links forming a compact network |
 
 The alternatives continue the cyan/mint palette and dark rounded surface. All are
 native vector artwork with accessible titles and no external assets or scripts.
@@ -74,7 +76,7 @@ native vector artwork with accessible titles and no external assets or scripts.
 
 An exploration round used **dark navy blue** as the main colour, followed by
 abstract interpretations of the letter G. The
-[current gallery](app/static/brand-options/index.html) at `/brand-options/` shows:
+[archived G gallery](app/static/brand-options/index.html) at `/brand-options/` shows:
 
 - [11 · G Fold](app/static/brand-options/navy/11-g-fold.png): folded planes and
   negative space suggesting G.
@@ -108,6 +110,6 @@ Only public repository material was used for visual direction:
 - [AmberGate SVG logo](https://github.com/gadmin2151/ambergate/blob/main/docs/logo.svg).
 
 These references informed the polished dark-surface, geometric product-identity direction.
-The selected OpenMikroRout mark retains its own G silhouette. No private repositories were
+The selected OpenMikroRout mark uses the Folded Route ribbon silhouette. No private repositories were
 accessed for this branding work, and none of the referenced artwork is bundled as
 an OpenMikroRout application asset.

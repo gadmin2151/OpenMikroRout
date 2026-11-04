@@ -1,4 +1,11 @@
 /** Read-only network telemetry presentation. Rates are bits/s, byte counters are bytes. */
+import {
+  advanceTelemetryNumber,
+  paintTelemetryNumber,
+  stopTelemetryDigits,
+  telemetryUnit,
+} from "./telemetry-motion.js?v=1";
+
 const HISTORY_SECONDS = 3600;
 const OVERVIEW_SECONDS = 60;
 const PERIODS = [60, 300, 900, 3600];
@@ -7,6 +14,15 @@ const INTERFACE_LIMIT = 128;
 const MAX_GRAPH_GAP_SECONDS = 15;
 const nf = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
 const decimal = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
+const liveDecimal = new Intl.NumberFormat("ru-RU", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+const compactCount = new Intl.NumberFormat("ru-RU", {
+  notation: "compact",
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
 
 function finite(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -136,6 +152,7 @@ function patchTelemetryNode(current, next) {
     return;
   }
   if (current.nodeType !== 1) return;
+  const liveNumber = current.hasAttribute("data-live-number");
   // Native select popup/focus and table scroll stay intact while counters change.
   if (
     ["telemetry-interface", "telemetry-period"].includes(current.id) &&
@@ -143,11 +160,19 @@ function patchTelemetryNode(current, next) {
   )
     return;
   for (const attribute of [...current.attributes])
-    if (!next.hasAttribute(attribute.name))
+    if (
+      !next.hasAttribute(attribute.name) &&
+      !(
+        liveNumber &&
+        ["style", "aria-label", "data-display-text"].includes(attribute.name)
+      )
+    )
       current.removeAttribute(attribute.name);
   for (const attribute of next.attributes)
     if (current.getAttribute(attribute.name) !== attribute.value)
       current.setAttribute(attribute.name, attribute.value);
+  // Preserve the value currently on screen, including moving digit reels.
+  if (liveNumber) return;
   const existing = [...current.childNodes];
   const desired = [...next.childNodes];
   for (
@@ -161,8 +186,10 @@ function patchTelemetryNode(current, next) {
   }
 }
 
-const ANIMATION_MS = 180;
+const PATH_ANIMATION_MS = 240;
+const NUMBER_PAINT_MS = 200;
 const animations = new WeakMap();
+const fontFits = new WeakMap();
 
 /** Presentation interpolation only: callers retain the exact collected counters. */
 export function interpolateTelemetryValue(
@@ -277,6 +304,7 @@ export function telemetryCurvePath(points) {
 
 /** Interpolate compatible measured curves without bridging missing-data gaps. */
 export function telemetryPathTween(from, to) {
+  if (typeof from !== "string" || typeof to !== "string") return null;
   const parse = (path) => {
     const chunks = [...path.matchAll(/([MLC])([^MLC]*)/g)];
     if (chunks.map((part) => part[0]).join("") !== path) return [];
@@ -347,10 +375,22 @@ function numberAttributes(key, value, format, e, cumulative = false) {
 function liveNumber(key, value, format, e, cumulative = false) {
   return `<span ${numberAttributes(key, value, format, e, cumulative)}>${e(formatLiveNumber(value, format))}</span>`;
 }
-function formatLiveNumber(value, format) {
-  if (format === "rate") return formatRate(value);
-  if (format === "bytes") return formatBytes(value);
+function formatLiveNumber(value, format, unit) {
+  if (finite(value) === null) return "—";
+  if (format === "rate" || format === "bytes") {
+    const units =
+      format === "rate"
+        ? ["бит/с", "Кбит/с", "Мбит/с", "Гбит/с", "Тбит/с"]
+        : ["Б", "КБ", "МБ", "ГБ", "ТБ", "ПБ", "ЭБ"];
+    const index = unit ?? telemetryUnit(value, undefined, units.length - 1);
+    return `${(index ? liveDecimal : decimal).format(value / 1000 ** index)} ${units[index]}`;
+  }
+  if (format === "compact")
+    return value < 100000 ? count(value) : compactCount.format(value);
+  if (format === "short")
+    return value < 1000 ? count(value) : compactCount.format(value);
   if (format === "pps") return `${count(value)} пак/с`;
+  if (format === "percent") return `${decimal.format(value)}%`;
   return count(value);
 }
 
@@ -367,51 +407,37 @@ export function telemetryFittedFontSize(baseSize, availableWidth, textWidth) {
   );
 }
 
-function fitTelemetryValue(node, from, target, format, canvas) {
+function fitTelemetryValue(node, labels, canvas) {
   if (!canvas || !node.classList.contains("telemetry-value")) return;
-  const labels = [
-    formatLiveNumber(from, format),
-    formatLiveNumber(target, format),
-  ];
-  const representative = labels.map((text) => {
-    if (text.startsWith("—")) return text;
-    if (["rate", "bytes", "pps"].includes(format))
-      return `999,9 ${text.slice(text.lastIndexOf(" ") + 1)}`;
-    return text.replace(/\d/g, "9");
-  });
-  fitTelemetryText(node, [...labels, ...representative], canvas);
-}
-
-function fitTelemetryText(node, labels, canvas) {
-  if (!canvas || !node.clientWidth) return;
-  const style = node.ownerDocument.defaultView.getComputedStyle(node);
-  const baseSize = Number.parseFloat(style.fontSize);
-  canvas.font = `${style.fontStyle} ${style.fontWeight} ${baseSize}px ${style.fontFamily}`;
-  const longest = labels.reduce(
-    (previous, text) =>
-      canvas.measureText(text).width > canvas.measureText(previous).width
-        ? text
-        : previous,
-    "",
-  );
-  const actualText = node.textContent;
-  // Verify using the real font features (including tabular digits), which Canvas
-  // does not reproduce exactly. This runs at sample rate, never in the RAF loop.
-  node.textContent = longest;
-  let fontSize = baseSize;
-  for (
-    let attempt = 0;
-    attempt < 3 && node.scrollWidth > node.clientWidth;
-    attempt++
-  ) {
-    fontSize = telemetryFittedFontSize(
-      fontSize,
-      node.clientWidth - 1,
-      node.scrollWidth,
-    );
-    node.style.fontSize = `${fontSize}px`;
+  const width = node.clientWidth;
+  let cached = fontFits.get(node);
+  if (!cached || cached.width !== width) {
+    node.style.removeProperty("font-size");
+    const style = node.ownerDocument.defaultView.getComputedStyle(node);
+    cached = {
+      width,
+      baseSize: Number.parseFloat(style.fontSize),
+      font: `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`,
+      required: 0,
+    };
+    fontFits.set(node, cached);
   }
-  node.textContent = actualText;
+  canvas.font = cached.font;
+  // Reserve tabular digit widths and a little space for the unit. Never resize
+  // back and forth with each sample, and never replace moving DOM to measure it.
+  const required = Math.max(
+    cached.required,
+    ...labels.map(
+      (text) => canvas.measureText(text.replace(/\d/g, "0")).width * 1.06,
+    ),
+  );
+  if (required <= cached.required) return;
+  cached.required = required;
+  const size = Math.max(
+    16,
+    telemetryFittedFontSize(cached.baseSize, width - 2, required),
+  );
+  node.style.fontSize = `${Math.min(cached.baseSize, size)}px`;
 }
 
 export function stopTelemetryAnimation(container) {
@@ -420,16 +446,16 @@ export function stopTelemetryAnimation(container) {
   if (animation.frame !== null)
     container.ownerDocument.defaultView.cancelAnimationFrame(animation.frame);
   animation.finish?.();
+  for (const node of container.querySelectorAll("[data-live-number]"))
+    stopTelemetryDigits(node);
   animations.delete(container);
 }
 
-/** Patch structure at 5 Hz; each animation frame touches only numbers and SVG paths. */
+/** Samples update targets at 5 Hz; a single frame loop follows them continuously. */
 export function updateTelemetryView(container, ctx) {
-  const owner = container.ownerDocument,
-    browser = owner.defaultView;
+  const owner = container.ownerDocument;
+  const browser = owner.defaultView;
   const previous = animations.get(container);
-  if (previous?.frame !== null && previous?.frame !== undefined)
-    browser.cancelAnimationFrame(previous.frame);
   const oldPaths = new Map(
     [...container.querySelectorAll("[data-live-path]")].map((node) => [
       node.dataset.livePath,
@@ -445,7 +471,10 @@ export function updateTelemetryView(container, ctx) {
 
   const snapshot = ctx.telemetry;
   const selection = `${ctx.telemetrySelection || "all"}:${ctx.telemetryExpanded?.kind || ""}:${ctx.telemetryExpanded?.period || ""}`;
-  const animate =
+  const reduced = browser.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+  const animate = Boolean(
     previous &&
     snapshot &&
     !ctx.telemetryError &&
@@ -455,81 +484,145 @@ export function updateTelemetryView(container, ctx) {
     snapshot.timestamp >= previous.timestamp &&
     snapshot.timestamp - previous.timestamp < MAX_GRAPH_GAP_SECONDS &&
     !owner.hidden &&
-    !browser.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const state = {
+    !reduced,
+  );
+  const state = previous || {
     frame: null,
     values: new Map(),
+    paths: new Map(),
+  };
+  const numbers = new Map();
+  const paths = new Map();
+  const canvas = owner.createElement("canvas").getContext("2d");
+  for (const node of container.querySelectorAll("[data-live-number]")) {
+    const key = node.dataset.liveNumber;
+    const format = node.dataset.liveFormat;
+    const target =
+      node.dataset.liveValue === "" ? null : Number(node.dataset.liveValue);
+    const old = state.values.get(key);
+    const cumulative = node.dataset.liveCounter === "true";
+    const follow =
+      animate &&
+      old?.format === format &&
+      finite(old.value) !== null &&
+      finite(target) !== null &&
+      !(cumulative && target < old.target);
+    const record = {
+      node,
+      target,
+      format,
+      value: follow ? old.value : target,
+      follower: follow ? old.follower : target,
+      unit: follow ? old.unit : undefined,
+    };
+    if (format === "rate" || format === "bytes")
+      record.unit = telemetryUnit(
+        record.value,
+        record.unit,
+        format === "bytes" ? 6 : 4,
+      );
+    const label = formatLiveNumber(record.value, format, record.unit);
+    const targetLabel = formatLiveNumber(target, format);
+    fitTelemetryValue(node, [label, targetLabel], canvas);
+    if (!animate || !old) paintTelemetryNumber(node, label, animate);
+    numbers.set(key, record);
+  }
+  for (const node of container.querySelectorAll("[data-live-path]")) {
+    const key = node.dataset.livePath;
+    const target = node.getAttribute("d");
+    const old = state.paths.get(key);
+    const from = oldPaths.get(key);
+    if (animate && old?.target === target) {
+      old.node = node;
+      paths.set(key, old);
+      if (from) node.setAttribute("d", from);
+    } else {
+      const tween =
+        animate && from !== target ? telemetryPathTween(from, target) : null;
+      const record = { node, target, tween, started: null };
+      paths.set(key, record);
+      if (tween) node.setAttribute("d", tween(0));
+    }
+  }
+  for (const [key, old] of state.values)
+    if (!numbers.has(key)) stopTelemetryDigits(old.node);
+  Object.assign(state, {
+    values: numbers,
+    paths,
     selection,
     demo: snapshot?.demo,
     timestamp: snapshot?.timestamp,
-    finish: null,
-  };
-  const numbers = [],
-    paths = [];
-  const canvas = owner.createElement("canvas").getContext("2d");
-  for (const node of container.querySelectorAll(".telemetry-meta")) {
-    const text = node.textContent;
-    fitTelemetryText(node, [text, text.replace(/\d/g, "9")], canvas);
-  }
-  for (const node of container.querySelectorAll("[data-live-number]")) {
-    const key = node.dataset.liveNumber,
-      format = node.dataset.liveFormat;
-    const target =
-      node.dataset.liveValue === "" ? null : Number(node.dataset.liveValue);
-    const old = previous?.values.get(key);
-    const cumulative = node.dataset.liveCounter === "true";
-    const from =
-      animate && old?.format === format && !(cumulative && target < old.target)
-        ? old.value
-        : target;
-    fitTelemetryValue(node, from, target, format, canvas);
-    const record = { value: target, target, format };
-    state.values.set(key, record);
-    if (finite(from) !== null && finite(target) !== null && from !== target) {
-      numbers.push({ node, from, target, format, record });
-      record.value = from;
-      node.textContent = formatLiveNumber(from, format);
-    }
-  }
-  if (animate)
-    for (const node of container.querySelectorAll("[data-live-path]")) {
-      const target = node.getAttribute("d"),
-        from = oldPaths.get(node.dataset.livePath);
-      const tween =
-        from && from !== target ? telemetryPathTween(from, target) : null;
-      if (tween) {
-        paths.push({ node, target, tween });
-        node.setAttribute("d", tween(0));
-      }
-    }
-  const paint = (progress) => {
-    for (const item of numbers) {
-      item.record.value = interpolateTelemetryValue(
-        item.from,
-        item.target,
-        progress,
+  });
+  const paintNumbers = (motion) => {
+    for (const item of state.values.values()) {
+      if (item.format === "rate" || item.format === "bytes")
+        item.unit = telemetryUnit(
+          item.value,
+          item.unit,
+          item.format === "bytes" ? 6 : 4,
+        );
+      paintTelemetryNumber(
+        item.node,
+        formatLiveNumber(item.value, item.format, item.unit),
+        motion,
       );
-      const text = formatLiveNumber(item.record.value, item.format);
-      if (item.node.textContent !== text) item.node.textContent = text;
     }
-    for (const item of paths) item.node.setAttribute("d", item.tween(progress));
   };
-  state.finish = () => paint(1);
+  state.finish = () => {
+    for (const item of state.values.values())
+      item.value = item.follower = item.target;
+    for (const item of state.paths.values()) {
+      item.node.setAttribute("d", item.target);
+      item.tween = null;
+    }
+    paintNumbers(false);
+  };
   animations.set(container, state);
-  if (!numbers.length && !paths.length) return;
-  let started;
+  if (!animate) {
+    if (state.frame !== null) browser.cancelAnimationFrame(state.frame);
+    state.frame = null;
+    state.finish();
+    return;
+  }
+  if (state.frame !== null) return;
+  state.lastFrame = browser.performance.now();
+  state.lastPaint = state.lastFrame;
   const frame = (now) => {
     if (!container.isConnected || owner.hidden) {
       stopTelemetryAnimation(container);
       return;
     }
-    started ??= now;
-    const elapsed = Math.min(1, (now - started) / ANIMATION_MS);
-    const done =
-      elapsed === 1 ||
-      browser.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    paint(done ? 1 : 1 - (1 - elapsed) ** 3);
-    state.frame = done ? null : browser.requestAnimationFrame(frame);
+    if (browser.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      state.frame = null;
+      state.finish();
+      return;
+    }
+    let moving = false;
+    for (const item of state.values.values()) {
+      const updated = advanceTelemetryNumber(
+        item.value,
+        item.follower,
+        item.target,
+        now - state.lastFrame,
+      );
+      item.value = updated.value;
+      item.follower = updated.follower;
+      moving ||= item.value !== item.target || item.follower !== item.target;
+    }
+    for (const item of state.paths.values()) {
+      if (!item.tween) continue;
+      item.started ??= now;
+      const progress = Math.min(1, (now - item.started) / PATH_ANIMATION_MS);
+      item.node.setAttribute("d", item.tween(progress));
+      if (progress === 1) item.tween = null;
+      else moving = true;
+    }
+    state.lastFrame = now;
+    if (now - state.lastPaint >= NUMBER_PAINT_MS || !moving) {
+      paintNumbers(true);
+      state.lastPaint = now;
+    }
+    state.frame = moving ? browser.requestAnimationFrame(frame) : null;
   };
   state.frame = browser.requestAnimationFrame(frame);
 }
@@ -540,8 +633,11 @@ function selectedMetrics(snapshot, selection) {
     values(snapshot?.interfaces).find((item) => item.name === selection) || {}
   );
 }
-function metric(label, value, meta, e, animation = "") {
-  return `<article class="telemetry-metric"><span class="telemetry-label">${e(label)}</span><strong ${animation}title="${e(value)}" class="telemetry-value">${e(value)}</strong><small title="${e(meta)}" class="telemetry-meta">${e(meta)}</small></article>`;
+function metric(label, value, meta, e, animation = "", details = "") {
+  return `<article class="telemetry-metric"><span class="telemetry-label">${e(label)}</span><strong ${animation}title="${e(value)}" class="telemetry-value">${e(value)}</strong><small title="${e(meta)}" class="telemetry-meta">${details || e(meta)}</small></article>`;
+}
+function metricDetails(label, html, e) {
+  return `<span class="telemetry-meta-label">${e(label)}</span><span class="telemetry-meta-value">${html}</span>`;
 }
 function duration(value) {
   const seconds = finite(value);
@@ -717,6 +813,11 @@ export function renderTelemetry(ctx) {
       `Получено: ${formatBytes(stats.rx_bytes)}`,
       e,
       numberAttributes("summary-rx", stats.rx_bps, "rate", e),
+      metricDetails(
+        "Получено",
+        liveNumber("summary-rx-bytes", stats.rx_bytes, "bytes", e, true),
+        e,
+      ),
     ),
     metric(
       "Исходящая скорость · TX",
@@ -724,13 +825,23 @@ export function renderTelemetry(ctx) {
       `Отправлено: ${formatBytes(stats.tx_bytes)}`,
       e,
       numberAttributes("summary-tx", stats.tx_bps, "rate", e),
+      metricDetails(
+        "Отправлено",
+        liveNumber("summary-tx-bytes", stats.tx_bytes, "bytes", e, true),
+        e,
+      ),
     ),
     metric(
       "Пакеты / с",
       count(packetRate),
       `Всего RX / TX: ${count(stats.rx_packets)} / ${count(stats.tx_packets)}`,
       e,
-      numberAttributes("summary-packets", packetRate, "count", e),
+      numberAttributes("summary-packets", packetRate, "short", e),
+      metricDetails(
+        "Всего RX / TX",
+        `${liveNumber("summary-rx-packets", stats.rx_packets, "compact", e, true)} / ${liveNumber("summary-tx-packets", stats.tx_packets, "compact", e, true)}`,
+        e,
+      ),
     ),
     metric(
       "Активные соединения",
@@ -738,6 +849,11 @@ export function renderTelemetry(ctx) {
       `Лимит таблицы: ${count(connections.limit)}`,
       e,
       numberAttributes("summary-connections", connections.active, "count", e),
+      metricDetails(
+        "Лимит таблицы",
+        liveNumber("summary-connection-limit", connections.limit, "count", e),
+        e,
+      ),
     ),
     metric(
       "Устройства",
@@ -745,6 +861,11 @@ export function renderTelemetry(ctx) {
       `Действующих аренд DHCP: ${count(observed.dhcp_leases)}`,
       e,
       numberAttributes("summary-devices", observed.count, "count", e),
+      metricDetails(
+        "Аренд DHCP",
+        liveNumber("summary-leases", observed.dhcp_leases, "count", e),
+        e,
+      ),
     ),
     metric(
       "Накопленный трафик",
@@ -757,6 +878,11 @@ export function renderTelemetry(ctx) {
         "bytes",
         e,
         true,
+      ),
+      metricDetails(
+        "Интерфейс",
+        e(effectiveSelection === "all" ? scope : effectiveSelection),
+        e,
       ),
     ),
   ].join(

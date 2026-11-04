@@ -6,7 +6,7 @@ import {
   mergeStoredTelemetryHistory,
   stopTelemetryAnimation,
   updateTelemetryView,
-} from "./telemetry-ui.js?v=5";
+} from "./telemetry-ui.js?v=6";
 import {
   hasWriteAccess,
   isReadAction,
@@ -33,7 +33,7 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=8";
+} from "./router-pages.js?v=9";
 
 const paths = {
   grip: "M8 5h.01 M16 5h.01 M8 12h.01 M16 12h.01 M8 19h.01 M16 19h.01",
@@ -140,6 +140,7 @@ function applyAccessControls() {
   applyReadAccess(document, state);
 }
 function clearSession() {
+  setNavigationOpen(false);
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   resetUpdates();
   resetConnections();
@@ -339,6 +340,20 @@ function target(rule) {
 function navButton(id, label, ico, count = "", activeViews = [id]) {
   return `<button class="nav-item ${activeViews.includes(view) ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${label}${count !== "" ? `<span class="count">${count}</span>` : ""}</button>`;
 }
+function setNavigationOpen(open, focus = false) {
+  const sidebar = document.querySelector("#sidebar");
+  const mobile = window.matchMedia("(max-width: 680px)").matches;
+  sidebar?.classList.toggle("open", open && mobile);
+  document.body.classList.toggle("mobile-navigation-open", open && mobile);
+  const main = document.querySelector("main");
+  if (main) main.inert = open && mobile;
+  const button = document.querySelector('[data-action="menu"].mobile-menu');
+  button?.setAttribute("aria-expanded", String(open && mobile));
+  if (focus)
+    (open ? sidebar?.querySelector(".nav-item.active") : button)?.focus({
+      preventScroll: true,
+    });
+}
 function navGroup(id, label, ico, content) {
   const expanded = expandedGroups.has(id);
   return `<button class="nav-group-toggle" data-action="nav-group" data-group="${id}" aria-expanded="${expanded}" aria-controls="nav-group-${id}">${icon(ico)}${label}<span class="nav-group-arrow">${icon("chevron")}</span></button><div class="nav-group-children" id="nav-group-${id}" ${expanded ? "" : "hidden"}>${content}</div>`;
@@ -397,12 +412,12 @@ async function refreshUsers() {
   usersRequest = request;
   return request;
 }
-function stat(title, number, meta, ico, green = false) {
-  return `<div class="stat"><div class="stat-icon ${green ? "green" : ""}">${icon(ico)}</div><div><div class="stat-title">${title}</div><div class="stat-number">${number}</div><div class="stat-meta">${meta}</div></div></div>`;
+function stat(title, number, meta) {
+  return `<div class="configuration-stat" title="${e(meta)}"><span>${e(title)}</span><strong>${e(number)}</strong></div>`;
 }
 
 function brandMarkup() {
-  return `<div class="brand"><img src="/logo.png?v=4" alt="OpenMikroRout"><div class="brand-word"><strong>Open<span>Mikro</span>Rout</strong><small>OPEN NETWORK ROUTER</small></div></div>`;
+  return `<div class="brand"><img src="/logo.png?v=5" alt="OpenMikroRout"><div class="brand-word"><strong>Open<span>Mikro</span>Rout</strong><small>OPEN NETWORK ROUTER</small></div></div>`;
 }
 function accountMarkup() {
   const user = currentUser();
@@ -567,18 +582,19 @@ function render() {
       <div class="workspace"><div class="workspace-icon">${icon("server")}</div><div><b>${isDemo() ? "Demo Router" : e(state.hostname)}</b><small>${isDemo() ? "DEMO WORKSPACE" : "LINUX GATEWAY"}</small></div></div>
       <nav class="sidebar-navigation" aria-label="Настройки роутера">${renderNavigation(count)}</nav>
       <div class="sidebar-bottom"><button class="nav-item" data-action="help">${icon("help")}Справка</button><div class="engine-card"><span class="version">v${e(state.version || "0.3.0")}</span><b><span class="dot"></span>${isDemo() ? "Demo engine" : "Linux router"}</b><br>${isDemo() ? "Сеть хоста не изменяется" : "IPv4 · iptables · dnsmasq"}</div>${accountMarkup()}</div>
-    </aside>
-    <main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" data-action="menu">${icon("menu")}</button>${icon("network")}<span>OpenMikroRout</span>${icon("chevron")}<b>${e(title)}</b></div><div class="topbar-right"><span class="muted"><span class="dot"></span>${offline ? "Нет соединения" : "Сервер подключён"}</span><span class="divider"></span><span class="mode-chip ${isDemo() ? "" : "live"}">${isDemo() ? "DEMO MODE" : "LINUX · LIVE"}</span></div></header>
+    </aside><button class="sidebar-scrim" data-action="menu" aria-label="Закрыть меню" tabindex="-1"></button>
+    <main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false" data-action="menu">${icon("menu")}</button>${icon("network")}<span>OpenMikroRout</span>${icon("chevron")}<b>${e(title)}</b></div><div class="topbar-right"><span class="muted"><span class="dot"></span>${offline ? "Нет соединения" : "Сервер подключён"}</span><span class="divider"></span><span class="mode-chip ${isDemo() ? "" : "live"}">${isDemo() ? "DEMO MODE" : "LINUX · LIVE"}</span></div></header>
     <div class="content">${state.runtime_error ? `<div class="connection-error" role="alert">${icon("info")} Восстановление конфигурации требует внимания: ${e(state.runtime_error)}</div>` : ""}${offline ? '<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>' : ""}
       ${!canWrite() ? `<div class="read-only-banner">${icon("lock")}Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}
-      <div class="page-heading"><div><div class="eyebrow">OPEN NETWORK ROUTER</div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Backup</span></button></div></div>
-      ${["overview", "users", "security", "updates", "connections"].includes(view) ? "" : `<div class="stats">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`, "network")}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации", "grid")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`, "server", true)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`, "shield")}</div>`}
+      <div class="page-heading"><div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Backup</span></button></div></div>
+      ${["overview", "users", "security", "updates", "connections"].includes(view) ? "" : `<div class="configuration-summary" aria-label="Сводка конфигурации">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
       <section class="panel ${view === "overview" ? "overview-panel" : ""}">${tabs.length ? `<div class="panel-tabs">${tabs.map(([id, label, ico, total]) => `<button class="panel-tab ${view === id ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${label}<span class="tab-count">${total}</span></button>`).join("")}</div>` : ""}${body}</section>
-      ${["overview", "users", "security", "updates", "connections"].includes(view) ? "" : `<div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div>`}
+      ${["overview", "users", "security", "updates", "connections"].includes(view) ? "" : `<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div></details>`}
       <div class="page-footer"><span>${icon("shield")}OpenMikroRout · Your network. Your rules.</span><span>Lightweight Linux router · IPv4</span></div>
     </div><div id="statusbar">${renderStatus()}</div></main></div>`;
   const navigation = document.querySelector(".sidebar-navigation");
   if (navigation) navigation.scrollTop = sidebarScroll;
+  setNavigationOpen(sidebarOpen);
   applyAccessControls();
 }
 
@@ -1145,7 +1161,10 @@ async function handleAction(button) {
     return;
   }
   if (action === "menu") {
-    document.querySelector("#sidebar").classList.toggle("open");
+    setNavigationOpen(
+      !document.querySelector("#sidebar")?.classList.contains("open"),
+      true,
+    );
     return;
   }
   if (action === "nav-group") {
@@ -1225,7 +1244,7 @@ async function handleAction(button) {
     view = nextView;
     if (view === "security") await refreshSecurity();
     if (window.matchMedia("(max-width: 680px)").matches)
-      document.querySelector("#sidebar")?.classList.remove("open");
+      setNavigationOpen(false);
     selected.clear();
     render();
     if (
@@ -1693,6 +1712,15 @@ document.addEventListener("dblclick", (event) => {
     openEditor(row.dataset.rule);
 });
 document.addEventListener("keydown", (event) => {
+  if (
+    event.key === "Escape" &&
+    !dialog.open &&
+    document.querySelector("#sidebar.open")
+  ) {
+    event.preventDefault();
+    setNavigationOpen(false, true);
+    return;
+  }
   if (telemetryExpanded) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -1964,6 +1992,9 @@ function startPolling() {
   countdownTimer = setInterval(updateCountdown, 1000);
 }
 startPolling();
+window
+  .matchMedia("(max-width: 680px)")
+  .addEventListener("change", () => setNavigationOpen(false));
 window.addEventListener("pagehide", () => {
   alive = false;
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
