@@ -222,6 +222,7 @@ class LoginRequest(Model):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
     username: str = Field(default="admin", min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=512, repr=False)
+    code: str = Field(default="", max_length=64, repr=False)
 
     @field_validator("username")
     @classmethod

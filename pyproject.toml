@@ -1,9 +1,9 @@
 [project]
 name = "openmikrorout"
-version = "0.2.0"
+version = "0.3.0"
 description = "A lightweight Linux router with a WinBox-inspired web console"
 requires-python = ">=3.11"
-dependencies = ["fastapi==0.162.0", "uvicorn[standard]==0.54.0", "pydantic==2.14.2", "starlette==1.10.0"]
+dependencies = ["fastapi==0.162.0", "uvicorn[standard]==0.54.0", "pydantic==2.14.2", "starlette==1.10.0", "cryptography==50.0.2", "qrcode==8.2"]
 
 [project.optional-dependencies]
 dev = ["pytest==8.3.5", "httpx==0.28.1", "ruff==0.11.7", "mypy==1.15.0"]

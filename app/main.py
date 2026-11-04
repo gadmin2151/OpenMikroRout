@@ -10,10 +10,10 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -34,12 +34,16 @@ from app.auth import (
     normalize_username,
 )
 from app.compiler import FirewallError
+from app.connections import ConnectionMonitor, ConnectionQuery, ConnectionSnapshot
 from app.demo import demo_config
 from app.firewall import Conflict, DemoDriver, Driver, FirewallService, LinuxDriver
 from app.models import Configuration, ConfirmRequest, LoginRequest, RevisionRequest, SaveRequest
 from app.runtime import RouterRuntime, create_runtime
 from app.storage import Store
 from app.telemetry import TelemetryCollector, TelemetrySnapshot
+from app.totp import CredentialProof, TotpEnrollment, TotpRecovery, TotpStatus
+from app.updates import UpdateApply, UpdateError, UpdateJob, UpdateService, UpdateStatus
+from app.version import VERSION
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -51,6 +55,17 @@ def environment(name: str, legacy: str, default: str = "") -> str:
 
 @dataclass
 class Settings:
+    updates_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OMR_UPDATES_ENABLED", "0") == "1"
+    )
+    update_config: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("OMR_UPDATE_CONFIG", "/etc/openmikrorout-update.json")
+        )
+    )
+    monitor_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OMR_MONITOR_ENABLED", "1") == "1"
+    )
     mode: str = field(default_factory=lambda: environment("OMR_MODE", "NAT_MODE", "demo"))
     data_dir: Path = field(
         default_factory=lambda: Path(environment("OMR_DATA_DIR", "NAT_DATA_DIR", "data"))
@@ -113,6 +128,13 @@ def create_app(
     )
     service = FirewallService(store, driver, runtime=runtime)
     telemetry = TelemetryCollector(settings.mode, settings.data_dir)
+    connections = ConnectionMonitor(
+        settings.mode == "demo" or injected_driver, enabled=settings.monitor_enabled
+    )
+    updates = UpdateService(
+        settings.mode == "linux" and settings.updates_enabled and not injected_driver,
+        settings.update_config,
+    )
     stop = threading.Event()
     auth = AuthService(
         settings.data_dir,
@@ -151,23 +173,27 @@ def create_app(
                 )
             thread = threading.Thread(target=watchdog, daemon=True, name="router-rollback")
             thread.start()
+            connections.start()
             try:
                 yield
             finally:
                 stop.set()
+                connections.stop()
                 thread.join(timeout=20)
                 if store.read("pending"):
                     service.rollback("Service stopped before confirmation")
 
     app = FastAPI(
         title="OpenMikroRout",
-        version="0.2.0",
+        version=VERSION,
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
     )
     app.state.service = service
+    app.state.connections = connections
+    app.state.updates = updates
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 
     @app.middleware("http")
@@ -212,7 +238,15 @@ def create_app(
             and not denied
             and auth.enabled
             and request.method not in ("GET", "HEAD")
-            and request.url.path not in ("/api/login", "/api/logout", "/api/preview")
+            and request.url.path
+            not in (
+                "/api/login",
+                "/api/logout",
+                "/api/preview",
+                "/api/me/totp/setup",
+                "/api/me/totp/confirm",
+                "/api/me/totp/disable",
+            )
         ):
             user = request.state.current_user
             if user is None:
@@ -221,6 +255,16 @@ def create_app(
                 denied = JSONResponse(
                     {"detail": "This account has read-only access"}, status_code=403
                 )
+        if (
+            api_request
+            and denied is None
+            and request.method not in ("GET", "HEAD")
+            and request.url.path != "/api/logout"
+            and updates.active()
+        ):
+            denied = JSONResponse(
+                {"detail": "Выполняется обновление сервиса. Дождитесь завершения."}, status_code=423
+            )
         response = denied if denied is not None else await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
@@ -250,6 +294,10 @@ def create_app(
     async def auth_handler(_: Request, exc: AuthError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
 
+    @app.exception_handler(UpdateError)
+    async def update_handler(_: Request, exc: UpdateError) -> JSONResponse:
+        return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+
     @app.exception_handler(Conflict)
     async def conflict_handler(_: Request, exc: Conflict) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=409)
@@ -269,26 +317,91 @@ def create_app(
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "mode": settings.mode}
+        return {"status": "ok", "mode": settings.mode, "version": VERSION}
 
     @app.get("/api/session")
     def session(request: Request) -> SessionResponse:
         return SessionResponse(auth_enabled=auth.enabled, user=request.state.current_user)
 
+    def session_cookie(response: Response, token: str) -> None:
+        response.set_cookie(
+            "nat_session",
+            token,
+            httponly=True,
+            samesite="strict",
+            secure=settings.secure_cookie,
+            max_age=28_800,
+            path="/api",
+        )
+
+    def account_actor(request: Request) -> PublicUser:
+        user = authenticated(request)
+        if user is None:
+            raise HTTPException(409, "Enable authentication before managing account security")
+        return user
+
+    def client_address(request: Request) -> str:
+        return request.client.host if request.client else "unknown"
+
+    @app.get("/api/updates", dependencies=[Depends(full_access)])
+    def update_status() -> UpdateStatus:
+        return updates.status()
+
+    @app.post("/api/updates/check", dependencies=[Depends(full_access)])
+    def update_check() -> UpdateStatus:
+        return updates.check()
+
+    @app.post("/api/updates/apply", status_code=202, dependencies=[Depends(full_access)])
+    def update_apply(body: UpdateApply, request: Request) -> UpdateJob:
+        actor = account_actor(request)
+        auth.reauthenticate(actor, body, client_address(request))
+        with service.lock:
+            current = service.state()
+            if current["pending"] or current["dirty"] or current["runtime_error"]:
+                raise Conflict(
+                    "Apply or discard the router draft and resolve recovery errors before updating"
+                )
+            job = updates.queue(body.check_id)
+            store.write({}, "update_requested", f"{actor.username}: {job.version}")
+            return job
+
+    @app.get("/api/me/totp")
+    def totp_status(request: Request) -> TotpStatus:
+        return auth.totp_status(account_actor(request))
+
+    @app.post("/api/me/totp/setup")
+    def totp_setup(body: CredentialProof, request: Request) -> TotpEnrollment:
+        return auth.totp_setup(account_actor(request), body, client_address(request))
+
+    @app.post("/api/me/totp/confirm")
+    def totp_confirm(body: CredentialProof, request: Request, response: Response) -> TotpRecovery:
+        actor = account_actor(request)
+        result, token = auth.totp_confirm(actor, body, client_address(request))
+        session_cookie(response, token)
+        store.write({}, "totp_enabled", actor.username)
+        return result
+
+    @app.post("/api/me/totp/disable")
+    def totp_disable(body: CredentialProof, request: Request, response: Response) -> TotpStatus:
+        actor = account_actor(request)
+        token = auth.totp_disable(actor, body, client_address(request))
+        session_cookie(response, token)
+        store.write({}, "totp_disabled", actor.username)
+        return TotpStatus(enabled=False, recovery_codes_remaining=0)
+
+    @app.post("/api/users/{user_id}/totp/reset", dependencies=[Depends(full_access)])
+    def totp_reset(user_id: UUID, body: CredentialProof, request: Request) -> dict[str, bool]:
+        actor = account_actor(request)
+        auth.totp_reset(str(user_id), actor, body, client_address(request))
+        store.write({}, "totp_reset", f"{actor.username}: {user_id}")
+        return {"ok": True}
+
     @app.post("/api/login")
     def login(body: LoginRequest, request: Request, response: Response) -> LoginResponse:
         client = request.client.host if request.client else "unknown"
-        token, user = auth.login(body.username, body.password, client)
+        token, user = auth.login(body.username, body.password, client, body.code)
         if token is not None:
-            response.set_cookie(
-                "nat_session",
-                token,
-                httponly=True,
-                samesite="strict",
-                secure=settings.secure_cookie,
-                max_age=28_800,
-                path="/api",
-            )
+            session_cookie(response, token)
         return LoginResponse(auth_enabled=auth.enabled, user=user)
 
     @app.post("/api/logout")
@@ -324,7 +437,7 @@ def create_app(
             "platform": platform.system(),
             "confirm_seconds": service.confirm_seconds,
             "application": "OpenMikroRout",
-            "version": "0.2.0",
+            "version": VERSION,
             "auth_enabled": auth.enabled,
             "current_user": request.state.current_user,
         }
@@ -360,6 +473,10 @@ def create_app(
     @app.get("/api/telemetry", dependencies=[Depends(authenticated)])
     def router_telemetry() -> TelemetrySnapshot:
         return telemetry.snapshot()
+
+    @app.get("/api/connections", dependencies=[Depends(authenticated)])
+    def incoming_connections(query: Annotated[ConnectionQuery, Query()]) -> ConnectionSnapshot:
+        return connections.snapshot(query)
 
     @app.get("/api/audit", dependencies=[Depends(authenticated)])
     def audit() -> list[dict[str, Any]]:

@@ -1,0 +1,10 @@
+{
+  "public_key": "/etc/openmikrorout-update.pub",
+  "state_dir": "/var/lib/openmikrorout/updates",
+  "data_dir": "/var/lib/openmikrorout",
+  "install_dir": "/opt/openmikrorout",
+  "releases_dir": "/opt/openmikrorout-releases",
+  "backup_dir": "/var/backups/openmikrorout",
+  "service": "openmikrorout.service",
+  "health_url": "http://127.0.0.1:8088/api/health"
+}

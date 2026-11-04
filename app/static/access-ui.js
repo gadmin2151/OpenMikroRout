@@ -19,6 +19,16 @@ const readActions = new Set([
   "router-edit",
   "router-port-edit",
   "router-reload-dns",
+  "security-enroll",
+  "security-setup",
+  "security-confirm",
+  "security-disable-open",
+  "security-disable",
+  "security-download",
+  "connections-kind",
+  "connections-filter",
+  "connections-reset",
+  "connections-refresh",
 ]);
 export function hasWriteAccess(state) {
   return (

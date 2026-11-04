@@ -24,7 +24,7 @@ ProtectKernelTunables=no
 ReadOnlyPaths=/proc/sys
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK AF_PACKET
 # iptables uses /run/xtables.lock. Do not isolate this lock from host iptables.
 ReadWritePaths=/var/lib/nat-panel /run /proc/sys/net/ipv4/ip_forward
 

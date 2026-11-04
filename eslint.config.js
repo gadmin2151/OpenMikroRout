@@ -17,6 +17,7 @@ export default [
           "FormData",
           "Blob",
           "URL",
+          "URLSearchParams",
           "crypto",
           "AbortSignal",
           "AbortController",

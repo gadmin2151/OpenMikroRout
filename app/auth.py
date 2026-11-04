@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -20,6 +21,20 @@ from typing import Literal, Self, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+
+from app.totp import (
+    ENROLLMENT_SECONDS,
+    CredentialProof,
+    TotpEnrollment,
+    TotpRecovery,
+    TotpStatus,
+    TotpVault,
+    enrollment,
+    matching_counter,
+    new_recovery_codes,
+    new_secret,
+    recovery_digest,
+)
 
 Role = Literal["read", "full"]
 HASH_ITERATIONS = 600_000
@@ -91,6 +106,7 @@ class PublicUser(BaseModel):
     id: str
     username: str
     role: Role
+    totp_enabled: bool = False
 
 
 class ManagedUser(PublicUser):
@@ -166,9 +182,16 @@ class UserRecord:
     created_at: float
     version: int
     password: str = field(repr=False)
+    totp_secret: str | None = field(default=None, repr=False)
+    totp_pending: str | None = field(default=None, repr=False)
+    totp_pending_at: float | None = None
+    totp_last_counter: int = -1
+    totp_recovery: str = field(default="[]", repr=False)
 
     def public(self) -> PublicUser:
-        return PublicUser(id=self.id, username=self.username, role=self.role)
+        return PublicUser(
+            id=self.id, username=self.username, role=self.role, totp_enabled=bool(self.totp_secret)
+        )
 
     def managed(self) -> ManagedUser:
         return ManagedUser(
@@ -185,6 +208,11 @@ def record(row: sqlite3.Row) -> UserRecord:
         created_at=float(row["created_at"]),
         version=int(row["version"]),
         password=str(row["password_hash"]),
+        totp_secret=row["totp_secret"],
+        totp_pending=row["totp_pending"],
+        totp_pending_at=row["totp_pending_at"],
+        totp_last_counter=int(row["totp_last_counter"]),
+        totp_recovery=str(row["totp_recovery"]),
     )
 
 
@@ -233,6 +261,17 @@ class AuthStore:
                 created_at REAL NOT NULL,
                 version INTEGER NOT NULL DEFAULT 1 CHECK(version > 0)
             )""")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+            additions = {
+                "totp_secret": "TEXT",
+                "totp_pending": "TEXT",
+                "totp_pending_at": "REAL",
+                "totp_last_counter": "INTEGER NOT NULL DEFAULT -1",
+                "totp_recovery": "TEXT NOT NULL DEFAULT '[]'",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    db.execute(f"ALTER TABLE users ADD COLUMN {name} {definition}")
 
     @contextmanager
     def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
@@ -380,10 +419,19 @@ class AuthService:
         self.sessions: dict[str, LoginSession] = {}
         self.attempts: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
         self.dummy = password_hash(secrets.token_urlsafe(32)) if self.enabled else ""
+        self.vault: TotpVault | None = None
         if self.store:
             self.store.bootstrap(username, password, read_username, read_password)
             if not self.store.has_enabled_full():
                 raise RuntimeError("The account database requires an enabled full-access account")
+            with self.store.connection() as db:
+                required = bool(
+                    db.execute(
+                        "SELECT 1 FROM users WHERE totp_secret IS NOT NULL "
+                        "OR totp_pending IS NOT NULL LIMIT 1"
+                    ).fetchone()
+                )
+            self.vault = TotpVault(data_dir / "totp.key", required=required)
 
     def require_store(self) -> AuthStore:
         if self.store is None:
@@ -408,12 +456,7 @@ class AuthService:
             return None
         return current.public()
 
-    def login(
-        self, username: str, password: str, client: str
-    ) -> tuple[str | None, PublicUser | None]:
-        if not self.enabled:
-            return None, None
-        username = normalize_username(username)
+    def _attempt(self, client: str, username: str) -> tuple[tuple[str, str], ...]:
         now = self.clock()
         keys = ((client[:128], ""), (client[:128], username))
         with self.lock:
@@ -425,21 +468,55 @@ class AuthService:
                 self.attempts.move_to_end(key)
             while len(self.attempts) > MAX_ATTEMPT_KEYS:
                 self.attempts.popitem(last=False)
+        return keys
+
+    def _password(self, user: UserRecord | None, password: str) -> bool:
         if not self.hash_slots.acquire(blocking=False):
             raise AuthError(429, "Authentication is busy. Try again shortly.")
         try:
-            user = self.require_store().by_name(username)
-            valid = password_matches(password, user.password if user else self.dummy)
+            return password_matches(password, user.password if user else self.dummy)
         finally:
             self.hash_slots.release()
-        if not user or not valid or not user.enabled:
-            raise AuthError(401, "Incorrect username or password")
+
+    def _factor(self, db: sqlite3.Connection, user: UserRecord, code: str) -> None:
+        if not user.totp_secret:
+            return
+        if self.vault is None:
+            raise AuthError(503, "Authenticator storage is unavailable")
+        secret = self.vault.decrypt(user.id, "active", user.totp_secret)
+        counter = matching_counter(secret, code, self.clock(), user.totp_last_counter)
+        if counter is not None:
+            db.execute("UPDATE users SET totp_last_counter=? WHERE id=?", (counter, user.id))
+            return
+        codes = self._recovery(user)
+        digest = recovery_digest(user.id, code)
+        for index, expected in enumerate(codes):
+            if hmac.compare_digest(digest, expected):
+                del codes[index]
+                db.execute(
+                    "UPDATE users SET totp_recovery=? WHERE id=?", (json.dumps(codes), user.id)
+                )
+                return
+        raise AuthError(401, "Incorrect password or authenticator code")
+
+    @staticmethod
+    def _recovery(user: UserRecord) -> list[str]:
+        try:
+            values = json.loads(user.totp_recovery)
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) for value in values
+            ):
+                raise ValueError("Invalid recovery data")
+            return cast(list[str], values)
+        except (ValueError, TypeError) as exc:
+            raise AuthError(503, "Authenticator storage is unavailable") from exc
+
+    def _session(self, user: UserRecord) -> tuple[str, PublicUser]:
+        now = self.clock()
         with self.lock:
             current = self.require_store().by_id(user.id)
             if current is None or not current.enabled or current.version != user.version:
-                raise AuthError(401, "Incorrect username or password")
-            for key in keys:
-                self.attempts.pop(key, None)
+                raise AuthError(401, "Account changed; sign in again")
             self.sessions = {
                 key: value for key, value in self.sessions.items() if value.expires > now
             }
@@ -450,6 +527,159 @@ class AuthService:
                 user.id, user.version, now + SESSION_SECONDS
             )
         return token, user.public()
+
+    def login(
+        self, username: str, password: str, client: str, code: str = ""
+    ) -> tuple[str | None, PublicUser | None]:
+        if not self.enabled:
+            return None, None
+        username = normalize_username(username)
+        keys = self._attempt(client, username)
+        user = self.require_store().by_name(username)
+        valid = self._password(user, password)
+        if not user or not valid or not user.enabled:
+            raise AuthError(401, "Incorrect username or password")
+        with self.require_store().connection(write=True) as db:
+            row = db.execute("SELECT * FROM users WHERE id=?", (user.id,)).fetchone()
+            if row is None:
+                raise AuthError(401, "Incorrect username or password")
+            current = record(row)
+            if not current.enabled or current.version != user.version:
+                raise AuthError(401, "Incorrect username or password")
+            self._factor(db, current, code.strip())
+        result = self._session(current)
+        with self.lock:
+            for key in keys:
+                self.attempts.pop(key, None)
+        return result
+
+    def reauthenticate(
+        self, actor: PublicUser, proof: CredentialProof, client: str, *, clear_attempts: bool = True
+    ) -> UserRecord:
+        keys = self._attempt("proof:" + client, actor.id)
+        user = self.require_store().by_id(actor.id)
+        if (
+            not self._password(user, proof.password.get_secret_value())
+            or not user
+            or not user.enabled
+        ):
+            raise AuthError(403, "Incorrect password or authenticator code")
+        with self.require_store().connection(write=True) as db:
+            row = db.execute("SELECT * FROM users WHERE id=?", (user.id,)).fetchone()
+            if row is None or record(row).version != user.version:
+                raise AuthError(401, "Account changed; sign in again")
+            try:
+                self._factor(db, record(row), proof.code.get_secret_value().strip())
+            except AuthError as exc:
+                if exc.status == 401:
+                    raise AuthError(403, str(exc)) from exc
+                raise
+        if clear_attempts:
+            with self.lock:
+                for key in keys:
+                    self.attempts.pop(key, None)
+        return user
+
+    def totp_status(self, actor: PublicUser) -> TotpStatus:
+        user = self.require_store().by_id(actor.id)
+        if not user:
+            raise AuthError(401, "Sign in again")
+        return TotpStatus(
+            enabled=bool(user.totp_secret), recovery_codes_remaining=len(self._recovery(user))
+        )
+
+    def totp_setup(self, actor: PublicUser, proof: CredentialProof, client: str) -> TotpEnrollment:
+        user = self.reauthenticate(actor, proof, client)
+        if user.totp_secret:
+            raise AuthError(409, "Disable the current authenticator before enrolling another one")
+        assert self.vault is not None
+        secret = new_secret()
+        now = self.clock()
+        with self.require_store().connection(write=True) as db:
+            cursor = db.execute(
+                "UPDATE users SET totp_pending=?,totp_pending_at=? WHERE id=? "
+                "AND version=? AND totp_secret IS NULL",
+                (self.vault.encrypt(user.id, "pending", secret), now, user.id, user.version),
+            )
+            if cursor.rowcount != 1:
+                raise AuthError(409, "Account changed; repeat authenticator setup")
+        return enrollment(secret, user.username, now + ENROLLMENT_SECONDS)
+
+    def totp_confirm(
+        self, actor: PublicUser, proof: CredentialProof, client: str
+    ) -> tuple[TotpRecovery, str]:
+        # Password verification and pending-key validation are separate from active 2FA.
+        user = self.reauthenticate(actor, proof, client, clear_attempts=False)
+        assert self.vault is not None
+        with self.require_store().connection(write=True) as db:
+            row = db.execute("SELECT * FROM users WHERE id=?", (user.id,)).fetchone()
+            if row is None:
+                raise AuthError(401, "Sign in again")
+            current = record(row)
+            if (
+                current.version != user.version
+                or current.totp_secret
+                or not current.totp_pending
+                or current.totp_pending_at is None
+                or not 0 <= self.clock() - current.totp_pending_at <= ENROLLMENT_SECONDS
+            ):
+                raise AuthError(409, "Authenticator setup expired or changed; start again")
+            secret = self.vault.decrypt(user.id, "pending", current.totp_pending)
+            counter = matching_counter(secret, proof.code.get_secret_value(), self.clock())
+            if counter is None:
+                # The failure must count towards the same proof-attempt limit.
+                raise AuthError(400, "Incorrect authenticator code")
+            codes = new_recovery_codes()
+            digests = [recovery_digest(user.id, value) for value in codes]
+            db.execute(
+                "UPDATE users SET totp_secret=?,totp_pending=NULL,totp_pending_at=NULL,"
+                "totp_last_counter=?,totp_recovery=?,version=version+1 WHERE id=?",
+                (
+                    self.vault.encrypt(user.id, "active", secret),
+                    counter,
+                    json.dumps(digests),
+                    user.id,
+                ),
+            )
+        self.revoke_user(user.id)
+        with self.lock:
+            self.attempts.pop((("proof:" + client)[:128], ""), None)
+            self.attempts.pop((("proof:" + client)[:128], actor.id), None)
+        updated = self.require_store().by_id(user.id)
+        assert updated is not None
+        token, _ = self._session(updated)
+        return TotpRecovery(recovery_codes=codes), token
+
+    def totp_disable(self, actor: PublicUser, proof: CredentialProof, client: str) -> str:
+        user = self.reauthenticate(actor, proof, client)
+        self._clear_totp(user.id, user.version)
+        updated = self.require_store().by_id(user.id)
+        assert updated is not None
+        token, _ = self._session(updated)
+        return token
+
+    def _clear_totp(self, user_id: str, version: int) -> None:
+        with self.require_store().connection(write=True) as db:
+            cursor = db.execute(
+                "UPDATE users SET totp_secret=NULL,totp_pending=NULL,totp_pending_at=NULL,"
+                "totp_last_counter=-1,totp_recovery='[]',version=version+1 "
+                "WHERE id=? AND version=?",
+                (user_id, version),
+            )
+            if cursor.rowcount != 1:
+                raise AuthError(409, "Account changed; repeat the operation")
+        self.revoke_user(user_id)
+
+    def totp_reset(
+        self, target_id: str, actor: PublicUser, proof: CredentialProof, client: str
+    ) -> None:
+        if actor.role != "full" or actor.id == target_id:
+            raise AuthError(403, "Use your own security settings or another full-access account")
+        self.reauthenticate(actor, proof, client)
+        target = self.require_store().by_id(target_id)
+        if not target:
+            raise AuthError(404, "Account not found")
+        self._clear_totp(target.id, target.version)
 
     def logout(self, token: str) -> None:
         with self.lock:

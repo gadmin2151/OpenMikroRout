@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenMikroRout - lightweight Linux router
-After=network-online.target
+After=network-online.target openmikrorout-update-recover.service
 Wants=network-online.target
 
 [Service]
@@ -25,7 +25,7 @@ ProtectKernelTunables=no
 ReadOnlyPaths=/proc/sys
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK AF_PACKET
 ReadWritePaths=/var/lib/openmikrorout /run /proc/sys/net/ipv4/ip_forward
 
 [Install]

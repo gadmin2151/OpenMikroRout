@@ -5,8 +5,21 @@ import {
   hasWriteAccess,
   isReadAction,
   applyReadAccess,
-} from "./access-ui.js?v=1";
-import { renderUsers, handleUsersAction } from "./users-ui.js?v=1";
+} from "./access-ui.js?v=2";
+import { renderUsers, handleUsersAction } from "./users-ui.js?v=2";
+import { renderSecurity, handleSecurityAction } from "./security-ui.js?v=1";
+import {
+  renderUpdates,
+  refreshUpdates,
+  resetUpdates,
+  handleUpdatesAction,
+} from "./updates-ui.js?v=1";
+import {
+  renderConnections,
+  refreshConnections,
+  resetConnections,
+  handleConnectionsAction,
+} from "./connections-ui.js?v=1";
 import {
   routerViews,
   renderRouterView,
@@ -87,6 +100,7 @@ let users = [],
   loginUsername = "admin",
   authGeneration = 0,
   sidebarScroll = 0;
+let securityStatus = null;
 const expandedGroups = new Set(["ip", "system"]);
 let telemetry = null,
   telemetryHistory = [],
@@ -112,12 +126,15 @@ function applyAccessControls() {
   applyReadAccess(document, state);
 }
 function clearSession() {
+  resetUpdates();
+  resetConnections();
   loginUsername = currentUser()?.username || loginUsername;
   authGeneration++;
   state = null;
   users = [];
   usersError = "";
   usersRequest = null;
+  securityStatus = null;
   telemetryController?.abort();
   telemetry = null;
   telemetryHistory = [];
@@ -181,7 +198,14 @@ async function api(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   if (
     !["GET", "HEAD"].includes(method) &&
-    !["login", "logout", "preview"].includes(path)
+    ![
+      "login",
+      "logout",
+      "preview",
+      "me/totp/setup",
+      "me/totp/confirm",
+      "me/totp/disable",
+    ].includes(path)
   )
     requireWrite();
   const generation = authGeneration;
@@ -237,7 +261,12 @@ async function run(task) {
   } finally {
     busy = false;
     document.body.classList.remove("is-busy");
-    if (state && view === "users" && !dialog.open) render();
+    if (
+      state &&
+      ["users", "updates", "security"].includes(view) &&
+      !dialog.open
+    )
+      render();
   }
 }
 function acceptState(data) {
@@ -314,10 +343,13 @@ function renderNavigation(count) {
         "Firewall",
         "shield",
         state.config.rules.length + (state.config.filter_rules || []).length,
-        ["filter", "rules", "lists"],
+        ["filter", "rules", "lists", "connections"],
       ),
     ].join(""),
-  )}${navGroup("system", "System", "server", `${canWrite() ? navButton("users", "Users", "user") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
+  )}${navGroup("system", "System", "server", `${state.auth_enabled ? navButton("security", "Security", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
+}
+async function refreshSecurity() {
+  if (state?.current_user) securityStatus = await api("me/totp");
 }
 async function refreshUsers() {
   if (!state || !canWrite() || !state.auth_enabled) {
@@ -365,6 +397,9 @@ function accountMarkup() {
 function routerContext() {
   return {
     state,
+    generation: authGeneration,
+    getGeneration: () => authGeneration,
+    isCurrentView: (name) => !!state && view === name,
     interfaces,
     networkStatus,
     offline,
@@ -376,6 +411,9 @@ function routerContext() {
     telemetrySelection,
     users,
     usersError,
+    securityStatus,
+    refreshSecurity,
+    refreshCurrentUser: () => refresh(true),
     currentUser: currentUser(),
     canWrite,
     api,
@@ -400,7 +438,7 @@ function render() {
   const sidebarOpen = document
     .querySelector("#sidebar")
     ?.classList.contains("open");
-  if (view === "users" && !canWrite()) view = "overview";
+  if (["users", "updates"].includes(view) && !canWrite()) view = "overview";
   const cfg = state.config,
     network = cfg.network || {},
     rules = cfg.rules;
@@ -422,15 +460,28 @@ function render() {
         "История сохранения, применения и восстановления конфигурации.",
       ],
       users: ["Users", "Учётные записи и группы доступа read / full."],
+      security: [
+        "Security",
+        "Личная двухфакторная аутентификация и резервные коды.",
+      ],
+      connections: [
+        "Connections",
+        "Входящие соединения IPv4 и наблюдение попыток подключения.",
+      ],
+      updates: [
+        "Updates",
+        "Подписанные обновления из GitHub с резервной копией и откатом.",
+      ],
     }[view] ||
     routerViews.overview;
   document.title = `OpenMikroRout · ${title}`;
   let tabs;
-  if (["rules", "filter", "lists"].includes(view))
+  if (["rules", "filter", "lists", "connections"].includes(view))
     tabs = [
       ["filter", "Filter Rules", "shield", (cfg.filter_rules || []).length],
       ["rules", "NAT", "swap", rules.length],
       ["lists", "Address Lists", "list", cfg.address_lists.length],
+      ["connections", "Connections", "activity", ""],
     ];
   else if (
     ["interfaces", "vlans", "virtual_interfaces", "interface_lists"].includes(
@@ -469,30 +520,36 @@ function render() {
     ];
   else tabs = [];
   const body =
-    view === "rules"
-      ? renderRules()
-      : view === "lists"
-        ? renderLists()
-        : view === "interfaces"
-          ? renderInterfaces()
-          : view === "audit"
-            ? renderAudit()
-            : view === "users"
-              ? renderUsers(routerContext())
-              : renderRouterView(view, routerContext());
+    view === "updates"
+      ? renderUpdates(routerContext())
+      : view === "connections"
+        ? renderConnections(routerContext())
+        : view === "security"
+          ? renderSecurity(routerContext())
+          : view === "rules"
+            ? renderRules()
+            : view === "lists"
+              ? renderLists()
+              : view === "interfaces"
+                ? renderInterfaces()
+                : view === "audit"
+                  ? renderAudit()
+                  : view === "users"
+                    ? renderUsers(routerContext())
+                    : renderRouterView(view, routerContext());
   root.innerHTML = `<div class="app-shell">
     <aside class="sidebar ${sidebarOpen ? "open" : ""}" id="sidebar">${brandMarkup()}
       <div class="workspace"><div class="workspace-icon">${icon("server")}</div><div><b>${isDemo() ? "Demo Router" : e(state.hostname)}</b><small>${isDemo() ? "DEMO WORKSPACE" : "LINUX GATEWAY"}</small></div></div>
       <nav class="sidebar-navigation" aria-label="Настройки роутера">${renderNavigation(count)}</nav>
-      <div class="sidebar-bottom"><button class="nav-item" data-action="help">${icon("help")}Справка</button><div class="engine-card"><span class="version">v0.2</span><b><span class="dot"></span>${isDemo() ? "Demo engine" : "Linux router"}</b><br>${isDemo() ? "Сеть хоста не изменяется" : "IPv4 · iptables · dnsmasq"}</div>${accountMarkup()}</div>
+      <div class="sidebar-bottom"><button class="nav-item" data-action="help">${icon("help")}Справка</button><div class="engine-card"><span class="version">v${e(state.version || "0.3.0")}</span><b><span class="dot"></span>${isDemo() ? "Demo engine" : "Linux router"}</b><br>${isDemo() ? "Сеть хоста не изменяется" : "IPv4 · iptables · dnsmasq"}</div>${accountMarkup()}</div>
     </aside>
     <main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" data-action="menu">${icon("menu")}</button>${icon("network")}<span>OpenMikroRout</span>${icon("chevron")}<b>${e(title)}</b></div><div class="topbar-right"><span class="muted"><span class="dot"></span>${offline ? "Нет соединения" : "Сервер подключён"}</span><span class="divider"></span><span class="mode-chip ${isDemo() ? "" : "live"}">${isDemo() ? "DEMO MODE" : "LINUX · LIVE"}</span></div></header>
     <div class="content">${state.runtime_error ? `<div class="connection-error" role="alert">${icon("info")} Восстановление конфигурации требует внимания: ${e(state.runtime_error)}</div>` : ""}${offline ? '<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>' : ""}
       ${!canWrite() ? `<div class="read-only-banner">${icon("lock")}Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}
       <div class="page-heading"><div><div class="eyebrow">OPEN NETWORK ROUTER</div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Backup</span></button></div></div>
-      ${["overview", "users"].includes(view) ? "" : `<div class="stats">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`, "network")}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации", "grid")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`, "server", true)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`, "shield")}</div>`}
+      ${["overview", "users", "security", "updates", "connections"].includes(view) ? "" : `<div class="stats">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`, "network")}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации", "grid")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`, "server", true)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`, "shield")}</div>`}
       <section class="panel ${view === "overview" ? "overview-panel" : ""}">${tabs.length ? `<div class="panel-tabs">${tabs.map(([id, label, ico, total]) => `<button class="panel-tab ${view === id ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${label}<span class="tab-count">${total}</span></button>`).join("")}</div>` : ""}${body}</section>
-      ${["overview", "users"].includes(view) ? "" : `<div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div>`}
+      ${["overview", "users", "security", "updates", "connections"].includes(view) ? "" : `<div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div>`}
       <div class="page-footer"><span>${icon("shield")}OpenMikroRout · Your network. Your rules.</span><span>Lightweight Linux router · IPv4</span></div>
     </div><div id="statusbar">${renderStatus()}</div></main></div>`;
   const navigation = document.querySelector(".sidebar-navigation");
@@ -838,7 +895,7 @@ function showHelp() {
 }
 
 function renderLogin(error = "") {
-  root.innerHTML = `<div class="login"><form class="login-card" id="login-form">${brandMarkup()}<h2>Вход в OpenMikroRout</h2><p>Войдите в учётную запись. Группа read разрешает просмотр, full — управление роутером.</p><label class="field"><span>Имя пользователя</span><input type="text" name="username" autocomplete="username" maxlength="64" value="${e(loginUsername)}" required autofocus></label><label class="field"><span>Пароль</span><input type="password" name="password" autocomplete="current-password" maxlength="512" required></label><button class="primary" type="submit">Войти ${icon("arrow")}</button><small role="alert">${e(error)}</small></form></div>`;
+  root.innerHTML = `<div class="login"><form class="login-card" id="login-form">${brandMarkup()}<h2>Вход в OpenMikroRout</h2><p>Войдите в учётную запись. Группа read разрешает просмотр, full — управление роутером.</p><label class="field"><span>Имя пользователя</span><input type="text" name="username" autocomplete="username" maxlength="64" value="${e(loginUsername)}" required autofocus></label><label class="field"><span>Пароль</span><input type="password" name="password" autocomplete="current-password" maxlength="512" required></label><label class="field"><span>Код 2FA или резервный код</span><input name="code" type="text" autocomplete="one-time-code" maxlength="64"><small>Оставьте пустым, если 2FA выключена.</small></label><button class="primary" type="submit">Войти ${icon("arrow")}</button><small role="alert">${e(error)}</small></form></div>`;
 }
 function updateRuleCounters() {
   if (
@@ -972,6 +1029,9 @@ async function refresh(manual = false) {
     render();
   }
   await refreshTelemetry();
+  if (view === "connections" && !dialog.open)
+    await refreshConnections(routerContext());
+  if (view === "updates") await refreshUpdates(routerContext());
 }
 
 async function handleAction(button) {
@@ -983,6 +1043,9 @@ async function handleAction(button) {
     return;
   }
   if (await handleUsersAction(button, routerContext())) return;
+  if (await handleSecurityAction(button, routerContext())) return;
+  if (await handleConnectionsAction(button, routerContext())) return;
+  if (await handleUpdatesAction(button, routerContext())) return;
   if (await handleRouterAction(button, routerContext())) return;
   if (action === "close") {
     dialog.close();
@@ -1047,8 +1110,9 @@ async function handleAction(button) {
   }
   if (action === "view") {
     const nextView = button.dataset.view;
-    if (nextView === "users" && !canWrite()) return;
+    if (["users", "updates"].includes(nextView) && !canWrite()) return;
     view = nextView;
+    if (view === "security") await refreshSecurity();
     if (window.matchMedia("(max-width: 680px)").matches)
       document.querySelector("#sidebar")?.classList.remove("open");
     selected.clear();
@@ -1063,6 +1127,8 @@ async function handleAction(button) {
         "dns",
         "dhcp_servers",
         "users",
+        "connections",
+        "updates",
       ].includes(view)
     )
       await run(() => refresh(true));
@@ -1665,11 +1731,29 @@ document.addEventListener("focusout", (event) => {
 });
 document.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (event.target.id === "connections-filter") {
+    void handleAction({
+      dataset: { action: "connections-filter" },
+      disabled: false,
+    }).catch((error) => toast(error.message, true));
+    return;
+  }
   if (event.target.id === "user-form") {
     void handleAction({
       dataset: { action: "user-save" },
       disabled: false,
     }).catch((error) => toast(error.message, true));
+    return;
+  }
+  if (
+    event.target.id.startsWith("security-") ||
+    event.target.id === "update-proof-form"
+  ) {
+    const button = dialog.querySelector(
+      '[data-action="security-setup"],[data-action="security-confirm"],[data-action="security-disable"],[data-action="user-totp-reset-confirm"],[data-action="updates-apply"]',
+    );
+    if (button)
+      void handleAction(button).catch((error) => toast(error.message, true));
     return;
   }
   if (event.target.id === "login-form")
@@ -1683,6 +1767,7 @@ document.addEventListener("submit", (event) => {
           body: JSON.stringify({
             username: loginUsername,
             password,
+            code: String(values.get("code") || "").trim(),
           }),
         });
         event.target.querySelector('[name="password"]').value = "";
@@ -1743,4 +1828,13 @@ window.addEventListener("pageshow", () => {
     alive = true;
     startPolling();
   }
+});
+
+dialog.addEventListener("close", () => {
+  if (
+    !dialog.open &&
+    dialog.querySelector("#security-recovery-codes,#security-setup-form")
+  )
+    dialog.innerHTML = "";
+  if (!dialog.open && state && ["security", "updates"].includes(view)) render();
 });

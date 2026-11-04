@@ -1,0 +1,42 @@
+name: Verify OpenMikroRout
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Install verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends iptables iproute2 dnsmasq-base conntrack
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements-dev.lock
+          npm install --global pnpm@12.16.1
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Python quality and tests
+        run: |
+          .venv/bin/ruff format --check app tests scripts
+          .venv/bin/ruff check app tests scripts
+          .venv/bin/mypy app tests scripts
+          .venv/bin/pytest -q
+          .venv/bin/python -m pip check
+      - name: Isolated Linux network tests
+        run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py -q
+      - name: Interface checks
+        run: pnpm check

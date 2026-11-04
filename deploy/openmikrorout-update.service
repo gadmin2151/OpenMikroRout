@@ -1,0 +1,23 @@
+[Unit]
+Description=OpenMikroRout signed release updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/usr/local/libexec/openmikrorout-maintenance
+ExecStart=/usr/local/libexec/openmikrorout-maintenance/.venv/bin/python -m app.update_worker
+ExecStopPost=/usr/local/libexec/openmikrorout-maintenance/.venv/bin/python -m app.update_worker --recover
+TimeoutStartSec=600
+TimeoutStopSec=150
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/opt /var/lib/openmikrorout /var/backups/openmikrorout /run
