@@ -143,7 +143,7 @@ class Control:
         version = installed_version(self.config.install_dir)
         self.calls.append("start:" + version)
         if version == "0.4.0":
-            with sqlite3.connect(self.config.data_dir / "auth.sqlite3") as db:
+            with closing(sqlite3.connect(self.config.data_dir / "auth.sqlite3")) as db, db:
                 db.execute("INSERT INTO test VALUES ('new-migration')")
             (self.config.data_dir / "new-migration-file").write_text("new")
 
@@ -158,7 +158,7 @@ def installation(tmp_path: Path) -> tuple[UpdateConfig, Source]:
     data.mkdir()
     releases.mkdir()
     Store(data / "linux.sqlite3", Configuration())
-    with sqlite3.connect(data / "auth.sqlite3") as db:
+    with closing(sqlite3.connect(data / "auth.sqlite3")) as db, db:
         db.execute("CREATE TABLE test (value TEXT)")
         db.execute("INSERT INTO test VALUES ('original-user')")
     (data / "totp.key").write_bytes(b"k" * 32)
@@ -290,18 +290,34 @@ def test_dependency_command_injection_is_rejected(tmp_path: Path, line: str) -> 
         validate_requirements(path)
 
 
+def database_snapshot(path: Path) -> tuple[str, ...]:
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        assert db.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+        return tuple(db.iterdump())
+
+
 def test_successful_update_preserves_users_keys_and_configuration(tmp_path: Path) -> None:
     config, source = installation(tmp_path)
     control = Control(config)
-    before = (config.data_dir / "linux.sqlite3").read_bytes()
+    # Closing a WAL connection may checkpoint committed pages into the main file.
+    # Compare complete schema and records, independent of physical page layout.
+    before = database_snapshot(config.data_dir / "linux.sqlite3")
+    users_before = database_snapshot(config.data_dir / "auth.sqlite3")
     worker = UpdateWorker(config, control, client=source, installer=lambda path, manifest: None)
     worker.run()
     assert installed_version(config.install_dir) == "0.4.0"
     assert private_json(config.state_dir / "job.json")["phase"] == "succeeded"
     assert not worker.journal.exists()
     assert (config.data_dir / "totp.key").read_bytes() == b"k" * 32
-    assert (config.data_dir / "linux.sqlite3").read_bytes() == before
-    assert (config.backup_dir / ("c" * 32) / "data/auth.sqlite3").exists()
+    assert database_snapshot(config.data_dir / "linux.sqlite3") == before
+    backup = config.backup_dir / ("c" * 32) / "data"
+    assert database_snapshot(backup / "linux.sqlite3") == before
+    assert database_snapshot(backup / "auth.sqlite3") == users_before
+    with closing(sqlite3.connect(config.data_dir / "auth.sqlite3")) as db:
+        assert db.execute("SELECT value FROM test ORDER BY rowid").fetchall() == [
+            ("original-user",),
+            ("new-migration",),
+        ]
     assert control.calls == ["stop", "start:0.4.0", "health:0.4.0"]
 
 
