@@ -7,10 +7,12 @@ let privateProfile = null;
 let status = null;
 let request = null;
 let controller = null;
+let peerFilter = { interface: "", query: "" };
 
 export function resetWireGuard() {
   controller?.abort();
   controller = request = editing = privateProfile = status = null;
+  peerFilter = { interface: "", query: "" };
 }
 export function clearWireGuardSecrets() {
   privateProfile = null;
@@ -58,7 +60,7 @@ function endpoint(peer) {
 function field(ctx, name, label, value = "", options = {}) {
   const attributes = `${options.required ? " required" : ""}${options.readonly ? " readonly" : ""}${options.max ? ` maxlength="${options.max}"` : ""}`;
   const input = options.lines
-    ? `<textarea name="${name}" rows="${options.rows || 3}" ${attributes}>${ctx.e(Array.isArray(value) ? value.join("\n") : value)}</textarea>`
+    ? `<textarea spellcheck="false" autocapitalize="off" autocorrect="off" name="${name}" rows="${options.rows || 3}" ${attributes}>${ctx.e(Array.isArray(value) ? value.join("\n") : value)}</textarea>`
     : `<input name="${name}" type="${options.type || "text"}" value="${ctx.e(value)}" ${attributes} ${options.placeholder ? `placeholder="${ctx.e(options.placeholder)}"` : ""}>`;
   return `<label class="field ${options.wide ? "wg-wide" : ""}"><span>${label}</span>${input}${options.note ? `<small>${options.note}</small>` : ""}</label>`;
 }
@@ -91,10 +93,59 @@ function form(
   );
 }
 
+export function matchesWireGuardPeer(peer, filter) {
+  if (filter.interface && peer.interface !== filter.interface) return false;
+  const text = [
+    peer.name,
+    peer.interface,
+    peer.public_key,
+    peer.endpoint_host,
+    ...(peer.allowed_ips || []),
+    peer.comment,
+  ]
+    .join(" ")
+    .toLocaleLowerCase();
+  return text.includes(
+    String(filter.query || "")
+      .trim()
+      .toLocaleLowerCase(),
+  );
+}
+
+export function handleWireGuardFilter(event, ctx) {
+  if (!["wg-peer-search", "wg-peer-interface"].includes(event.target?.id))
+    return false;
+  peerFilter = {
+    query: document.querySelector("#wg-peer-search")?.value || "",
+    interface: document.querySelector("#wg-peer-interface")?.value || "",
+  };
+  let visible = 0;
+  for (const peer of collection(ctx, "wireguard_peers")) {
+    const row = document.querySelector(`[data-wg-peer-row="${peer.id}"]`);
+    if (!row) continue;
+    row.hidden = !matchesWireGuardPeer(peer, peerFilter);
+    if (!row.hidden) visible++;
+  }
+  const empty = document.querySelector("[data-wg-filter-empty]");
+  if (empty) empty.hidden = visible > 0;
+  const count = document.querySelector("[data-wg-filter-count]");
+  if (count)
+    count.textContent = `${visible} / ${collection(ctx, "wireguard_peers").length}`;
+  return true;
+}
+
 export function renderWireGuard(ctx, peers = false) {
   status ||= ctx.networkStatus?.wireguard || null;
   const interfaces = collection(ctx, "wireguard_interfaces");
   const entries = collection(ctx, "wireguard_peers");
+  if (!interfaces.some((item) => item.name === peerFilter.interface))
+    peerFilter.interface = "";
+  const matched = entries.filter((item) =>
+    matchesWireGuardPeer(item, peerFilter),
+  ).length;
+  const filters = peers
+    ? `<div class="wg-peer-filters"><label><span class="sr-only">Поиск peers</span><input id="wg-peer-search" type="search" placeholder="Поиск: имя, IP, ключ…" value="${ctx.e(peerFilter.query)}" maxlength="128"></label><label><span class="sr-only">Интерфейс peers</span><select id="wg-peer-interface"><option value="">Все интерфейсы</option>${interfaces.map((item) => `<option value="${ctx.e(item.name)}" ${item.name === peerFilter.interface ? "selected" : ""}>${ctx.e(item.name)}</option>`).join("")}</select></label><span data-wg-filter-count aria-live="polite">${matched} / ${entries.length}</span></div>`
+    : "";
   const disable = locked(ctx) ? "disabled" : "";
   const active =
     status?.interfaces
@@ -113,11 +164,13 @@ export function renderWireGuard(ctx, peers = false) {
     table = `<table class="rules-table wg-table"><thead><tr><th>Peer / Interface</th><th>Allowed IPs</th><th>Endpoint</th><th>Last handshake</th><th>RX / TX</th><th></th></tr></thead><tbody>${entries
       .map((peer) => {
         const live = peerStatus(peer);
-        return `<tr class="${peer.enabled ? "" : "disabled-row"}"><td><strong>${ctx.e(peer.name)}</strong><small class="wg-table-sub mono">${ctx.e(peer.interface)}</small></td><td class="mono">${peer.allowed_ips.map(ctx.e).join("<br>")}</td><td class="mono wg-endpoint" data-wg-endpoint="${ctx.e(peer.id)}">${ctx.e(live?.endpoint || endpoint(peer))}</td><td><span class="wg-peer-state ${live?.connected ? "connected" : ""}" data-wg-handshake="${ctx.e(peer.id)}">${ctx.e(peer.enabled ? handshakeText(live) : "Отключён")}</span></td><td class="mono wg-counter" data-wg-traffic="${ctx.e(peer.id)}">${bytes(live?.rx_bytes)} / ${bytes(live?.tx_bytes)}</td><td><div class="row-actions"><button class="icon ghost" data-action="wg-peer-edit" data-id="${ctx.e(peer.id)}" aria-label="Настройки peer ${ctx.e(peer.name)}">${ctx.icon("edit")}</button>${peer.client_private_key_id ? `<button class="icon ghost" data-action="wg-export" data-client="true" data-id="${ctx.e(peer.id)}" aria-label="Конфигурация и QR ${ctx.e(peer.name)}">${ctx.icon("download")}</button>` : ""}<button class="icon ghost danger" data-action="wg-remove" data-kind="wireguard_peers" data-id="${ctx.e(peer.id)}" ${disable} aria-label="Удалить peer ${ctx.e(peer.name)}">${ctx.icon("minus")}</button></div></td></tr>`;
+        return `<tr data-wg-peer-row="${ctx.e(peer.id)}" ${matchesWireGuardPeer(peer, peerFilter) ? "" : "hidden"} class="${peer.enabled ? "" : "disabled-row"}"><td><strong>${ctx.e(peer.name)}</strong><small class="wg-table-sub mono">${ctx.e(peer.interface)}</small></td><td><span class="mono wg-allowed-ips" title="${ctx.e(peer.allowed_ips.join(", "))}">${ctx.e(peer.allowed_ips.join(", "))}</span></td><td class="mono wg-endpoint" data-wg-endpoint="${ctx.e(peer.id)}">${ctx.e(live?.endpoint || endpoint(peer))}</td><td><span class="wg-peer-state ${live?.connected ? "connected" : ""}" data-wg-handshake="${ctx.e(peer.id)}">${ctx.e(peer.enabled ? handshakeText(live) : "Отключён")}</span></td><td class="mono wg-counter" data-wg-traffic="${ctx.e(peer.id)}">${bytes(live?.rx_bytes)} / ${bytes(live?.tx_bytes)}</td><td><div class="row-actions"><button class="icon ghost" data-action="wg-peer-edit" data-id="${ctx.e(peer.id)}" aria-label="Настройки peer ${ctx.e(peer.name)}">${ctx.icon("edit")}</button>${peer.client_private_key_id ? `<button class="icon ghost" data-action="wg-export" data-client="true" data-id="${ctx.e(peer.id)}" aria-label="Конфигурация и QR ${ctx.e(peer.name)}">${ctx.icon("download")}</button>` : ""}<button class="icon ghost danger" data-action="wg-remove" data-kind="wireguard_peers" data-id="${ctx.e(peer.id)}" ${disable} aria-label="Удалить peer ${ctx.e(peer.name)}">${ctx.icon("minus")}</button></div></td></tr>`;
       })
-      .join("")}</tbody></table>`;
+      .join(
+        "",
+      )}${entries.length ? `<tr data-wg-filter-empty ${matched ? "hidden" : ""}><td colspan="6" class="muted">По этому фильтру peers не найдены.</td></tr>` : ""}</tbody></table>`;
   } else {
-    table = `<table class="rules-table wg-table"><thead><tr><th>Name</th><th>Role</th><th>Listen Port</th><th>Public Key</th><th>Routing</th><th>Peers</th><th></th></tr></thead><tbody>${interfaces.map((item) => `<tr class="${item.enabled ? "" : "disabled-row"}"><td><strong class="mono">${ctx.e(item.name)}</strong><small class="wg-table-sub">${item.enabled ? "enabled" : "disabled"} · MTU ${item.mtu}</small></td><td>${ctx.e(role(item.role))}</td><td class="mono">${item.listen_port || "auto"} / UDP</td><td><span class="wg-public-key mono" title="${ctx.e(item.public_key)}">${ctx.e(item.public_key)}</span></td><td>${item.route_allowed_ips ? `<span class="wg-route-badge">Table ${item.routing_table}</span><small class="wg-table-sub">${ctx.e(item.route_sources.join(", "))}${item.kill_switch ? " · Kill switch" : ""}</small>` : '<span class="muted">IP → Routes</span>'}</td><td>${entries.filter((peer) => peer.interface === item.name).length}</td><td><div class="row-actions"><button class="icon ghost" data-action="wg-interface-edit" data-id="${ctx.e(item.id)}" aria-label="Настройки ${ctx.e(item.name)}">${ctx.icon("edit")}</button><button class="icon ghost" data-action="wg-export" data-client="false" data-id="${ctx.e(item.id)}" aria-label="Экспорт ${ctx.e(item.name)}">${ctx.icon("download")}</button><button class="icon ghost danger" data-action="wg-remove" data-kind="wireguard_interfaces" data-id="${ctx.e(item.id)}" ${disable} aria-label="Удалить ${ctx.e(item.name)}">${ctx.icon("minus")}</button></div></td></tr>`).join("")}</tbody></table>`;
+    table = `<table class="rules-table wg-table"><thead><tr><th>Name</th><th>Role</th><th>Listen Port</th><th>Public Key</th><th>Routing</th><th>Peers</th><th></th></tr></thead><tbody>${interfaces.map((item) => `<tr class="${item.enabled ? "" : "disabled-row"}"><td><strong class="mono">${ctx.e(item.name)}</strong><small class="wg-table-sub">${item.enabled ? "enabled" : "disabled"} · MTU ${item.mtu}</small></td><td>${ctx.e(role(item.role))}</td><td class="mono">${item.listen_port || "auto"} / UDP</td><td><span class="wg-public-key mono" title="${ctx.e(item.public_key)}">${ctx.e(item.public_key)}</span></td><td>${item.route_allowed_ips ? `<span class="wg-route-badge">Table ${item.routing_table}</span><small class="wg-table-sub wg-route-sources" title="${ctx.e(item.route_sources.join(", "))}">${ctx.e(item.route_sources.join(", "))}${item.kill_switch ? " · Kill switch" : ""}</small>` : '<span class="muted">IP → Routes</span>'}</td><td>${entries.filter((peer) => peer.interface === item.name).length}</td><td><div class="row-actions"><button class="icon ghost" data-action="wg-interface-edit" data-id="${ctx.e(item.id)}" aria-label="Настройки ${ctx.e(item.name)}">${ctx.icon("edit")}</button><button class="icon ghost" data-action="wg-export" data-client="false" data-id="${ctx.e(item.id)}" aria-label="Экспорт ${ctx.e(item.name)}">${ctx.icon("download")}</button><button class="icon ghost danger" data-action="wg-remove" data-kind="wireguard_interfaces" data-id="${ctx.e(item.id)}" ${disable} aria-label="Удалить ${ctx.e(item.name)}">${ctx.icon("minus")}</button></div></td></tr>`).join("")}</tbody></table>`;
   }
   const empty = (peers ? entries : interfaces).length
     ? ""
@@ -128,7 +181,7 @@ export function renderWireGuard(ctx, peers = false) {
           ? "Добавьте peer с генерацией конфигурации и QR-кода или укажите публичный ключ удалённого роутера."
           : "Создайте сервер для доступа к своей сети или импортируйте профиль VPN-провайдера как клиент.",
       );
-  return `${toolbar}${summary}${notice}<div class="table-scroll router-table-scroll">${table}${empty}</div><div class="wg-guide"><div>${ctx.icon("server")}<strong>Сервер</strong><p>Мастер → peer → конфигурация или QR → применить и подтвердить.</p></div><div>${ctx.icon("swap")}<strong>Клиент</strong><p>Импорт .conf → исходные сети LAN → kill switch → предпросмотр.</p></div><div>${ctx.icon("shield")}<strong>Один черновик</strong><p>IP, маршруты и Firewall применяются вместе с автоматическим откатом.</p></div></div>`;
+  return `${toolbar}${summary}${notice}${filters}<div class="table-scroll router-table-scroll">${table}${empty}</div><div class="wg-guide"><div>${ctx.icon("server")}<strong>Сервер</strong><p>Мастер → peer → конфигурация или QR → применить и подтвердить.</p></div><div>${ctx.icon("swap")}<strong>Клиент</strong><p>Импорт .conf → исходные сети LAN → kill switch → предпросмотр.</p></div><div>${ctx.icon("shield")}<strong>Один черновик</strong><p>IP, маршруты и Firewall применяются вместе с автоматическим откатом.</p></div></div>`;
 }
 
 export async function refreshWireGuard(ctx) {

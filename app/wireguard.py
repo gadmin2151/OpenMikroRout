@@ -372,6 +372,7 @@ class LinuxWireGuardDriver:
             }
         live = self._live()
         interfaces = []
+        errors = [self.maintenance_error] if self.maintenance_error else []
         for item in self.config.wireguard_interfaces:
             observed = live.get(item.name)
             if (
@@ -382,17 +383,33 @@ class LinuxWireGuardDriver:
                 interfaces.append(
                     {"name": item.name, "available": False, "enabled": item.enabled, "peers": []}
                 )
+                errors.append(f"{item.name}: управляемый WireGuard-интерфейс недоступен.")
                 continue
-            status = parse_wireguard_status(
-                item.name, self._wg("show", item.name, "dump"), time.time()
+            try:
+                status = parse_wireguard_status(
+                    item.name, self._wg("show", item.name, "dump"), time.time()
+                )
+            except WireGuardError:
+                interfaces.append(
+                    {"name": item.name, "available": False, "enabled": item.enabled, "peers": []}
+                )
+                errors.append(f"{item.name}: не удалось прочитать состояние WireGuard.")
+                continue
+            running = bool(observed.get("up")) and item.enabled
+            status.update(
+                {"available": True, "enabled": item.enabled, "running": running, "role": item.role}
             )
-            status.update({"available": True, "enabled": item.enabled, "role": item.role})
+            if not running:
+                for peer in status["peers"]:
+                    peer["connected"] = False
+            if item.enabled and not running:
+                errors.append(f"{item.name}: интерфейс выключен в системе.")
             interfaces.append(status)
         return {
             "available": True,
             "demo": False,
             "interfaces": interfaces,
-            "error": self.maintenance_error,
+            "error": " ".join(errors)[:1200],
         }
 
     def maintain(self) -> None:

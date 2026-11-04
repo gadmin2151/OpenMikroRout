@@ -331,3 +331,17 @@ def test_stale_dns_endpoint_refresh_preserves_keys_and_healthy_roaming_peers(
     driver.maintain()
     assert driver.maintenance_error and len(commands) == before + 1  # status only
     assert driver._state()["endpoints"]["vpn.example.com"] == "192.0.2.20"
+
+
+def test_status_failure_is_localized_and_never_echoes_wireguard_stderr(tmp_path: Path) -> None:
+    vault, network = configured(tmp_path)
+    private = vault.secret(network.wireguard_interfaces[0].private_key_id, "interface")
+
+    def failed(arguments: list[str], payload: str | None = None) -> str:
+        raise WireGuardError(private)
+
+    driver = LinuxWireGuardDriver(tmp_path, network, DemoLinkDriver(network), vault, runner=failed)
+    driver.binary = "/usr/bin/wg"
+    status = driver.status()
+    assert status["available"] and not status["interfaces"][0]["available"]
+    assert status["error"] and private not in json.dumps(status)

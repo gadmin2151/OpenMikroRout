@@ -1,6 +1,11 @@
 import { assertDraftRevision, prepareImportedConfig } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
-import { renderTools, handleToolsAction, resetTools } from "./tools-ui.js?v=1";
+import {
+  renderTools,
+  handleToolsAction,
+  handleToolsInput,
+  resetTools,
+} from "./tools-ui.js?v=1";
 import {
   renderWireGuard,
   refreshWireGuard,
@@ -8,6 +13,7 @@ import {
   clearWireGuardSecrets,
   handleWireGuardAction,
   handleWireGuardChange,
+  handleWireGuardFilter,
 } from "./wireguard-ui.js?v=1";
 import {
   appendTelemetryHistory,
@@ -149,6 +155,12 @@ function applyAccessControls() {
   applyReadAccess(document, state);
 }
 function clearSession() {
+  clearTimeout(toastTimer);
+  const oldToast = document.querySelector("#toast");
+  if (oldToast) {
+    oldToast.textContent = "";
+    oldToast.className = "";
+  }
   setNavigationOpen(false);
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   resetUpdates();
@@ -1292,6 +1304,8 @@ async function handleAction(button) {
       setNavigationOpen(false);
     selected.clear();
     render();
+    if (["wireguard", "wireguard_peers"].includes(view))
+      await refreshWireGuard(routerContext());
     if (
       [
         "audit",
@@ -1393,7 +1407,11 @@ async function handleAction(button) {
     a.download = `openmikrorout-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast("Конфигурация экспортирована");
+    toast(
+      (state.config.network?.wireguard_interfaces || []).length
+        ? "Настройки экспортированы. Закрытые ключи скачиваются отдельно в WireGuard."
+        : "Конфигурация экспортирована",
+    );
     return;
   }
   if (action === "import") {
@@ -1821,6 +1839,8 @@ document.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("input", (event) => {
+  if (handleWireGuardFilter(event, routerContext())) return;
+  if (handleToolsInput(event, routerContext())) return;
   const dnsForm = event.target.closest("#router-dns-form");
   if (dnsForm && canWrite()) dnsForm.dataset.dirty = "true";
   if (event.target.id === "rule-search") {
@@ -1833,6 +1853,8 @@ document.addEventListener("input", (event) => {
   }
 });
 document.addEventListener("change", (event) => {
+  if (handleWireGuardFilter(event, routerContext())) return;
+  if (handleToolsInput(event, routerContext())) return;
   const node = event.target;
   if (node.id === "telemetry-period" && telemetryExpanded) {
     const period = Number(node.value);
