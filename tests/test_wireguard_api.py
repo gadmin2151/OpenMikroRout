@@ -126,6 +126,37 @@ def test_keys_are_public_metadata_only_and_unknown_references_cannot_be_saved(
     assert response.status_code == 409 and private not in response.text
 
 
+def test_setup_wizards_reject_overlapping_addresses_and_unbounded_interface_prefixes(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/wireguard/server", headers=HEADERS, json={"revision": 0, "address": "192.168.10.2/24"}
+    )
+    assert response.status_code == 409 and "overlap" in response.text
+    assert (
+        client.post(
+            "/api/wireguard/server", headers=HEADERS, json={"revision": 0, "address": "10.77.0.1/0"}
+        ).status_code
+        == 422
+    )
+    private, _ = generate_key("interface")
+    _, public = generate_key("peer-client")
+    profile = (
+        f"[Interface]\nPrivateKey={private}\nAddress=192.168.10.20/32\n"
+        f"[Peer]\nPublicKey={public}\nAllowedIPs=0.0.0.0/0\nEndpoint=192.0.2.1:51820\n"
+    )
+    response = client.post(
+        "/api/wireguard/import", headers=HEADERS, json={"revision": 0, "profile": profile}
+    )
+    assert response.status_code == 409 and private not in response.text
+    profile = profile.replace("192.168.10.20/32", "10.88.0.2/0")
+    response = client.post(
+        "/api/wireguard/import", headers=HEADERS, json={"revision": 0, "profile": profile}
+    )
+    assert response.status_code == 409 and private not in response.text
+    assert client.get("/api/state").json()["revision"] == 0
+
+
 def test_generated_clients_get_unique_addresses(client: TestClient) -> None:
     post(
         client,

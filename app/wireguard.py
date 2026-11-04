@@ -2,6 +2,7 @@
 
 import ipaddress
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -20,6 +21,7 @@ from app.wireguard_vault import WireGuardVault
 
 MAX_WG_OUTPUT = 1_048_576
 WG_MARK_PREFIX = 0x4F4D0000
+log = logging.getLogger(__name__)
 
 
 class WireGuardError(FirewallError):
@@ -156,6 +158,8 @@ class LinuxWireGuardDriver:
         self.transaction: str | None = None
         self.prepared: dict[str, str] = {}
         self.prepared_at = 0.0
+        self.next_refresh = 0.0
+        self.maintenance_error = ""
 
     def _state(self) -> dict[str, Any]:
         if not self.path.exists():
@@ -384,7 +388,82 @@ class LinuxWireGuardDriver:
             )
             status.update({"available": True, "enabled": item.enabled, "role": item.role})
             interfaces.append(status)
-        return {"available": True, "demo": False, "interfaces": interfaces, "error": ""}
+        return {
+            "available": True,
+            "demo": False,
+            "interfaces": interfaces,
+            "error": self.maintenance_error,
+        }
+
+    def maintain(self) -> None:
+        """Re-resolve stale DNS endpoints without restarting healthy peers or exposing keys."""
+        now = time.monotonic()
+        if now < self.next_refresh:
+            return
+        self.next_refresh = now + 60
+        interfaces = {item.name: item for item in self.config.wireguard_interfaces if item.enabled}
+        peers = [
+            peer
+            for peer in self.config.wireguard_peers
+            if peer.enabled and peer.interface in interfaces and peer.endpoint_host
+        ]
+        hosts = set()
+        for peer in peers:
+            try:
+                ipaddress.IPv4Address(peer.endpoint_host)
+            except ValueError:
+                hosts.add(peer.endpoint_host)
+        if not hosts:
+            self.maintenance_error = ""
+            return
+        try:
+            live = {
+                item["name"]: item for item in self.status()["interfaces"] if item.get("available")
+            }
+            state = self._state()
+            resolved: dict[str, str] = {}
+            deadline = now + 10
+            for peer in peers:
+                if peer.endpoint_host not in hosts or peer.interface not in live:
+                    continue
+                observed = next(
+                    (
+                        item
+                        for item in live[peer.interface]["peers"]
+                        if item["public_key"] == peer.public_key
+                    ),
+                    None,
+                )
+                if observed is None or observed["connected"]:
+                    continue
+                if time.monotonic() > deadline:
+                    raise WireGuardError("WireGuard endpoint refresh exceeded its time budget")
+                if peer.endpoint_host not in resolved:
+                    resolved[peer.endpoint_host] = str(
+                        ipaddress.IPv4Address(self.resolver(peer.endpoint_host))
+                    )
+                address = resolved[peer.endpoint_host]
+                endpoint = f"{address}:{peer.endpoint_port}"
+                if endpoint == observed["endpoint"]:
+                    continue
+                current = self._live().get(peer.interface)
+                if (
+                    not current
+                    or current.get("alias") != ownership(interfaces[peer.interface])
+                    or current.get("kind") != "wireguard"
+                ):
+                    raise WireGuardError("WireGuard ownership changed during endpoint refresh")
+                state["endpoints"][peer.endpoint_host] = address
+                atomic_state(self.path, state)
+                self._wg("set", peer.interface, "peer", peer.public_key, "endpoint", endpoint)
+            self.maintenance_error = ""
+        except (WireGuardError, OSError, ValueError, RuntimeError) as exc:
+            self.maintenance_error = "Не удалось обновить DNS endpoint; сохранён предыдущий адрес."
+            # No rejected key/command stderr or private profile enters the log.
+            log.warning(
+                "WireGuard endpoint refresh failed (%s); cached endpoint preserved",
+                type(exc).__name__,
+            )
 
 
 class DemoWireGuardDriver:
@@ -411,6 +490,9 @@ class DemoWireGuardDriver:
 
     def rollback(self, snapshot: dict[str, Any]) -> None:
         self.config = NetworkConfiguration.model_validate(snapshot["configuration"])
+
+    def maintain(self) -> None:
+        return
 
     def status(self) -> dict[str, Any]:
         return {

@@ -28,13 +28,17 @@ class LinkComponent(NetworkComponent, Protocol):
     def prepare_rollback(self, snapshot: dict[str, Any]) -> None: ...
 
 
+class WireGuardComponent(NetworkComponent, Protocol):
+    def maintain(self) -> None: ...
+
+
 class RouterRuntime:
     def __init__(
         self,
         network: NetworkComponent,
         links: LinkComponent,
         filters: FilterDriver,
-        wireguard: NetworkComponent | None = None,
+        wireguard: WireGuardComponent | None = None,
         vpn_routes: NetworkComponent | None = None,
     ) -> None:
         self.network = network
@@ -134,6 +138,10 @@ class RouterRuntime:
 
     def counters(self) -> dict[str, dict[str, int]]:
         return filter_counters(self.filters.snapshot(with_counters=True))
+
+    def maintain(self) -> None:
+        if self.wireguard:
+            self.wireguard.maintain()
 
 
 def create_runtime(

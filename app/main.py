@@ -169,6 +169,9 @@ def create_app(
         while not stop.wait(1):
             try:
                 service.recover()
+                with service.lock:
+                    if not store.read("pending") and not updates.active():
+                        runtime.maintain()
             except Exception:
                 log.exception("Automatic router rollback failed; recovery remains pending")
 

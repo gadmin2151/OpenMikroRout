@@ -1,5 +1,6 @@
 import json
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -283,3 +284,50 @@ def test_source_policy_rejects_global_or_ambiguous_sources(tmp_path: Path) -> No
     data["wireguard_interfaces"][0]["route_sources"] = ["10.0.0.0/8", "10.1.0.0/16"]
     with pytest.raises(ValueError, match="overlap"):
         NetworkConfiguration.model_validate(data)
+
+
+def test_stale_dns_endpoint_refresh_preserves_keys_and_healthy_roaming_peers(
+    tmp_path: Path,
+) -> None:
+    vault, network = configured(tmp_path)
+    interface, peer = network.wireguard_interfaces[0], network.wireguard_peers[0]
+    peer.endpoint_host = "vpn.example.com"
+    commands: list[list[str]] = []
+    handshakes = [0]
+    resolutions = [0]
+
+    def resolver(host: str) -> str:
+        resolutions[0] += 1
+        return "192.0.2.20"
+
+    def command(arguments: list[str], payload: str | None = None) -> str:
+        commands.append(arguments)
+        if "dump" in arguments:
+            return (
+                f"PRIVATE-COLUMN\t{interface.public_key}\t51820\toff\n"
+                f"{peer.public_key}\tPSK-COLUMN\t192.0.2.10:51820\t10.99.0.2/32\t"
+                f"{handshakes[0]}\t20\t30\toff\n"
+            )
+        return ""
+
+    driver = LinuxWireGuardDriver(
+        tmp_path, network, DemoLinkDriver(network), vault, runner=command, resolver=resolver
+    )
+    driver.binary = "/usr/bin/wg"
+    driver.maintain()
+    assert commands[-1][-4:] == ["peer", peer.public_key, "endpoint", "192.0.2.20:51820"]
+    assert driver._state()["endpoints"]["vpn.example.com"] == "192.0.2.20"
+    assert all("PRIVATE-COLUMN" not in " ".join(args) for args in commands)
+    driver.maintain()
+    assert resolutions[0] == 1
+    handshakes[0] = int(time.time())
+    driver.next_refresh = 0
+    driver.maintain()
+    assert resolutions[0] == 1, "Do not reset a healthy authenticated roaming endpoint"
+    handshakes[0] = 0
+    driver.next_refresh = 0
+    driver.resolver = lambda host: (_ for _ in ()).throw(WireGuardError("DNS failed"))
+    before = len(commands)
+    driver.maintain()
+    assert driver.maintenance_error and len(commands) == before + 1  # status only
+    assert driver._state()["endpoints"]["vpn.example.com"] == "192.0.2.20"

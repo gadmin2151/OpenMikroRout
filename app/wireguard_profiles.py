@@ -63,6 +63,8 @@ def _address(value: str) -> str:
     try:
         address = ipaddress.IPv4Interface(value)
         ipv4(str(address.ip))
+        if address.network.prefixlen < 8:
+            raise ValueError("WireGuard interface addresses require a prefix between /8 and /32")
     except ValueError as exc:
         raise ValueError("WireGuard Address must contain IPv4 addresses with prefixes") from exc
     return str(address)

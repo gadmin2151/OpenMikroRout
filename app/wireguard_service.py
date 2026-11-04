@@ -9,7 +9,7 @@ from pydantic import Field, SecretStr, field_validator
 from app.firewall import Conflict, FirewallService
 from app.ipv4 import endpoint_host as validate_endpoint_host
 from app.ipv4 import ipv4, subnet
-from app.link_models import LinkModel, WireGuardInterface, interface_name
+from app.link_models import LinkModel, WireGuardInterface, interface_name, planned_interface_names
 from app.models import Configuration, FilterRule, NatRule
 from app.network_models import IpAddress
 from app.wireguard_keys import KeyKind, public_key
@@ -41,14 +41,19 @@ class ServerSetup(LinkModel):
 
     _name = field_validator("name")(interface_name)
     _endpoint = field_validator("endpoint")(validate_endpoint_host)
-    _address = field_validator("address")(
-        lambda value: IpAddress(interface="wg", address=value).address
-    )
     _dns = field_validator("dns")(lambda values: list(dict.fromkeys(ipv4(v) for v in values)))
     _networks = field_validator("access_networks")(
         lambda values: list(dict.fromkeys(subnet(v) for v in values))
     )
     _wan = field_validator("wan_interface")(lambda value: interface_name(value) if value else "")
+
+    @field_validator("address")
+    @classmethod
+    def validate_server_address(cls, value: str) -> str:
+        address = IpAddress(interface="wg", address=value).address
+        if not 8 <= ipaddress.IPv4Interface(address).network.prefixlen <= 30:
+            raise ValueError("The server wizard needs an IPv4 subnet between /8 and /30")
+        return address
 
 
 class ClientImport(LinkModel):
@@ -108,14 +113,32 @@ class WireGuardService:
         occupied = {item.routing_table for item in config.network.wireguard_interfaces}
         return next(table for table in range(20000, 21000) if table not in occupied)
 
+    def check_addresses(self, config: Configuration, name: str, addresses: list[str]) -> None:
+        if name in planned_interface_names(config.network):
+            raise Conflict("This managed interface name already exists")
+        existing = [item.address for item in config.network.addresses if item.enabled]
+        if self.firewall.runtime:
+            existing.extend(
+                row["address"]
+                for row in self.firewall.runtime.network.status().get("addresses", [])
+            )
+        for value in addresses:
+            proposed = ipaddress.IPv4Interface(value).network
+            if any(
+                proposed.overlaps(ipaddress.IPv4Interface(current).network) for current in existing
+            ):
+                raise Conflict(
+                    "The VPN address/subnet overlaps an existing router network; "
+                    "choose another subnet"
+                )
+
     def server(self, body: ServerSetup) -> dict[str, Any]:
         with self.firewall.lock:
             self.firewall.check_revision(body.revision)
             if body.internet_access and not body.wan_interface:
                 raise Conflict("Choose an explicit WAN interface for VPN internet access")
             config = self.firewall.config().model_copy(deep=True)
-            if any(item.name == body.name for item in config.network.wireguard_interfaces):
-                raise Conflict("This WireGuard interface name already exists")
+            self.check_addresses(config, body.name, [body.address])
             key = self.vault.create("interface")
             interface = WireGuardInterface(
                 name=body.name,
@@ -218,6 +241,7 @@ class WireGuardService:
             if not profile.addresses:
                 raise Conflict("Client import needs at least one IPv4 Address in the profile")
             config = self.firewall.config().model_copy(deep=True)
+            self.check_addresses(config, body.name, profile.addresses)
             key = self.vault.create("interface", profile.private_key)
             config.network.wireguard_interfaces.append(
                 WireGuardInterface(
@@ -341,6 +365,28 @@ class WireGuardService:
                 raise Conflict("Enter this peer's allowed IPv4 addresses or networks")
             if generated and not address:
                 raise Conflict("Generated client profiles require a client address")
+            if generated:
+                client_ip = ipaddress.IPv4Interface(address).ip
+                local = [
+                    ipaddress.IPv4Interface(item.address)
+                    for item in config.network.addresses
+                    if item.interface == interface.name and item.enabled
+                ]
+                if not any(
+                    client_ip in item.network
+                    and client_ip
+                    not in (item.network.network_address, item.network.broadcast_address, item.ip)
+                    for item in local
+                ):
+                    raise Conflict(
+                        "Choose a usable client address in this WireGuard interface's VPN subnet"
+                    )
+                if any(
+                    client_ip == ipaddress.IPv4Interface(item.address).ip
+                    for item in config.network.addresses
+                    if item.enabled
+                ):
+                    raise Conflict("A client cannot use an IPv4 address assigned to the router")
             # A generated client is one device; routed site-to-site peers use external keys.
             if generated and str(ipaddress.IPv4Interface(address).ip) + "/32" not in allowed:
                 raise Conflict("Allowed IPs must include the generated client's /32 address")
