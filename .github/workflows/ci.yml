@@ -40,3 +40,7 @@ jobs:
         run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py tests/test_wireguard_kernel.py -q
       - name: Interface checks
         run: pnpm check
+      - name: Build container and check isolated demo startup
+        run: |
+          docker build --tag openmikrorout:ci .
+          docker run --rm -i --network none --cap-drop ALL --read-only --memory 256m --pids-limit 64 --tmpfs /data:rw,nosuid,nodev,noexec,size=32m --tmpfs /tmp:rw,nosuid,nodev,noexec,size=16m -e OMR_MODE=demo openmikrorout:ci python - < scripts/container_smoke.py
