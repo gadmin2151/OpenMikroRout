@@ -155,6 +155,35 @@ def test_foreign_policy_table_and_priority_conflicts_are_refused() -> None:
             [], [{"dst": "default", "dev": "eth0", "table": 20000, "protocol": "static"}]
         )
     assert observed_entries([{"priority": 32766, "src": "all", "table": "main"}], []) == []
+    with pytest.raises(WireGuardError, match="bypass"):
+        observed_entries([{"priority": 100, "src": "all", "table": "main"}], [])
+
+
+def test_real_iproute_json_prefix_fields_and_linkdown_flags_are_normalized() -> None:
+    rules = [
+        {
+            "priority": 10000,
+            "src": "192.168.10.0",
+            "srclen": 24,
+            "table": "254",
+            "protocol": "196",
+            "suppress_prefixlen": 0,
+        }
+    ]
+    routes = [
+        {
+            "dst": "default",
+            "dev": "wg-test",
+            "table": "20000",
+            "protocol": "196",
+            "metric": 10,
+            "scope": "link",
+            "flags": ["linkdown"],
+        }
+    ]
+    entries = observed_entries(rules, routes)
+    assert entries[0]["source"] == "192.168.10.0/24" and entries[0]["suppress"] == 0
+    assert entries[1]["destination"] == "0.0.0.0/0" and entries[1]["table"] == 20000
 
 
 class RoutingKernel:

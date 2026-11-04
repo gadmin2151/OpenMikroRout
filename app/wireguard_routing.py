@@ -1,5 +1,6 @@
 """Explicit source routing for VPN clients, with private tables and durable rollback."""
 
+import ipaddress
 import json
 import secrets
 import shlex
@@ -143,6 +144,7 @@ def observed_entries(rules: list[Entry], routes: list[Entry]) -> list[Entry]:
         allowed = {
             "priority",
             "src",
+            "srclen",
             "table",
             "protocol",
             "fwmark",
@@ -154,10 +156,17 @@ def observed_entries(rules: list[Entry], routes: list[Entry]) -> list[Entry]:
             raise WireGuardError(
                 "WireGuard routing priorities/tables conflict with foreign IP rules"
             )
+        source = row.get("src", "all")
+        if source != "all":
+            source = str(
+                ipaddress.IPv4Network(
+                    source if "/" in source else f"{source}/{row.get('srclen', 32)}", strict=False
+                )
+            )
         item: Entry = {
             "kind": "rule",
             "priority": priority,
-            "source": row.get("src", "all"),
+            "source": source,
             "table": table,
         }
         if "fwmark" in row:
