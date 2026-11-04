@@ -125,7 +125,11 @@ def test_keys_are_public_metadata_only_and_unknown_references_cannot_be_saved(
 
 
 def test_generated_clients_get_unique_addresses(client: TestClient) -> None:
-    post(client, "server", {"revision": 0, "endpoint": "vpn.example.com"})
+    post(
+        client,
+        "server",
+        {"revision": 0, "endpoint": "vpn.example.com", "access_networks": ["192.168.10.0/24"]},
+    )
     for revision in (1, 2):
         saved = post(
             client,
@@ -135,6 +139,10 @@ def test_generated_clients_get_unique_addresses(client: TestClient) -> None:
     assert [item["client_address"] for item in saved["config"]["network"]["wireguard_peers"]] == [
         "10.77.0.2/32",
         "10.77.0.3/32",
+    ]
+    assert saved["config"]["network"]["wireguard_peers"][0]["client_allowed_ips"] == [
+        "10.77.0.0/24",
+        "192.168.10.0/24",
     ]
 
 

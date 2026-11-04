@@ -80,9 +80,9 @@ class RouterRuntime:
         self.links.apply(previous.network, target.network)
         if self.wireguard:
             self.wireguard.apply(previous.network, target.network)
-        self.network.apply(previous.network, target.network)
         if self.vpn_routes:
             self.vpn_routes.apply(previous.network, target.network)
+        self.network.apply(previous.network, target.network)
         self.links.finalize(previous.network, target.network)
         self.filters.restore(filter_patch(self.filters.snapshot(), target))
 

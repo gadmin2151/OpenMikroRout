@@ -281,10 +281,20 @@ class LinuxWireGuardDriver:
             self.prepared if time.monotonic() - self.prepared_at < 15 else self._resolved(target)
         )
         state = self._state()
+        referenced_hosts = {
+            peer.endpoint_host for peer in target.wireguard_peers if peer.endpoint_host
+        }
         state.update(
             {
                 "managed": {item.name: str(item.id) for item in target.wireguard_interfaces},
-                "endpoints": {**state["endpoints"], **endpoints},
+                "endpoints": {
+                    **{
+                        host: address
+                        for host, address in state["endpoints"].items()
+                        if host in referenced_hosts
+                    },
+                    **endpoints,
+                },
                 "intent": {
                     "transaction": self.transaction,
                     "target": target.model_dump(mode="json"),

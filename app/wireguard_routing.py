@@ -132,6 +132,11 @@ def observed_entries(rules: list[Entry], routes: list[Entry]) -> list[Entry]:
     result: list[Entry] = []
     for row in rules:
         priority = int(row.get("priority", -1))
+        if 0 < priority < FIRST_PRIORITY:
+            raise WireGuardError(
+                "Existing high-priority IP rules can bypass VPN source routing; "
+                "review their order before enabling this policy"
+            )
         table = _number(row.get("table", 0))
         if not (FIRST_PRIORITY <= priority < LAST_PRIORITY or FIRST_TABLE <= table <= LAST_TABLE):
             continue
@@ -167,7 +172,7 @@ def observed_entries(rules: list[Entry], routes: list[Entry]) -> list[Entry]:
         allowed = {"type", "dst", "table", "protocol", "scope", "dev", "metric", "flags"}
         if (
             set(row) - allowed
-            or row.get("flags")
+            or set(row.get("flags", [])) - {"linkdown"}
             or str(row.get("protocol", "")) != str(PROTOCOL)
             or row.get("type", "unicast") not in ("unicast", "unreachable")
         ):
@@ -208,9 +213,9 @@ class LinuxWireGuardRouting:
 
     def _observed(self, state: Entry) -> list[Entry]:
         try:
-            rules = json.loads(self.runner([self.binary, "-4", "-j", "rule", "show"]))
+            rules = json.loads(self.runner([self.binary, "-4", "-N", "-j", "rule", "show"]))
             routes = json.loads(
-                self.runner([self.binary, "-4", "-j", "route", "show", "table", "all"])
+                self.runner([self.binary, "-4", "-N", "-j", "route", "show", "table", "all"])
             )
             observed = observed_entries(rules, routes)
             known = [*state["entries"], *(state.get("intent") or {}).get("target", [])]

@@ -349,7 +349,12 @@ class LinuxNetworkDriver:
     def _bring_up(self, target: NetworkConfiguration) -> None:
         disabled = {
             item.name
-            for item in (*target.bridges, *target.vlans, *target.virtual_interfaces)
+            for item in (
+                *target.bridges,
+                *target.vlans,
+                *target.virtual_interfaces,
+                *target.wireguard_interfaces,
+            )
             if not item.enabled
         }
         required = {item.interface for item in target.addresses if item.enabled}

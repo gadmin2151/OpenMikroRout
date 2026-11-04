@@ -113,6 +113,9 @@ def namespace_scenario(directory: Path) -> None:
             runtime.check(empty, target)
             initial = runtime.snapshot(empty)
             runtime.apply(empty, target)
+            # Validate source routing even with strict reverse-path filtering.
+            Path("/proc/sys/net/ipv4/conf/all/rp_filter").write_text("1\n")
+            Path("/proc/sys/net/ipv4/conf/wg-server/rp_filter").write_text("1\n")
             command("ping", "-n", "-c", "3", "-W", "2", "10.77.0.2")
             command("ping", "-n", "-c", "3", "-W", "2", "-I", "10.99.0.1", "198.18.0.1")
             peer = wireguard.status()["interfaces"][0]["peers"][0]
@@ -121,7 +124,7 @@ def namespace_scenario(directory: Path) -> None:
             vpn_route = json.loads(
                 command("ip", "-4", "-j", "route", "get", "198.18.0.1", "from", "10.99.0.1")
             )[0]
-            assert vpn_route["dev"] == "wg-server" and vpn_route["table"] == 20000
+            assert vpn_route["dev"] == "wg-server" and int(vpn_route["table"]) == 20000, vpn_route
             escaped = json.loads(
                 command(
                     "ip",
@@ -144,6 +147,21 @@ def namespace_scenario(directory: Path) -> None:
             runtime.check(target, disabled)
             runtime.apply(target, disabled)
             assert command("wg", "show", "wg-server", "peers").strip() == ""
+            command("ip", "-4", "route", "get", "198.18.0.1", "from", "10.99.0.1", success=False)
+            runtime.rollback(healthy)
+            command("ping", "-n", "-c", "2", "-W", "2", "-I", "10.99.0.1", "198.18.0.1")
+
+            healthy = runtime.snapshot(target)
+            disabled = target.model_copy(deep=True)
+            disabled.network.wireguard_interfaces[0].enabled = False
+            runtime.check(target, disabled)
+            runtime.apply(target, disabled)
+            current = next(
+                row
+                for row in json.loads(command("ip", "-j", "link"))
+                if row["ifname"] == "wg-server"
+            )
+            assert "UP" not in current["flags"]
             command("ip", "-4", "route", "get", "198.18.0.1", "from", "10.99.0.1", success=False)
             runtime.rollback(healthy)
             command("ping", "-n", "-c", "2", "-W", "2", "-I", "10.99.0.1", "198.18.0.1")
