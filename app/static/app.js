@@ -1,6 +1,10 @@
 import { assertDraftRevision, prepareImportedConfig } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
-import { appendTelemetryHistory, renderTelemetry } from "./telemetry-ui.js?v=3";
+import {
+  appendTelemetryHistory,
+  mergeTelemetrySnapshot,
+  updateTelemetryView,
+} from "./telemetry-ui.js?v=4";
 import {
   hasWriteAccess,
   isReadAction,
@@ -27,7 +31,7 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=6";
+} from "./router-pages.js?v=7";
 
 const paths = {
   grip: "M8 5h.01 M16 5h.01 M8 12h.01 M16 12h.01 M8 19h.01 M16 19h.01",
@@ -108,9 +112,12 @@ let telemetry = null,
   telemetrySelection = "all",
   telemetryRequest = null,
   telemetryController = null,
+  fastTelemetryRequest = null,
+  fastTelemetryController = null,
   pollInFlight = false;
 let toastTimer,
   pollTimer,
+  telemetryTimer,
   countdownTimer,
   alive = true;
 const isDemo = () => state?.mode === "demo";
@@ -136,6 +143,7 @@ function clearSession() {
   usersRequest = null;
   securityStatus = null;
   telemetryController?.abort();
+  fastTelemetryController?.abort();
   telemetry = null;
   telemetryHistory = [];
   telemetryError = "";
@@ -915,46 +923,47 @@ function updateRuleCounters() {
 function updateTelemetry() {
   const container = document.querySelector("#telemetry-overview");
   if (!container || view !== "overview" || dialog.open) return;
-  const content = document.createElement("template");
-  content.innerHTML = renderTelemetry(routerContext());
-  if (document.activeElement?.id === "telemetry-interface") {
-    // Keep an open native selector in place while charts and counters stay live.
-    const previous = container.querySelector("#telemetry-content");
-    const next = content.content.querySelector("#telemetry-content");
-    if (previous && next) previous.replaceWith(next);
-    return;
-  }
-  container.replaceChildren(content.content);
+  updateTelemetryView(container, routerContext());
 }
-async function refreshTelemetry() {
-  if (telemetryRequest) return telemetryRequest;
-  if (!alive || !state || view !== "overview" || dialog.open) return;
+async function refreshTelemetry(fast = false) {
+  const inFlight = fast ? fastTelemetryRequest : telemetryRequest;
+  if (inFlight) return inFlight;
+  if (!alive || !state || view !== "overview" || dialog.open || document.hidden)
+    return;
   const controller = new AbortController();
-  telemetryController = controller;
-  telemetryRequest = (async () => {
+  if (fast) fastTelemetryController = controller;
+  else telemetryController = controller;
+  const request = (async () => {
     try {
-      const snapshot = await api("telemetry", {
+      const snapshot = await api(fast ? "telemetry?fast=true" : "telemetry", {
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
       });
       if (!alive || !state || controller.signal.aborted) return;
-      telemetryHistory = appendTelemetryHistory(telemetryHistory, snapshot);
-      telemetry = snapshot;
+      telemetry = mergeTelemetrySnapshot(telemetry, snapshot);
+      telemetryHistory = appendTelemetryHistory(telemetryHistory, telemetry);
       telemetryError = "";
       if (
         telemetrySelection !== "all" &&
-        !snapshot.interfaces?.some((item) => item.name === telemetrySelection)
+        !telemetry.interfaces?.some((item) => item.name === telemetrySelection)
       )
         telemetrySelection = "all";
     } catch (error) {
       if (!alive || controller.signal.aborted || !state) return;
       telemetryError = error.message || "Не удалось получить сетевые метрики.";
     } finally {
-      if (telemetryController === controller) telemetryController = null;
-      telemetryRequest = null;
+      if (fast && fastTelemetryController === controller) {
+        fastTelemetryController = null;
+        fastTelemetryRequest = null;
+      } else if (!fast && telemetryController === controller) {
+        telemetryController = null;
+        telemetryRequest = null;
+      }
       if (alive && state) updateTelemetry();
     }
   })();
-  return telemetryRequest;
+  if (fast) fastTelemetryRequest = request;
+  else telemetryRequest = request;
+  return request;
 }
 async function refresh(manual = false) {
   if (draggingId || document.body.classList.contains("router-drag-active"))
@@ -1792,7 +1801,7 @@ async function boot() {
 installRouterEvents(routerContext);
 void boot();
 async function poll() {
-  if (!alive || !state || busy || pollInFlight) return;
+  if (!alive || !state || busy || pollInFlight || document.hidden) return;
   pollInFlight = true;
   try {
     await refresh();
@@ -1814,19 +1823,34 @@ function updateCountdown() {
 }
 function startPolling() {
   pollTimer = setInterval(poll, 5000);
+  telemetryTimer = setInterval(() => {
+    if (!busy) void refreshTelemetry(true);
+  }, 200);
   countdownTimer = setInterval(updateCountdown, 1000);
 }
 startPolling();
 window.addEventListener("pagehide", () => {
   alive = false;
   telemetryController?.abort();
+  fastTelemetryController?.abort();
   clearInterval(pollTimer);
+  clearInterval(telemetryTimer);
   clearInterval(countdownTimer);
 });
 window.addEventListener("pageshow", () => {
   if (!alive) {
     alive = true;
     startPolling();
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    telemetryController?.abort();
+    fastTelemetryController?.abort();
+  } else {
+    void refreshTelemetry(true);
+    void poll();
   }
 });
 

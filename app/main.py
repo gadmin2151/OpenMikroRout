@@ -171,6 +171,9 @@ def create_app(
                 log.exception(
                     "Startup router recovery failed; administrator intervention may be needed"
                 )
+                raise RuntimeError(
+                    "Router recovery failed; refusing to start without protection"
+                ) from exc
             thread = threading.Thread(target=watchdog, daemon=True, name="router-rollback")
             thread.start()
             connections.start()
@@ -471,8 +474,8 @@ def create_app(
         return {"counters": service.statistics(), "demo": settings.mode == "demo"}
 
     @app.get("/api/telemetry", dependencies=[Depends(authenticated)])
-    def router_telemetry() -> TelemetrySnapshot:
-        return telemetry.snapshot()
+    def router_telemetry(fast: bool = False) -> TelemetrySnapshot:
+        return telemetry.snapshot(fast=fast)
 
     @app.get("/api/connections", dependencies=[Depends(authenticated)])
     def incoming_connections(query: Annotated[ConnectionQuery, Query()]) -> ConnectionSnapshot:

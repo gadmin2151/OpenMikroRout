@@ -1,7 +1,10 @@
 [Unit]
 Description=Recover an interrupted OpenMikroRout update before booting the router console
+DefaultDependencies=no
 After=local-fs.target
-Before=openmikrorout.service
+Before=openmikrorout-firewall.service openmikrorout.service shutdown.target
+RequiresMountsFor=/usr/local/libexec/openmikrorout-maintenance /opt/openmikrorout /var/lib/openmikrorout /var/backups/openmikrorout
+Conflicts=shutdown.target
 
 [Service]
 Type=oneshot

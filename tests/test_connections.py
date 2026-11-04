@@ -66,6 +66,17 @@ def test_outgoing_and_malformed_flows_are_not_reported_as_incoming() -> None:
         assert not parse_conntrack(value, {"203.0.113.10": "eth0"})
 
 
+def test_port_only_dnat_is_reported_with_translated_port() -> None:
+    redirected = FLOW.replace("src=192.168.10.10", "src=203.0.113.10").replace(
+        "sport=3389", "sport=3390"
+    )
+    rows = parse_conntrack(redirected, {})
+    assert len(rows) == 1
+    assert rows[0].destination_port == 3389
+    assert rows[0].translated_destination == "203.0.113.10"
+    assert rows[0].translated_port == 3390
+
+
 def test_attempts_parse_headers_only_and_ignore_ack_fragments() -> None:
     row = parse_packet(packet(), "eth0", 1000)
     assert row and row.state == "SYN" and row.destination_port == 3389

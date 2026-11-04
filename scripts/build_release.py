@@ -35,7 +35,11 @@ def main() -> None:
         raise SystemExit("Use a stable major.minor.patch version")
     if git("status", "--porcelain").strip():
         raise SystemExit("Commit all source changes before signing a release")
-    if args.private_key.is_symlink() or args.private_key.stat().st_mode & 0o077:
+    if (
+        args.private_key.is_symlink()
+        or not args.private_key.is_file()
+        or args.private_key.stat().st_mode & 0o077
+    ):
         raise SystemExit("The signing key must be a private regular file (0600)")
     raw_key = args.private_key.read_bytes()
     key = (
@@ -77,11 +81,17 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=True)
     name = f"openmikrorout-{args.version}.tar.gz"
     archive_path = args.output / name
+    manifest_path = args.output / "openmikrorout-manifest.json"
+    signature_path = args.output / "openmikrorout-manifest.sig"
+    for path in (archive_path, manifest_path, signature_path):
+        if path.exists() or path.is_symlink():
+            raise SystemExit(f"Release output already exists: {path.name}")
     with (
         archive_path.open("xb") as output,
         gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0) as compressed,
         tarfile.open(fileobj=cast(BinaryIO, compressed), mode="w|") as package,
     ):
+        os.fchmod(output.fileno(), 0o644)
         with tarfile.open(fileobj=io.BytesIO(source), mode="r:") as original:
             for member in original:
                 if not (member.isfile() or member.isdir()):
@@ -111,13 +121,11 @@ def main() -> None:
         "sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
     }
     raw = json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode() + b"\n"
-    (args.output / "openmikrorout-manifest.json").write_bytes(raw)
-    (args.output / "openmikrorout-manifest.sig").write_bytes(
-        base64.b64encode(key.sign(raw)) + b"\n"
-    )
-    for path in args.output.iterdir():
-        if path.is_file():
-            os.chmod(path, 0o644)
+    with manifest_path.open("xb") as manifest_output, signature_path.open("xb") as signature_output:
+        manifest_output.write(raw)
+        signature_output.write(base64.b64encode(key.sign(raw)) + b"\n")
+        os.fchmod(manifest_output.fileno(), 0o644)
+        os.fchmod(signature_output.fileno(), 0o644)
     print(
         json.dumps(
             {

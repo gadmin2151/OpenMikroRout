@@ -1,5 +1,7 @@
 import json
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -124,13 +126,86 @@ def test_cache_returns_independent_snapshot_and_fallback_is_explicit(tmp_path: P
     assert first.traffic.scope == "primary_interface_fallback"
     assert first.traffic.interfaces == ["eth0"]
     first.interfaces.clear()
-    clock.value += 1
+    clock.value += 0.05
     netdev(tmp_path / "proc", {})
     cached = source.snapshot()
     assert len(cached.interfaces) == 2
     assert cached.timestamp == 1000
-    clock.value += 1
+    clock.value += 0.15
     assert not source.snapshot().traffic.available
+
+
+def test_fast_samples_update_every_200ms_without_inventory_commands(tmp_path: Path) -> None:
+    clock = Clock()
+    calls: list[list[str]] = []
+
+    def command(args: list[str]) -> tuple[str | None, bool]:
+        calls.append(args)
+        return ("[]" if "neigh" in args else ""), False
+
+    source = TelemetryCollector(
+        "linux",
+        tmp_path / "data",
+        proc_root=tmp_path / "proc",
+        sys_root=tmp_path / "sys",
+        monotonic=clock,
+        clock=clock,
+        command=command,
+    )
+    interface(tmp_path / "sys", "eth0", 2)
+    with patch("app.telemetry.shutil.which", side_effect=lambda binary: f"/bin/{binary}"):
+        netdev(tmp_path / "proc", {"eth0": (1000, 2000, 10, 20)})
+        source.snapshot()
+        assert len(calls) == 2
+        for index in range(1, 21):
+            clock.value = 1000 + index * 0.2
+            netdev(tmp_path / "proc", {"eth0": (1000 + index * 100, 2000, 10 + index, 20)})
+            sample = source.snapshot(fast=True)
+            assert sample.timestamp == clock.value
+            assert sample.traffic.rx_bytes == 1000 + index * 100
+            assert sample.traffic.rx_bps is not None
+            assert abs(sample.traffic.rx_bps - 4000) < 0.001
+            assert not sample.details_included
+            assert sample.devices.items == []
+        assert len(calls) == 2
+        source.snapshot()
+        assert len(calls) == 2
+        clock.value = 1005
+        source.snapshot()
+        assert len(calls) == 4
+
+
+def test_slow_inventory_never_blocks_fast_counter_requests(tmp_path: Path) -> None:
+    clock = Clock()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def command(_args: list[str]) -> tuple[str | None, bool]:
+        entered.set()
+        assert release.wait(3), "Test did not release inventory command"
+        return "[]", False
+
+    source = TelemetryCollector(
+        "linux",
+        tmp_path / "data",
+        proc_root=tmp_path / "proc",
+        sys_root=tmp_path / "sys",
+        monotonic=clock,
+        clock=clock,
+        command=command,
+    )
+    interface(tmp_path / "sys", "eth0", 2)
+    netdev(tmp_path / "proc", {"eth0": (1000, 2000, 10, 20)})
+    with patch("app.telemetry.shutil.which", return_value="/bin/ip"), ThreadPoolExecutor(2) as pool:
+        slow = pool.submit(source.snapshot)
+        try:
+            assert entered.wait(1)
+            fast = pool.submit(source.snapshot, fast=True).result(timeout=1)
+            assert fast.traffic.rx_bytes == 1000
+            assert not slow.done()
+        finally:
+            release.set()
+        assert slow.result(timeout=1).details_included
 
 
 def test_missing_metrics_are_null_and_do_not_break_system_metrics(tmp_path: Path) -> None:
@@ -275,6 +350,9 @@ def test_telemetry_endpoint_requires_linux_session_and_never_changes_config(tmp_
         before = client.get("/api/state").json()
         with patch("app.telemetry.shutil.which", return_value=None):
             response = client.get("/api/telemetry")
+        fast = client.get("/api/telemetry?fast=true")
+        assert fast.status_code == 200
+        assert fast.json()["details_included"] is False
         assert response.status_code == 200
         assert response.json()["demo"] is False
         assert response.headers["cache-control"] == "no-store"

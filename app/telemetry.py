@@ -25,7 +25,9 @@ READ_LIMIT = 2_097_152
 INTERFACE_LIMIT = 128
 DEVICE_LIMIT = 512
 FLOW_LIMIT = 20_000
-CACHE_SECONDS = 2.0
+# Coalesce simultaneous tabs without hiding the next 200 ms browser sample.
+CACHE_SECONDS = 0.1
+DETAILS_CACHE_SECONDS = 5.0
 COUNTERS = ("rx_bytes", "tx_bytes", "rx_packets", "tx_packets")
 IFNAME = re.compile(r"[A-Za-z0-9_.:@-]{1,15}\Z")
 MAC = re.compile(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\Z")
@@ -113,6 +115,7 @@ class TopDestinations(BaseModel):
 class TelemetrySnapshot(BaseModel):
     demo: bool
     timestamp: float
+    details_included: bool = True
     sample_seconds: float | None = None
     traffic: TrafficTelemetry = Field(default_factory=TrafficTelemetry)
     interfaces: list[InterfaceTelemetry] = Field(default_factory=list)
@@ -409,6 +412,10 @@ class TelemetryCollector:
         self.lease_path = data_dir / "network" / "dhcp.leases"
         self.monotonic, self.clock, self.command = monotonic, clock, command
         self.lock = threading.Lock()
+        self.details_lock = threading.Lock()
+        self.details_at: float | None = None
+        self.devices = DeviceTelemetry()
+        self.top_destinations = TopDestinations()
         self.started = monotonic()
         self.previous_at: float | None = None
         self.previous: dict[str, RawInterface] = {}
@@ -416,15 +423,44 @@ class TelemetryCollector:
         self.cached: TelemetrySnapshot | None = None
         self.cached_at: float | None = None
 
-    def snapshot(self) -> TelemetrySnapshot:
+    def snapshot(self, *, fast: bool = False) -> TelemetrySnapshot:
+        # Slow inventory commands never hold the counter lock. A full request may
+        # take seconds, while concurrent fast requests keep reading /proc counters.
+        if not self.demo and not fast:
+            self._refresh_details()
         with self.lock:
             now = self.monotonic()
-            if self.cached and self.cached_at is not None and now - self.cached_at < CACHE_SECONDS:
-                return self.cached.model_copy(deep=True)
-            result = self._demo(now) if self.demo else self._linux(now)
-            self.cached, self.previous_at = result, now
-            self.cached_at = self.monotonic()
-            return result.model_copy(deep=True)
+            if not (
+                self.cached and self.cached_at is not None and now - self.cached_at < CACHE_SECONDS
+            ):
+                self.cached = self._demo(now) if self.demo else self._linux(now)
+                self.previous_at = now
+                self.cached_at = now
+            assert self.cached is not None
+            result = self.cached.model_copy(deep=True)
+            if fast:
+                # Do not resend up to 512 unchanged device records at 5 Hz.
+                result.details_included = False
+                result.devices = DeviceTelemetry()
+                result.top_destinations = TopDestinations()
+            return result
+
+    def _refresh_details(self) -> None:
+        if not self.details_lock.acquire(blocking=False):
+            return
+        try:
+            now = self.monotonic()
+            if self.details_at is not None and now - self.details_at < DETAILS_CACHE_SECONDS:
+                return
+            devices, destinations = self._details()
+            with self.lock:
+                self.devices, self.top_destinations = devices, destinations
+                self.details_at = self.monotonic()
+                if self.cached is not None:
+                    self.cached.devices = devices
+                    self.cached.top_destinations = destinations
+        finally:
+            self.details_lock.release()
 
     def _linux(self, now: float) -> TelemetrySnapshot:
         elapsed = now - self.previous_at if self.previous_at is not None else None
@@ -491,6 +527,13 @@ class TelemetryCollector:
             available=active is not None, active=active, limit=limit
         )
         result.system = self._system()
+        result.devices = self.devices
+        result.top_destinations = self.top_destinations
+        return result
+
+    def _details(self) -> tuple[DeviceTelemetry, TopDestinations]:
+        content, _ = read_bounded(self.proc_root / "net" / "dev")
+        raw = parse_interfaces(content, self.sys_root) if content is not None else []
         own_macs = set()
         for item in raw:
             own, _ = read_bounded(self.sys_root / item.name / "address", 64)
@@ -500,16 +543,15 @@ class TelemetryCollector:
         if ip := shutil.which("ip"):
             neighbor_text, neighbor_partial = self.command([ip, "-j", "-4", "neigh", "show"])
         lease_text, lease_partial = read_bounded(self.lease_path)
-        result.devices = observed_devices(
-            neighbor_text, lease_text, result.timestamp, own_macs, neighbor_partial or lease_partial
+        devices = observed_devices(
+            neighbor_text, lease_text, self.clock(), own_macs, neighbor_partial or lease_partial
         )
         flows, partial = read_bounded(self.proc_root / "net/nf_conntrack")
         if flows is None:
             flows, partial = read_bounded(self.proc_root / "net/ip_conntrack")
         if flows is None and (binary := shutil.which("conntrack")):
             flows, partial = self.command([binary, "-L", "-f", "ipv4", "-o", "extended"])
-        result.top_destinations = parse_destinations(flows, partial)
-        return result
+        return devices, parse_destinations(flows, partial)
 
     def _system(self) -> SystemTelemetry:
         result = SystemTelemetry()

@@ -118,15 +118,17 @@ def parse_conntrack(text: str, local: dict[str, str]) -> list[ConnectionRow]:
             reply_source = str(ipaddress.IPv4Address(sources[1]))
             if ipaddress.IPv4Address(source).is_loopback:
                 continue
-            dnat = destination != reply_source
-            if destination not in local and not dnat:
-                continue
             sport = int(fields["sport"][0]) if "sport" in fields else None
             dport = int(fields["dport"][0]) if "dport" in fields else None
-            translated_port = int(fields["sport"][1]) if "sport" in fields and dnat else None
+            reply_port = int(fields["sport"][1]) if "sport" in fields else None
+            dnat = destination != reply_source or (
+                dport is not None and reply_port is not None and dport != reply_port
+            )
+            if destination not in local and not dnat:
+                continue
+            translated_port = reply_port if dnat else None
             if any(
-                port is not None and not 0 <= port <= 65535
-                for port in (sport, dport, translated_port)
+                port is not None and not 0 <= port <= 65535 for port in (sport, dport, reply_port)
             ):
                 continue
             counts = {}

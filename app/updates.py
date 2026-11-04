@@ -224,8 +224,8 @@ class UpdateConfig:
 
 
 def valid_download_url(value: str) -> bool:
-    parsed = urllib.parse.urlsplit(value)
     try:
+        parsed = urllib.parse.urlsplit(value)
         return (
             parsed.scheme == "https"
             and parsed.hostname in TRUSTED_DOWNLOAD_HOSTS

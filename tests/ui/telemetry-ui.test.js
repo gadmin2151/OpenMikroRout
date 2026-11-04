@@ -4,6 +4,7 @@ import {
   appendTelemetryHistory,
   formatBytes,
   formatRate,
+  mergeTelemetrySnapshot,
   renderTelemetry,
 } from "../../app/static/telemetry-ui.js";
 
@@ -84,8 +85,8 @@ test("history is bounded and detached from API snapshots; duplicate polls do not
   let history = [];
   for (let index = 1; index <= 80; index++)
     history = appendTelemetryHistory(history, sample(index * 5));
-  assert.equal(history.length, 60);
-  assert.equal(history[0].timestamp, 105);
+  assert.equal(history.length, 61);
+  assert.equal(history[0].timestamp, 100);
   const same = appendTelemetryHistory(history, sample(400));
   assert.equal(same, history);
   const snapshot = sample(405);
@@ -235,4 +236,40 @@ test("charts break their lines after missing polls instead of interpolating acro
     assert.equal((data.match(/M/g) || []).length, 2);
     assert.equal((data.match(/L/g) || []).length, 2);
   }
+});
+
+test("200ms snapshots preserve a five minute history with one live point per second", () => {
+  let history = [];
+  for (let index = 0; index <= 2000; index++)
+    history = appendTelemetryHistory(history, sample(100 + index / 5));
+  assert.equal(history.length, 301);
+  assert.ok(history[0].timestamp >= 200);
+  assert.equal(history.at(-1).timestamp, 500);
+  history = appendTelemetryHistory(history, sample(500.2));
+  assert.equal(history.length, 301);
+  assert.equal(history.at(-1).timestamp, 500.2);
+});
+
+test("fast telemetry preserves inventory and a late full response cannot roll counters back", () => {
+  const original = sample(100);
+  const fast = {
+    ...sample(100.2),
+    details_included: false,
+    devices: {},
+    top_destinations: {},
+  };
+  fast.traffic.rx_bytes = 9000000000;
+  const merged = mergeTelemetrySnapshot(original, fast);
+  assert.equal(merged.traffic.rx_bytes, 9000000000);
+  assert.equal(merged.devices.count, 3);
+  const late = sample(100.1);
+  late.devices.count = 4;
+  const updated = mergeTelemetrySnapshot(merged, late);
+  assert.equal(updated.timestamp, 100.2);
+  assert.equal(updated.traffic.rx_bytes, 9000000000);
+  assert.equal(updated.devices.count, 4);
+  assert.equal(
+    mergeTelemetrySnapshot(updated, { ...sample(10), demo: true }).timestamp,
+    10,
+  );
 });

@@ -1,5 +1,6 @@
 /** Read-only network telemetry presentation. Rates are bits/s, byte counters are bytes. */
-const HISTORY_LIMIT = 60;
+const HISTORY_SECONDS = 300;
+const HISTORY_LIMIT = HISTORY_SECONDS + 1;
 const INTERFACE_LIMIT = 128;
 const MAX_GRAPH_GAP_SECONDS = 15;
 const nf = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
@@ -68,7 +69,79 @@ export function appendTelemetryHistory(history, snapshot) {
     (timestamp < last.timestamp ||
       current.demo !== last.demo ||
       (snapshot.sample_seconds === null && previous.length > 1));
-  return [...(restarted ? [] : previous), current].slice(-HISTORY_LIMIT);
+  const window = restarted
+    ? []
+    : previous.filter(
+        (point) => point.timestamp >= timestamp - HISTORY_SECONDS,
+      );
+  // Keep the newest live point within each second, preserving five minutes at 5 Hz.
+  if (
+    window.length &&
+    Math.floor(window.at(-1).timestamp) === Math.floor(timestamp)
+  )
+    return [...window.slice(0, -1), current];
+  return [...window, current].slice(-HISTORY_LIMIT);
+}
+
+/** Full inventory can finish after a newer fast request; never roll counters back. */
+export function mergeTelemetrySnapshot(previous, incoming) {
+  if (!previous || previous.demo !== incoming.demo) return incoming;
+  const latest = incoming.timestamp >= previous.timestamp ? incoming : previous;
+  const details = incoming.details_included === false ? previous : incoming;
+  return {
+    ...latest,
+    devices: details.devices,
+    top_destinations: details.top_destinations,
+  };
+}
+
+function patchTelemetryNode(current, next) {
+  if (
+    current.nodeType !== next.nodeType ||
+    current.nodeName !== next.nodeName
+  ) {
+    current.replaceWith(next);
+    return;
+  }
+  if (current.nodeType === 3) {
+    if (current.textContent !== next.textContent)
+      current.textContent = next.textContent;
+    return;
+  }
+  if (current.nodeType !== 1) return;
+  // Native select popup/focus and table scroll stay intact while counters change.
+  if (
+    current.id === "telemetry-interface" &&
+    current === current.ownerDocument.activeElement
+  )
+    return;
+  for (const attribute of [...current.attributes])
+    if (!next.hasAttribute(attribute.name))
+      current.removeAttribute(attribute.name);
+  for (const attribute of next.attributes)
+    if (current.getAttribute(attribute.name) !== attribute.value)
+      current.setAttribute(attribute.name, attribute.value);
+  const existing = [...current.childNodes];
+  const desired = [...next.childNodes];
+  for (
+    let index = 0;
+    index < Math.max(existing.length, desired.length);
+    index++
+  ) {
+    if (!desired[index]) existing[index].remove();
+    else if (!existing[index]) current.append(desired[index]);
+    else patchTelemetryNode(existing[index], desired[index]);
+  }
+}
+
+/** Patch changed text/SVG attributes instead of recreating the dashboard at 5 Hz. */
+export function updateTelemetryView(container, ctx) {
+  const template = container.ownerDocument.createElement("template");
+  template.innerHTML = renderTelemetry(ctx);
+  const next = template.content.firstElementChild;
+  if (container.firstElementChild && next)
+    patchTelemetryNode(container.firstElementChild, next);
+  else container.replaceChildren(template.content);
 }
 
 function selectedMetrics(snapshot, selection) {
@@ -213,7 +286,7 @@ export function renderTelemetry(ctx) {
     finite(system.memory_used_bytes) !== null
       ? (system.memory_used_bytes / system.memory_total_bytes) * 100
       : null;
-  return `<div class="telemetry-dashboard"><div class="telemetry-heading"><div><h2>Мониторинг сети</h2><p>${demo ? "Демонстрационные показатели · сеть компьютера не измеряется" : "Текущие показатели Linux-роутера · обновление каждые 5 секунд"}</p></div><div class="telemetry-controls"><label for="telemetry-interface">Интерфейс графика</label><select id="telemetry-interface" aria-label="Интерфейс графика"><option value="all" ${effectiveSelection === "all" ? "selected" : ""}>${e(scope)}</option>${links.map((item) => `<option value="${e(item.name)}" ${item.name === effectiveSelection ? "selected" : ""}>${e(item.name)}</option>`).join("")}</select><span class="${demo ? "telemetry-demo" : ctx.telemetryError || !snapshot ? "telemetry-stale" : "telemetry-live"}">${demo ? "DEMO" : ctx.telemetryError ? "НЕТ СВЯЗИ" : !snapshot ? "ОЖИДАНИЕ" : "LIVE"}</span></div></div><div id="telemetry-content">${notice}${snapshot?.traffic?.partial ? '<p class="telemetry-note">Счётчики охватывают ограниченный набор интерфейсов.</p>' : ""}<div class="telemetry-metrics">${[
+  return `<div class="telemetry-dashboard"><div class="telemetry-heading"><div><h2>Мониторинг сети</h2><p>${demo ? "Демонстрационные показатели · сеть компьютера не измеряется" : "Скорости и счётчики · каждые 0,2 с · устройства и топ назначений · каждые 5 с"}</p></div><div class="telemetry-controls"><label for="telemetry-interface">Интерфейс графика</label><select id="telemetry-interface" aria-label="Интерфейс графика"><option value="all" ${effectiveSelection === "all" ? "selected" : ""}>${e(scope)}</option>${links.map((item) => `<option value="${e(item.name)}" ${item.name === effectiveSelection ? "selected" : ""}>${e(item.name)}</option>`).join("")}</select><span class="${demo ? "telemetry-demo" : ctx.telemetryError || !snapshot ? "telemetry-stale" : "telemetry-live"}">${demo ? "DEMO" : ctx.telemetryError ? "НЕТ СВЯЗИ" : !snapshot ? "ОЖИДАНИЕ" : "LIVE"}</span></div></div><div id="telemetry-content">${notice}${snapshot?.traffic?.partial ? '<p class="telemetry-note">Счётчики охватывают ограниченный набор интерфейсов.</p>' : ""}<div class="telemetry-metrics">${[
     metric(
       "Входящая скорость · RX",
       formatRate(stats.rx_bps),
@@ -252,5 +325,5 @@ export function renderTelemetry(ctx) {
     ),
   ].join(
     "",
-  )}</div><div class="telemetry-chart-grid">${chart(ctx.telemetryHistory, effectiveSelection, "speed", e)}${chart(ctx.telemetryHistory, effectiveSelection, "packets", e)}</div><p class="telemetry-chart-footer">RX — получено интерфейсом, TX — отправлено. История хранится в этой вкладке: до 60 измерений. Счётчики трафика накоплены с момента запуска / сброса интерфейса.</p>${interfaceTable(snapshot, e)}<div class="telemetry-detail-grid">${destinations(snapshot, e)}${devices(snapshot, e)}</div><div class="telemetry-system"><span>Время работы <strong>${e(duration(system.uptime_seconds))}</strong></span><span>CPU <strong>${finite(system.cpu_percent) === null ? "—" : `${e(decimal.format(system.cpu_percent))}%`}</strong></span><span>RAM <strong>${e(formatBytes(system.memory_used_bytes))} / ${e(formatBytes(system.memory_total_bytes))}${memoryPercent === null ? "" : ` · ${e(decimal.format(memoryPercent))}%`}</strong></span></div></div></div>`;
+  )}</div><div class="telemetry-chart-grid">${chart(ctx.telemetryHistory, effectiveSelection, "speed", e)}${chart(ctx.telemetryHistory, effectiveSelection, "packets", e)}</div><p class="telemetry-chart-footer">RX — получено интерфейсом, TX — отправлено. История хранится в этой вкладке: до 5 минут, одна точка в секунду. Счётчики трафика накоплены с момента запуска / сброса интерфейса.</p>${interfaceTable(snapshot, e)}<div class="telemetry-detail-grid">${destinations(snapshot, e)}${devices(snapshot, e)}</div><div class="telemetry-system"><span>Время работы <strong>${e(duration(system.uptime_seconds))}</strong></span><span>CPU <strong>${finite(system.cpu_percent) === null ? "—" : `${e(decimal.format(system.cpu_percent))}%`}</strong></span><span>RAM <strong>${e(formatBytes(system.memory_used_bytes))} / ${e(formatBytes(system.memory_total_bytes))}${memoryPercent === null ? "" : ` · ${e(decimal.format(memoryPercent))}%`}</strong></span></div></div></div>`;
 }

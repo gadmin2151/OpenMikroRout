@@ -146,6 +146,32 @@ def router_ready(data_dir: Path) -> bool:
         return False
 
 
+def sync_snapshot(path: Path) -> None:
+    """Persist copied file contents and directory entries before trusting a snapshot."""
+
+    def sync_directory(directory: Path) -> None:
+        descriptor = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def sync_contents(directory: Path) -> None:
+        for child in directory.iterdir():
+            if child.is_symlink():
+                # Persist the link via its parent; virtualenv links can point outside the release.
+                continue
+            if child.is_dir():
+                sync_contents(child)
+            else:
+                with child.open("rb") as stream:
+                    os.fsync(stream.fileno())
+        sync_directory(directory)
+
+    sync_contents(path)
+    sync_directory(path.parent)
+
+
 class ServiceControl(Protocol):
     def stop(self) -> None: ...
     def start(self) -> None: ...
@@ -318,6 +344,7 @@ class UpdateWorker:
             ):
                 original.backup(target)
             (destination / source.name).chmod(0o600)
+        sync_snapshot(path)
 
     def _restore_data(self, backup: Path) -> None:
         if (
@@ -338,6 +365,7 @@ class UpdateWorker:
                 shutil.copytree(source, target)
             else:
                 shutil.copy2(source, target)
+        sync_snapshot(self.config.data_dir)
 
     def recover(self) -> None:
         if not self.journal.exists():
@@ -449,6 +477,7 @@ class UpdateWorker:
             raise UpdateError("Build metadata does not match the signed manifest")
         self._phase(job, "installing", "Готовим отдельное окружение новой версии.")
         self.installer(target, manifest)
+        sync_snapshot(target)
         if not router_ready(self.config.data_dir):
             raise UpdateError("Router configuration changed during release preparation")
         self._phase(job, "backup", "Сохраняем конфигурацию и учётные записи.")

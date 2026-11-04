@@ -1,6 +1,6 @@
 import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
-import { renderTelemetry } from "./telemetry-ui.js?v=3";
+import { renderTelemetry } from "./telemetry-ui.js?v=4";
 
 /** Router configuration views. All writes use the existing revisioned draft API. */
 

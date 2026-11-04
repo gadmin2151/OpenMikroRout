@@ -2,9 +2,12 @@ import base64
 import hashlib
 import io
 import json
+import os
 import sqlite3
 import tarfile
 import time
+from configparser import ConfigParser
+from graphlib import TopologicalSorter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +23,7 @@ from app.update_worker import (
     UpdateWorker,
     extract_package,
     installed_version,
+    sync_snapshot,
     validate_requirements,
 )
 from app.updates import (
@@ -42,6 +46,43 @@ from app.updates import (
 PASSWORD = "test-only-update-administrator-password"
 COMMIT = "a" * 40
 HEADERS = {"X-NAT-Request": "1"}
+
+
+def test_early_recovery_dependency_graph_has_no_network_boot_cycle() -> None:
+    deploy = Path(__file__).resolve().parents[1] / "deploy"
+    recovery = "openmikrorout-update-recover.service"
+    firewall = "openmikrorout-firewall.service"
+    application = "openmikrorout.service"
+    # PVE's cloud-init-network precedes sysinit. A normal service's implicit
+    # After=basic.target would therefore make recovery-before-networking cyclic.
+    graph: dict[str, set[str]] = {
+        "basic.target": {"sysinit.target"},
+        "sysinit.target": {"cloud-init-network.service"},
+        "cloud-init-network.service": {"networking.service"},
+        "networking.service": {firewall, "network-pre.target"},
+        "network-online.target": {"networking.service"},
+    }
+    dropin = ConfigParser(interpolation=None, strict=False)
+    dropin.read(deploy / "openmikrorout-update-recovery.conf")
+    assert recovery in dropin["Unit"]["Requires"].split()
+    for name in (recovery, firewall, application):
+        unit = ConfigParser(interpolation=None, strict=False)
+        unit.read(deploy / name)
+        dependencies = graph.setdefault(name, set())
+        dependencies.update(unit["Unit"].get("After", "").split())
+        if unit["Unit"].get("DefaultDependencies", "yes") != "no":
+            dependencies.update({"sysinit.target", "basic.target"})
+        if name in (firewall, application):
+            dependencies.update(dropin["Unit"].get("After", "").split())
+        for successor in unit["Unit"].get("Before", "").split():
+            graph.setdefault(successor, set()).add(name)
+    order = list(TopologicalSorter(graph).static_order())
+    assert (
+        order.index(recovery)
+        < order.index(firewall)
+        < order.index("networking.service")
+        < order.index(application)
+    )
 
 
 def archive_bytes(files: dict[str, bytes]) -> bytes:
@@ -188,6 +229,8 @@ def test_signed_release_is_required_and_metadata_is_bound(tmp_path: Path) -> Non
         "https://user:pass@github.com/x",
         "https://github.com:444/x",
         "https://example.com/",
+        "https://[github.com/",
+        "https://github.com:not-a-port/",
     ],
 )
 def test_download_origin_restrictions(url: str) -> None:
@@ -260,6 +303,50 @@ def test_successful_update_preserves_users_keys_and_configuration(tmp_path: Path
     assert control.calls == ["stop", "start:0.4.0", "health:0.4.0"]
 
 
+def test_staged_release_sync_failure_keeps_running_version(tmp_path: Path) -> None:
+    config, source = installation(tmp_path)
+    control = Control(config)
+    worker = UpdateWorker(config, control, client=source, installer=lambda path, manifest: None)
+    original_sync = os.fsync
+
+    def fail_release_sync(descriptor: int) -> None:
+        for target in config.releases_dir.glob("v*/requirements.lock"):
+            if os.fstat(descriptor).st_ino == target.stat().st_ino:
+                raise OSError("injected staged release sync failure")
+        original_sync(descriptor)
+
+    with (
+        patch("app.update_worker.os.fsync", side_effect=fail_release_sync),
+        pytest.raises(OSError, match="injected staged release sync failure"),
+    ):
+        worker.run()
+    assert not control.calls
+    assert installed_version(config.install_dir) == "0.3.0"
+    assert not worker.journal.exists()
+    assert not config.backup_dir.exists()
+    assert private_json(config.state_dir / "job.json")["phase"] == "failed"
+
+
+def test_release_sync_does_not_follow_virtualenv_symlinks(tmp_path: Path) -> None:
+    target, external = tmp_path / "release", tmp_path / "external"
+    target.mkdir()
+    external.mkdir()
+    (external / "python").write_bytes(b"outside release")
+    (target / "python").symlink_to(external / "python")
+    (target / "lib").symlink_to(external, target_is_directory=True)
+    (target / "missing").symlink_to(external / "missing")
+    (target / "cycle").symlink_to(target, target_is_directory=True)
+    forbidden = {external.stat().st_ino, (external / "python").stat().st_ino}
+    original_sync = os.fsync
+
+    def reject_external_sync(descriptor: int) -> None:
+        assert os.fstat(descriptor).st_ino not in forbidden
+        original_sync(descriptor)
+
+    with patch("app.update_worker.os.fsync", side_effect=reject_external_sync):
+        sync_snapshot(target)
+
+
 def test_failed_health_rolls_back_code_and_database_migration(tmp_path: Path) -> None:
     config, source = installation(tmp_path)
     control = Control(config, fail_new=True)
@@ -275,6 +362,44 @@ def test_failed_health_rolls_back_code_and_database_migration(tmp_path: Path) ->
     assert "start:0.3.0" in control.calls
 
 
+@pytest.mark.parametrize("failure_target", ["data/totp.key", "."])
+def test_snapshot_sync_failure_keeps_old_code_and_original_data(
+    tmp_path: Path, failure_target: str
+) -> None:
+    config, source = installation(tmp_path)
+    control = Control(config)
+    worker = UpdateWorker(config, control, client=source, installer=lambda path, manifest: None)
+    backup = config.backup_dir / ("c" * 32)
+    original_sync = os.fsync
+    ready_at_failure: list[bool] = []
+
+    def fail_snapshot_sync(descriptor: int) -> None:
+        target = backup / failure_target
+        if target.exists() and os.fstat(descriptor).st_ino == target.stat().st_ino:
+            ready_at_failure.append(private_json(worker.journal)["backup_ready"])
+            # An incomplete snapshot must never replace the authoritative data.
+            (backup / "data/totp.key").write_bytes(b"incomplete snapshot")
+            raise OSError("injected snapshot sync failure")
+        original_sync(descriptor)
+
+    with (
+        patch("app.update_worker.os.fsync", side_effect=fail_snapshot_sync),
+        patch.object(worker, "_switch", wraps=worker._switch) as switch,
+        pytest.raises(OSError, match="injected snapshot sync failure"),
+    ):
+        worker.run()
+    assert ready_at_failure == [False]
+    assert switch.call_args_list == [((config.releases_dir / "old",), {})]
+    assert installed_version(config.install_dir) == "0.3.0"
+    assert (config.data_dir / "totp.key").read_bytes() == b"k" * 32
+    with sqlite3.connect(config.data_dir / "auth.sqlite3") as db:
+        assert db.execute("SELECT value FROM test").fetchall() == [("original-user",)]
+    assert not (config.data_dir / "new-migration-file").exists()
+    assert private_json(config.state_dir / "job.json")["phase"] == "failed"
+    assert not worker.journal.exists()
+    assert "start:0.4.0" not in control.calls
+
+
 def test_tampered_package_never_stops_the_running_service(tmp_path: Path) -> None:
     config, source = installation(tmp_path)
     source.archive += b"tamper"
@@ -282,6 +407,33 @@ def test_tampered_package_never_stops_the_running_service(tmp_path: Path) -> Non
     with pytest.raises(UpdateError, match="checksum"):
         UpdateWorker(config, control, client=source, installer=lambda path, manifest: None).run()
     assert not control.calls and installed_version(config.install_dir) == "0.3.0"
+
+
+def test_restore_sync_failure_retains_recovery_journal_and_snapshot(tmp_path: Path) -> None:
+    config, source = installation(tmp_path)
+    control = Control(config, fail_new=True)
+    worker = UpdateWorker(config, control, client=source, installer=lambda path, manifest: None)
+    original_sync = os.fsync
+
+    def fail_restored_key_sync(descriptor: int) -> None:
+        target = config.data_dir / "totp.key"
+        if target.exists() and os.fstat(descriptor).st_ino == target.stat().st_ino:
+            raise OSError("injected restore sync failure")
+        original_sync(descriptor)
+
+    with (
+        patch("app.update_worker.os.fsync", side_effect=fail_restored_key_sync),
+        pytest.raises(OSError, match="injected restore sync failure"),
+    ):
+        worker.run()
+    assert worker.journal.exists()
+    assert private_json(worker.journal)["backup_ready"] is True
+    assert (config.backup_dir / ("c" * 32) / "data/totp.key").read_bytes() == b"k" * 32
+    assert "start:0.3.0" not in control.calls
+    worker.recover()
+    assert installed_version(config.install_dir) == "0.3.0"
+    assert not worker.journal.exists()
+    assert control.calls[-2:] == ["start:0.3.0", "health:0.3.0"]
 
 
 def test_crash_before_backup_recovers_without_replacing_data(tmp_path: Path) -> None:
