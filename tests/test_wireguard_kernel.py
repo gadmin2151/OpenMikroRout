@@ -3,6 +3,8 @@
 import json
 import os
 import shutil
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -10,11 +12,12 @@ from pathlib import Path
 
 import pytest
 
+from app.diagnostics import DiagnosticRequest, NetworkDiagnostics
 from app.filtering import LinuxFilterDriver
 from app.link_models import WireGuardInterface
 from app.links import LinuxLinkDriver
 from app.models import Configuration
-from app.network_models import IpAddress, NetworkConfiguration
+from app.network_models import DnsSettings, DnsStaticRecord, IpAddress, NetworkConfiguration
 from app.networking import LinuxNetworkDriver
 from app.runtime import RouterRuntime
 from app.wireguard import LinuxWireGuardDriver
@@ -185,6 +188,52 @@ def namespace_scenario(directory: Path) -> None:
             remote_process.wait(timeout=5)
 
 
+def namespace_dns_and_tools(directory: Path) -> None:
+    driver = LinuxNetworkDriver(directory)
+    empty = NetworkConfiguration()
+    target = NetworkConfiguration(
+        addresses=[IpAddress(interface="lan-test", address="10.55.0.1/24")],
+        dns=DnsSettings(enabled=True, listen_interfaces=["lan-test"], servers=["192.0.2.53"]),
+        dns_static=[DnsStaticRecord(name="nas.test", address="10.55.0.20", ttl=60)],
+    )
+    snapshot = driver.snapshot(empty)
+    try:
+        driver.check(empty, target)
+        driver.apply(empty, target)
+        question = b"\x03nas\x04test\x00" + struct.pack("!HH", 1, 1)
+        packet = struct.pack("!6H", 0x2747, 0x0100, 1, 0, 0, 0) + question
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as resolver:
+            resolver.settimeout(3)
+            resolver.sendto(packet, ("10.55.0.1", 53))
+            response, _ = resolver.recvfrom(4096)
+        identity, flags, _, answers, _, _ = struct.unpack("!6H", response[:12])
+        assert identity == 0x2747 and flags & 15 == 0 and answers == 1
+        assert socket.inet_ntoa(response[-4:]) == "10.55.0.20"
+        assert struct.unpack("!I", response[-10:-6])[0] == 60
+
+        diagnostics = NetworkDiagnostics(False)
+        for tool in ("ping", "traceroute", "dns", "route"):
+            request = DiagnosticRequest(
+                tool=tool, target="localhost" if tool == "dns" else "127.0.0.1"
+            )
+            result = diagnostics.run(request)
+            assert result["success"] and not result["demo"], (tool, result)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            listener.settimeout(3)
+            result = diagnostics.run(
+                DiagnosticRequest(tool="tcp", target="127.0.0.1", port=listener.getsockname()[1])
+            )
+            assert result["success"]
+            accepted, _ = listener.accept()
+            with accepted:
+                accepted.settimeout(3)
+                assert accepted.recv(16) == b"", "TCP diagnostic must send no application payload"
+    finally:
+        driver.rollback(snapshot)
+
+
 @pytest.mark.skipif(
     sys.platform != "linux" or os.environ.get("NAT_RUN_KERNEL_TESTS") != "1",
     reason="Opt-in root test confined to new Linux network namespaces",
@@ -208,6 +257,7 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as temporary:
         try:
             namespace_scenario(Path(temporary))
+            namespace_dns_and_tools(Path(temporary) / "dns-tools")
         except Exception:
             # Only public routes/rules from this disposable namespace, never wg dump.
             print("Namespace IP rules:", command("ip", "-4", "-N", "-j", "rule"), file=sys.stderr)

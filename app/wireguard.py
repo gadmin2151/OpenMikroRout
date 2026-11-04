@@ -236,8 +236,13 @@ class LinuxWireGuardDriver:
             self.vault.validate(target)
             endpoints = self._resolved(target)
             for interface in target.wireguard_interfaces:
-                kernel_profile(interface, target.wireguard_peers, self.vault, endpoints)
-        except (ValueError, RuntimeError) as exc:
+                kernel_profile(
+                    interface,
+                    target.wireguard_peers if interface.enabled else [],
+                    self.vault,
+                    endpoints,
+                )
+        except (ValueError, RuntimeError, KeyError) as exc:
             raise WireGuardError(
                 "WireGuard keys or configuration are unavailable; check its private backup"
             ) from exc
@@ -314,7 +319,7 @@ class LinuxWireGuardDriver:
                     else 0,
                 )
                 self._wg("syncconf", interface.name, "/dev/stdin", payload=profile)
-        except (ValueError, RuntimeError) as exc:
+        except (ValueError, RuntimeError, KeyError) as exc:
             raise WireGuardError("Cannot configure WireGuard private material") from exc
         self.config = target
 

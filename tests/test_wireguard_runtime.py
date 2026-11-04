@@ -97,6 +97,7 @@ def test_endpoint_resolution_cache_is_scoped_to_enabled_interfaces_and_survives_
     assert driver._resolved(network) == {"vpn.example.com": "192.0.2.1"}
     network.wireguard_interfaces[0].enabled = False
     assert driver._resolved(network) == {}
+    driver.check(network, network)
 
 
 def test_wireguard_stderr_and_dump_secret_columns_are_never_returned(tmp_path: Path) -> None:
