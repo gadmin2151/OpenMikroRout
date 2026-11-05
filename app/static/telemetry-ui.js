@@ -2,9 +2,8 @@
 import {
   advanceTelemetryNumber,
   paintTelemetryNumber,
-  stopTelemetryDigits,
   telemetryUnit,
-} from "./telemetry-motion.js?v=1";
+} from "./telemetry-motion.js?v=2";
 
 const HISTORY_SECONDS = 3600;
 const OVERVIEW_SECONDS = 60;
@@ -162,16 +161,13 @@ function patchTelemetryNode(current, next) {
   for (const attribute of [...current.attributes])
     if (
       !next.hasAttribute(attribute.name) &&
-      !(
-        liveNumber &&
-        ["style", "aria-label", "data-display-text"].includes(attribute.name)
-      )
+      !(liveNumber && attribute.name === "style")
     )
       current.removeAttribute(attribute.name);
   for (const attribute of next.attributes)
     if (current.getAttribute(attribute.name) !== attribute.value)
       current.setAttribute(attribute.name, attribute.value);
-  // Preserve the value currently on screen, including moving digit reels.
+  // Preserve the displayed reading while the shared number follower updates it.
   if (liveNumber) return;
   const existing = [...current.childNodes];
   const desired = [...next.childNodes];
@@ -446,8 +442,6 @@ export function stopTelemetryAnimation(container) {
   if (animation.frame !== null)
     container.ownerDocument.defaultView.cancelAnimationFrame(animation.frame);
   animation.finish?.();
-  for (const node of container.querySelectorAll("[data-live-number]"))
-    stopTelemetryDigits(node);
   animations.delete(container);
 }
 
@@ -524,7 +518,7 @@ export function updateTelemetryView(container, ctx) {
     const label = formatLiveNumber(record.value, format, record.unit);
     const targetLabel = formatLiveNumber(target, format);
     fitTelemetryValue(node, [label, targetLabel], canvas);
-    if (!animate || !old) paintTelemetryNumber(node, label, animate);
+    if (!animate || !old) paintTelemetryNumber(node, label);
     numbers.set(key, record);
   }
   for (const node of container.querySelectorAll("[data-live-path]")) {
@@ -544,8 +538,6 @@ export function updateTelemetryView(container, ctx) {
       if (tween) node.setAttribute("d", tween(0));
     }
   }
-  for (const [key, old] of state.values)
-    if (!numbers.has(key)) stopTelemetryDigits(old.node);
   Object.assign(state, {
     values: numbers,
     paths,
@@ -553,7 +545,7 @@ export function updateTelemetryView(container, ctx) {
     demo: snapshot?.demo,
     timestamp: snapshot?.timestamp,
   });
-  const paintNumbers = (motion) => {
+  const paintNumbers = () => {
     for (const item of state.values.values()) {
       if (item.format === "rate" || item.format === "bytes")
         item.unit = telemetryUnit(
@@ -564,7 +556,6 @@ export function updateTelemetryView(container, ctx) {
       paintTelemetryNumber(
         item.node,
         formatLiveNumber(item.value, item.format, item.unit),
-        motion,
       );
     }
   };
@@ -575,7 +566,7 @@ export function updateTelemetryView(container, ctx) {
       item.node.setAttribute("d", item.target);
       item.tween = null;
     }
-    paintNumbers(false);
+    paintNumbers();
   };
   animations.set(container, state);
   if (!animate) {
@@ -619,7 +610,7 @@ export function updateTelemetryView(container, ctx) {
     }
     state.lastFrame = now;
     if (now - state.lastPaint >= NUMBER_PAINT_MS || !moving) {
-      paintNumbers(true);
+      paintNumbers();
       state.lastPaint = now;
     }
     state.frame = moving ? browser.requestAnimationFrame(frame) : null;

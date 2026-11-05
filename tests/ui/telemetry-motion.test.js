@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   advanceTelemetryNumber,
-  telemetryDigitPositions,
+  paintTelemetryNumber,
   telemetryUnit,
 } from "../../app/static/telemetry-motion.js";
 
@@ -69,15 +69,37 @@ test("unit hysteresis prevents flickering near 1000 while preserving real scale 
   assert.equal(telemetryUnit(2e18, undefined, 6), 6);
 });
 
-test("digit retargeting keeps the exact visible fraction and chooses a short, bounded roll", () => {
-  for (let position = 0; position < 30; position += 0.25)
-    for (let digit = 0; digit < 10; digit++) {
-      const { from, to } = telemetryDigitPositions(position, digit);
-      assert.ok(from >= 10 && from < 20);
-      assert.ok(to >= 5 && to <= 24);
-      assert.ok(Math.abs(to - from) <= 5);
-      assert.ok(Math.abs((from - position) % 10) < 0.000001);
-      assert.equal(to % 10, digit);
-    }
-  assert.deepEqual(telemetryDigitPositions(19.5, 0), { from: 19.5, to: 20 });
+test("rapid metric changes replace a complete reading without spinning or split digits", () => {
+  let text = "",
+    writes = 0;
+  const node = {
+    get textContent() {
+      return text;
+    },
+    set textContent(value) {
+      text = value;
+      writes++;
+    },
+    animate() {
+      assert.fail("Live readings must not animate individual digits");
+    },
+    replaceChildren() {
+      assert.fail("A reading must stay a single text node");
+    },
+  };
+  for (const value of [
+    "41,8 Кбит/с",
+    "86,2 Кбит/с",
+    "7",
+    "999,9 Кбит/с",
+    "1,1 Мбит/с",
+    "0 бит/с",
+    "—",
+  ]) {
+    paintTelemetryNumber(node, value);
+    assert.equal(node.textContent, value);
+  }
+  assert.equal(writes, 7);
+  paintTelemetryNumber(node, "—");
+  assert.equal(writes, 7, "An unchanged reading must not rewrite the DOM");
 });

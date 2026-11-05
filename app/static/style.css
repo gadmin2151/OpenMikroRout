@@ -2691,24 +2691,6 @@ dialog::backdrop {
   font-size: 13px;
   font-weight: 500;
 }
-.telemetry-number-digit {
-  display: inline-block;
-  width: 1ch;
-  height: 1.25em;
-  overflow: hidden;
-  flex-shrink: 0;
-  letter-spacing: 0;
-}
-.telemetry-number-reel,
-.telemetry-number-reel > span {
-  display: block;
-  line-height: 1.25em;
-  height: 1.25em;
-}
-.telemetry-number-literal {
-  white-space: pre;
-  flex-shrink: 0;
-}
 .telemetry-chart-grid,
 .telemetry-detail-grid {
   display: grid;

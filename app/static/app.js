@@ -21,7 +21,7 @@ import {
   mergeStoredTelemetryHistory,
   stopTelemetryAnimation,
   updateTelemetryView,
-} from "./telemetry-ui.js?v=6";
+} from "./telemetry-ui.js?v=7";
 import {
   hasWriteAccess,
   isReadAction,
@@ -48,7 +48,7 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=11";
+} from "./router-pages.js?v=12";
 
 const paths = {
   grip: "M8 5h.01 M16 5h.01 M8 12h.01 M16 12h.01 M8 19h.01 M16 19h.01",
