@@ -5,6 +5,7 @@ import { renderTelemetry } from "./telemetry-ui.js?v=6";
 /** Router configuration views. All writes use the existing revisioned draft API. */
 
 export const routerViews = {
+  web_settings: ["Web Interface", "Домен для доступа к панели OpenMikroRout."],
   bridge_ports: [
     "Bridge Ports",
     "Участники bridge и принадлежность физических / виртуальных интерфейсов.",
@@ -469,6 +470,10 @@ function renderDns(ctx) {
     )}<label class="field"><span>IPv4 Forwarding</span><select name="forwarding"><option value="preserve" ${item.forwarding === null ? "selected" : ""}>Не менять настройку хоста</option><option value="on" ${item.forwarding === true ? "selected" : ""}>Включить маршрутизацию</option><option value="off" ${item.forwarding === false ? "selected" : ""}>Выключить маршрутизацию</option></select><small>Для транзита между интерфейсами и NAT необходимо включить forwarding.</small></label><div class="field-note wide">DNS слушает только выбранные интерфейсы. Разрешите TCP / UDP 53 в Firewall для доверенной LAN. Системный resolv.conf и сторонние DNS-службы не заменяются.</div>${daemon.error ? `<div class="connection-error wide">${ctx.e(daemon.error)}</div>` : ""}<div class="wide settings-actions"><button type="button" class="primary" data-action="router-save-dns" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("check")}Сохранить в черновик</button></div></form></div>`;
 }
 
+function renderWebSettings(ctx) {
+  return `<div class="view-panel router-settings"><form id="router-domain-form" class="form-grid" data-revision="${ctx.state.revision}"><label class="field wide"><span>Домен панели</span><input name="web_domain" type="text" value="${ctx.e(ctx.state.config.web_domain || "")}" placeholder="router.example.com" maxlength="254" autocomplete="off" autocapitalize="none" spellcheck="false"><small>Имя без протокола, порта и пути. Оставьте пустым, чтобы убрать дополнительный домен.</small></label><div class="field-note wide">Создайте DNS A-запись домена на IPv4-адрес роутера. Панель будет доступна по домену на текущем порту. Сохраните черновик, затем нажмите «Применить» и подтвердите связь.</div><div class="wide settings-actions"><button type="button" class="primary" data-action="router-save-domain" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("check")}Сохранить в черновик</button></div></form></div>`;
+}
+
 function renderOverview(ctx) {
   const network = configNetwork(ctx);
   const count = (kind) => (network[kind] || []).length;
@@ -558,6 +563,7 @@ function openPortEditor(ctx, bridgeId, member = "") {
 }
 
 export function renderRouterView(view, ctx) {
+  if (view === "web_settings") return renderWebSettings(ctx);
   if (view === "overview") return renderOverview(ctx);
   if (view === "bridge_ports") return renderBridgePorts(ctx);
   if (view === "dhcp_networks") return renderDhcpNetworks(ctx);
@@ -684,6 +690,22 @@ function updateNameReferences(config, kind, oldName, newName) {
 export async function handleRouterAction(button, ctx) {
   const { action, kind, id } = button.dataset;
   if (!action.startsWith("router-")) return false;
+  if (action === "router-save-domain") {
+    if (!ctx.canWrite()) throw new Error("Нужна учётная запись full.");
+    const form = document.querySelector("#router-domain-form");
+    if (!form?.reportValidity()) return true;
+    const expectedRevision = Number(form.dataset.revision);
+    assertDraftRevision(expectedRevision, ctx.state.revision);
+    const config = structuredClone(ctx.state.config);
+    config.web_domain = String(
+      new FormData(form).get("web_domain") || "",
+    ).trim();
+    await ctx.run(async () => {
+      await ctx.saveConfig(config, expectedRevision);
+      ctx.toast("Домен сохранён в черновик");
+    });
+    return true;
+  }
   if (action === "router-reload-dns") {
     ctx.render();
     return true;

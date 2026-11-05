@@ -48,7 +48,7 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=10";
+} from "./router-pages.js?v=11";
 
 const paths = {
   grip: "M8 5h.01 M16 5h.01 M8 12h.01 M16 12h.01 M8 19h.01 M16 19h.01",
@@ -409,7 +409,7 @@ function renderNavigation(count) {
         ["filter", "rules", "lists", "connections"],
       ),
     ].join(""),
-  )}${navButton("tools", "Tools", "terminal")}${navGroup("system", "System", "server", `${state.auth_enabled ? navButton("security", "Security", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
+  )}${navButton("tools", "Tools", "terminal")}${navGroup("system", "System", "server", `${navButton("web_settings", "Web Interface", "network")}${state.auth_enabled ? navButton("security", "Security", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
 }
 async function refreshSecurity() {
   if (state?.current_user) securityStatus = await api("me/totp");
@@ -1139,8 +1139,13 @@ async function refresh(manual = false) {
   if (!canWrite()) users = [];
   const ids = new Set(next.config.rules.map((rule) => rule.id));
   selected = new Set([...selected].filter((id) => ids.has(id)));
-  const dnsForm = document.querySelector("#router-dns-form");
-  if (view === "dns" && dnsForm?.dataset.dirty === "true") {
+  const settingsForm = document.querySelector(
+    "#router-dns-form,#router-domain-form",
+  );
+  if (
+    ["dns", "web_settings"].includes(view) &&
+    settingsForm?.dataset.dirty === "true"
+  ) {
     const statusbar = document.querySelector("#statusbar");
     if (statusbar) statusbar.innerHTML = renderStatus();
     applyAccessControls();
@@ -1841,8 +1846,10 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("input", (event) => {
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
-  const dnsForm = event.target.closest("#router-dns-form");
-  if (dnsForm && canWrite()) dnsForm.dataset.dirty = "true";
+  const settingsForm = event.target.closest(
+    "#router-dns-form,#router-domain-form",
+  );
+  if (settingsForm && canWrite()) settingsForm.dataset.dirty = "true";
   if (event.target.id === "rule-search") {
     search = event.target.value;
     const pos = event.target.selectionStart;
@@ -1973,6 +1980,14 @@ document.addEventListener("focusout", (event) => {
 });
 document.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (event.target.id === "router-domain-form") {
+    const button = event.target.querySelector(
+      '[data-action="router-save-domain"]',
+    );
+    if (button)
+      void handleAction(button).catch((error) => toast(error.message, true));
+    return;
+  }
   if (event.target.id === "connections-filter") {
     void handleAction({
       dataset: { action: "connections-filter" },

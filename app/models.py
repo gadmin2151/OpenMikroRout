@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.ipv4 import domain_name
 from app.network_models import NetworkConfiguration
 
 MAX_COMPILED_RULES = 4096
@@ -172,6 +173,17 @@ class Configuration(Model):
     filter_rules: list[FilterRule] = Field(default_factory=list, max_length=512)
     address_lists: list[AddressList] = Field(default_factory=list, max_length=128)
     network: NetworkConfiguration = Field(default_factory=NetworkConfiguration)
+    web_domain: str = Field(default="", max_length=254)
+
+    @field_validator("web_domain")
+    @classmethod
+    def validate_web_domain(cls, value: str) -> str:
+        if not value:
+            return ""
+        normalized = domain_name(value)
+        if re.fullmatch(r"[0-9.]+", normalized):
+            raise ValueError("Enter a DNS hostname without a scheme, port or path")
+        return normalized
 
     @model_validator(mode="after")
     def validate_references(self) -> Self:

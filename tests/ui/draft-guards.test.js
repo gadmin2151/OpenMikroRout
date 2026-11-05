@@ -35,6 +35,18 @@ test("full router imports honor explicit empty sections and reject invalid shape
   assert.throws(() => prepareImportedConfig([], {}), /объект конфигурации/);
   assert.throws(() => prepareImportedConfig(null, {}), /объект конфигурации/);
 });
+
+test("older backups preserve the current web domain while an explicit empty domain removes it", () => {
+  const current = { web_domain: "router.example.com" };
+  assert.equal(
+    prepareImportedConfig({ rules: [] }, current).web_domain,
+    current.web_domain,
+  );
+  assert.equal(
+    prepareImportedConfig({ rules: [], web_domain: "" }, current).web_domain,
+    "",
+  );
+});
 const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,

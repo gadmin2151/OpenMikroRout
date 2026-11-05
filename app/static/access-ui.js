@@ -60,7 +60,7 @@ export function applyReadAccess(scope, state) {
     handle.draggable = false;
   }
   const forms =
-    "#rule-form,#list-form,#router-form,#router-port-form,#router-dns-form,#user-form,#wg-form";
+    "#rule-form,#list-form,#router-form,#router-port-form,#router-dns-form,#router-domain-form,#user-form,#wg-form";
   for (const form of scope.querySelectorAll(forms)) {
     for (const field of form.querySelectorAll("input,select,textarea,button")) {
       if (

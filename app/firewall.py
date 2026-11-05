@@ -129,6 +129,15 @@ class FirewallService:
     def config(self) -> Configuration:
         return Configuration.model_validate(self.store.read("config"))
 
+    def panel_domains(self) -> set[str]:
+        """A saved draft grants no access until the timed application starts."""
+        with self.lock:
+            domains = {self.store.read("applied").get("web_domain", "")}
+            pending = self.store.read("pending")
+            if pending and not pending.get("error") and time.time() < pending["deadline"]:
+                domains.add(pending["config"].get("web_domain", ""))
+            return domains - {""}
+
     def check_revision(self, revision: int) -> None:
         if revision != self.store.read("revision"):
             raise Conflict("Configuration changed in another session. Refresh before trying again.")

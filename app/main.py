@@ -18,7 +18,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.auth import (
     AuthError,
@@ -46,6 +45,7 @@ from app.telemetry_history import HistoryResponse, TelemetryHistory
 from app.totp import CredentialProof, TotpEnrollment, TotpRecovery, TotpStatus
 from app.updates import UpdateApply, UpdateError, UpdateJob, UpdateService, UpdateStatus
 from app.version import VERSION
+from app.web_domain import PanelHostMiddleware
 from app.wireguard_api import wireguard_router
 from app.wireguard_vault import WireGuardVault
 
@@ -223,7 +223,9 @@ def create_app(
     app.state.connections = connections
     app.state.updates = updates
     app.state.telemetry_history = telemetry_history
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+    app.add_middleware(
+        PanelHostMiddleware, allowed_hosts=settings.allowed_hosts, domains=service.panel_domains
+    )
 
     @app.middleware("http")
     async def security(

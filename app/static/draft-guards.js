@@ -13,6 +13,11 @@ export function prepareImportedConfig(imported, current) {
       );
     }
   }
+  if (
+    !Object.hasOwn(imported, "web_domain") &&
+    Object.hasOwn(current, "web_domain")
+  )
+    result.web_domain = current.web_domain;
   return result;
 }
 

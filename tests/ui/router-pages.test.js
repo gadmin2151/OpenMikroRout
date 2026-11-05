@@ -4,6 +4,7 @@ import {
   networkFromAddress,
   interfaceNames,
   renderRouterView,
+  handleRouterAction,
   routerViews,
 } from "../../app/static/router-pages.js";
 
@@ -91,6 +92,31 @@ function context(config = {}) {
 test("all router pages have usable empty states before network configuration exists", () => {
   for (const view of Object.keys(routerViews))
     assert.ok(renderRouterView(view, context()).length > 0, view);
+});
+
+test("web settings escape the domain and expose the existing revisioned draft flow", () => {
+  const html = renderRouterView(
+    "web_settings",
+    context({ web_domain: '<img src=x onerror="bad">' }),
+  );
+  assert.match(html, /router-domain-form/);
+  assert.match(html, /router-save-domain/);
+  assert.match(html, /&lt;img/);
+  assert.ok(!html.includes("<img"));
+  assert.match(html, /DNS A-запись/);
+});
+
+test("read accounts cannot forge a domain save action", async () => {
+  await assert.rejects(
+    handleRouterAction(
+      { dataset: { action: "router-save-domain" } },
+      {
+        ...context(),
+        canWrite: () => false,
+      },
+    ),
+    /full/,
+  );
 });
 
 test("configuration and lease values are escaped rather than inserted as markup", () => {
