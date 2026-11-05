@@ -1,26 +1,4 @@
 /** Shared guards for long-lived editors and managed-interface deletion. */
-export function prepareImportedConfig(imported, current) {
-  if (!imported || typeof imported !== "object" || Array.isArray(imported)) {
-    throw new Error("Файл не содержит объект конфигурации.");
-  }
-  const result = structuredClone(imported);
-  // NAT Panel version-1 exports predate router sections. Preserve those sections
-  // unless the imported file explicitly includes their replacement.
-  for (const key of ["network", "filter_rules"]) {
-    if (!Object.hasOwn(imported, key)) {
-      result[key] = structuredClone(
-        current[key] ?? (key === "network" ? {} : []),
-      );
-    }
-  }
-  if (
-    !Object.hasOwn(imported, "web_domain") &&
-    Object.hasOwn(current, "web_domain")
-  )
-    result.web_domain = current.web_domain;
-  return result;
-}
-
 export function assertDraftRevision(expected, current) {
   if (!Number.isSafeInteger(expected) || expected < 0 || expected !== current) {
     throw new Error(

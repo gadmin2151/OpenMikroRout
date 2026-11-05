@@ -4,49 +4,11 @@ import {
   assertDraftRevision,
   assertLinkRemoval,
   linkReferences,
-  prepareImportedConfig,
 } from "../../app/static/draft-guards.js";
 import { handleRouterAction } from "../../app/static/router-pages.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
-test("legacy NAT imports preserve router sections and do not mutate either input", () => {
-  const current = {
-    network: { addresses: [{ interface: "br0", address: "10.0.0.1/24" }] },
-    filter_rules: [{ id: "filter-1" }],
-  };
-  const imported = { rules: [{ id: "nat-from-backup" }], address_lists: [] };
-  const result = prepareImportedConfig(imported, current);
-  assert.deepEqual(result.network, current.network);
-  assert.deepEqual(result.filter_rules, current.filter_rules);
-  assert.deepEqual(result.rules, imported.rules);
-  result.network.addresses[0].address = "10.9.0.1/24";
-  assert.equal(current.network.addresses[0].address, "10.0.0.1/24");
-  assert.equal(Object.hasOwn(imported, "network"), false);
-});
-
-test("full router imports honor explicit empty sections and reject invalid shapes", () => {
-  const result = prepareImportedConfig(
-    { network: {}, filter_rules: [], rules: [] },
-    { network: { addresses: [1] }, filter_rules: [1] },
-  );
-  assert.deepEqual(result.network, {});
-  assert.deepEqual(result.filter_rules, []);
-  assert.throws(() => prepareImportedConfig([], {}), /объект конфигурации/);
-  assert.throws(() => prepareImportedConfig(null, {}), /объект конфигурации/);
-});
-
-test("older backups preserve the current web domain while an explicit empty domain removes it", () => {
-  const current = { web_domain: "router.example.com" };
-  assert.equal(
-    prepareImportedConfig({ rules: [] }, current).web_domain,
-    current.web_domain,
-  );
-  assert.equal(
-    prepareImportedConfig({ rules: [], web_domain: "" }, current).web_domain,
-    "",
-  );
-});
 const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,

@@ -29,6 +29,12 @@ class Driver(Protocol):
     def restore(self, payload: str, test: bool = False) -> None: ...
 
 
+class ConfigurationParticipant(Protocol):
+    def snapshot(self, config: Configuration, revision: int) -> dict[str, Any]: ...
+    def confirm(self, snapshot: dict[str, Any], checkpoint: Callable[[], None]) -> bool: ...
+    def rollback(self, snapshot: dict[str, Any]) -> None: ...
+
+
 class LinuxDriver:
     def __init__(self) -> None:
         save = shutil.which("iptables-save")
@@ -125,6 +131,7 @@ class FirewallService:
         self.lock = threading.RLock()
         self.runtime = runtime
         self.config_validator = config_validator
+        self.participant: ConfigurationParticipant | None = None
 
     def config(self) -> Configuration:
         return Configuration.model_validate(self.store.read("config"))
@@ -144,9 +151,15 @@ class FirewallService:
         if self.store.read("pending"):
             raise Conflict("Confirm or roll back the pending application first")
 
-    def save(self, config: Configuration, revision: int) -> dict[str, Any]:
+    def save(
+        self, config: Configuration, revision: int, *, restore_plan: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         with self.lock:
             self.check_revision(revision)
+            if restore_plan is None and (self.store.read("restore_plan") or {}).get("accounts"):
+                raise Conflict(
+                    "Сначала примените или отмените черновик восстановления пользователей"
+                )
             if self.config_validator:
                 self.config_validator(config)
             try:
@@ -154,7 +167,11 @@ class FirewallService:
             except ValueError as exc:
                 raise Conflict(str(exc)) from exc
             self.store.write(
-                {"config": config.model_dump(mode="json"), "revision": revision + 1},
+                {
+                    "config": config.model_dump(mode="json"),
+                    "revision": revision + 1,
+                    "restore_plan": restore_plan,
+                },
                 "saved",
                 f"{len(config.rules)} NAT, {len(config.filter_rules)} filter rules; "
                 f"revision {revision + 1}",
@@ -165,7 +182,11 @@ class FirewallService:
         with self.lock:
             self.check_revision(revision)
             self.store.write(
-                {"config": self.store.read("applied"), "revision": revision + 1},
+                {
+                    "config": self.store.read("applied"),
+                    "revision": revision + 1,
+                    "restore_plan": None,
+                },
                 "discarded",
                 "Draft restored to the last confirmed configuration",
             )
@@ -209,6 +230,10 @@ class FirewallService:
                 "attempts": 0,
                 "next_retry": 0,
                 "router_snapshot": router_snapshot,
+                "restoring": event == "restoring",
+                "participant": self.participant.snapshot(config, revision)
+                if self.participant and event == "applying"
+                else {},
             }
             # Commit recovery data before touching the kernel.
             self.store.write({"pending": pending}, event, f"Revision {revision}")
@@ -252,12 +277,35 @@ class FirewallService:
                 raise Conflict("Invalid confirmation token")
             if pending.get("error"):
                 raise Conflict("Rollback needs attention; confirmation is unavailable")
+            reauthenticate = False
+            if self.participant and pending.get("participant"):
+                try:
+                    reauthenticate = self.participant.confirm(
+                        pending["participant"],
+                        lambda: self.store.write(
+                            {"pending": pending},
+                            "restore_accounts_prepared",
+                            "Account rollback snapshot persisted",
+                        ),
+                    )
+                except (FirewallError, OSError) as exc:
+                    self.rollback("Account restoration failed; previous configuration restored")
+                    raise FirewallError(
+                        "Account restoration failed; previous configuration restored"
+                    ) from exc
             self.store.write(
-                {"applied": pending["config"], "pending": None, "runtime_error": None},
+                {
+                    "applied": pending["config"],
+                    "pending": None,
+                    "runtime_error": None,
+                    "restore_plan": self.store.read("restore_plan")
+                    if pending.get("restoring")
+                    else None,
+                },
                 "confirmed",
                 "Managed router configuration confirmed",
             )
-            return self.state()
+            return {**self.state(), "reauthenticate": reauthenticate}
 
     def rollback(self, reason: str = "Manually rolled back") -> dict[str, Any]:
         with self.lock:
@@ -274,6 +322,11 @@ class FirewallService:
             if self.runtime and pending.get("router_snapshot"):
                 try:
                     self.runtime.rollback(pending["router_snapshot"])
+                except (FirewallError, OSError) as exc:
+                    errors.append(str(exc))
+            if self.participant and pending.get("participant"):
+                try:
+                    self.participant.rollback(pending["participant"])
                 except (FirewallError, OSError) as exc:
                     errors.append(str(exc))
             if errors:
@@ -308,8 +361,10 @@ class FirewallService:
             return {
                 "config": config,
                 "revision": self.store.read("revision"),
-                "dirty": config != self.store.read("applied"),
+                "dirty": config != self.store.read("applied")
+                or bool(self.store.read("restore_plan")),
                 "runtime_error": self.store.read("runtime_error"),
+                "restore_accounts": bool((self.store.read("restore_plan") or {}).get("accounts")),
                 "pending": {key: pending[key] for key in ("deadline", "token", "error")}
                 if pending
                 else None,

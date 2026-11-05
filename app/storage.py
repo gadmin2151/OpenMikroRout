@@ -28,6 +28,7 @@ class Store:
                 "revision": 0,
                 "pending": None,
                 "runtime_error": None,
+                "restore_plan": None,
             }.items():
                 db.execute("INSERT OR IGNORE INTO state VALUES (?, ?)", (key, json.dumps(value)))
             # JSON schema evolution preserves every saved NAT rule and its order.

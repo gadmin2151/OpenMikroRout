@@ -1,4 +1,10 @@
-import { assertDraftRevision, prepareImportedConfig } from "./draft-guards.js";
+import { assertDraftRevision } from "./draft-guards.js";
+import {
+  renderBackups,
+  handleBackupAction,
+  handleBackupInput,
+  resetBackups,
+} from "./backups-ui.js?v=1";
 import { reorderRules } from "./rule-order.js";
 import {
   renderTools,
@@ -26,7 +32,7 @@ import {
   hasWriteAccess,
   isReadAction,
   applyReadAccess,
-} from "./access-ui.js?v=4";
+} from "./access-ui.js?v=5";
 import { renderUsers, handleUsersAction } from "./users-ui.js?v=2";
 import { renderSecurity, handleSecurityAction } from "./security-ui.js?v=1";
 import {
@@ -97,6 +103,17 @@ const e = (value) =>
   );
 const root = document.querySelector("#app");
 const dialog = document.querySelector("#editor");
+dialog.addEventListener("close", () => {
+  if (
+    dialog.querySelector("#backup-proof") ||
+    dialog.querySelector('[name="new_archive_password"]')
+  ) {
+    for (const input of dialog.querySelectorAll(
+      'input[type="password"],input[name="code"]',
+    ))
+      input.value = "";
+  }
+});
 let state,
   view = "overview",
   selected = new Set(),
@@ -164,6 +181,7 @@ function clearSession() {
   setNavigationOpen(false);
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   resetUpdates();
+  resetBackups();
   resetConnections();
   resetWireGuard();
   resetTools();
@@ -241,6 +259,7 @@ try {
 }
 
 async function api(path, options = {}) {
+  const { responseType, ...fetchOptions } = options;
   const method = (options.method || "GET").toUpperCase();
   if (
     !["GET", "HEAD"].includes(method) &&
@@ -258,14 +277,17 @@ async function api(path, options = {}) {
   const response = await fetch(`/api/${path}`, {
     credentials: "same-origin",
     signal: AbortSignal.timeout(path === "apply" ? 45000 : 20000),
-    ...options,
+    ...fetchOptions,
     headers: {
       "Content-Type": "application/json",
       "X-NAT-Request": "1",
-      ...options.headers,
+      ...fetchOptions.headers,
     },
   });
-  const data = await response.json();
+  const data =
+    response.ok && responseType === "blob"
+      ? await response.blob()
+      : await response.json();
   if (response.status === 401 && path !== "login") {
     if (generation === authGeneration) {
       clearSession();
@@ -409,7 +431,7 @@ function renderNavigation(count) {
         ["filter", "rules", "lists", "connections"],
       ),
     ].join(""),
-  )}${navButton("tools", "Tools", "terminal")}${navGroup("system", "System", "server", `${navButton("web_settings", "Web Interface", "network")}${state.auth_enabled ? navButton("security", "Security", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
+  )}${navButton("tools", "Tools", "terminal")}${navGroup("system", "System", "server", `${navButton("web_settings", "Web Interface", "network")}${navButton("backups", "Backup / Restore", "file")}${state.auth_enabled ? navButton("security", "Security", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
 }
 async function refreshSecurity() {
   if (state?.current_user) securityStatus = await api("me/totp");
@@ -535,6 +557,10 @@ function render() {
         "Connections",
         "Входящие соединения IPv4 и наблюдение попыток подключения.",
       ],
+      backups: [
+        "Backup / Restore",
+        "Экспорт .rsc, импорт и зашифрованные резервные копии.",
+      ],
       updates: [
         "Updates",
         "Подписанные обновления из GitHub с резервной копией и откатом.",
@@ -609,27 +635,29 @@ function render() {
     ];
   else tabs = [];
   const body =
-    view === "tools"
-      ? renderTools(routerContext())
-      : ["wireguard", "wireguard_peers"].includes(view)
-        ? renderWireGuard(routerContext(), view === "wireguard_peers")
-        : view === "updates"
-          ? renderUpdates(routerContext())
-          : view === "connections"
-            ? renderConnections(routerContext())
-            : view === "security"
-              ? renderSecurity(routerContext())
-              : view === "rules"
-                ? renderRules()
-                : view === "lists"
-                  ? renderLists()
-                  : view === "interfaces"
-                    ? renderInterfaces()
-                    : view === "audit"
-                      ? renderAudit()
-                      : view === "users"
-                        ? renderUsers(routerContext())
-                        : renderRouterView(view, routerContext());
+    view === "backups"
+      ? renderBackups(routerContext())
+      : view === "tools"
+        ? renderTools(routerContext())
+        : ["wireguard", "wireguard_peers"].includes(view)
+          ? renderWireGuard(routerContext(), view === "wireguard_peers")
+          : view === "updates"
+            ? renderUpdates(routerContext())
+            : view === "connections"
+              ? renderConnections(routerContext())
+              : view === "security"
+                ? renderSecurity(routerContext())
+                : view === "rules"
+                  ? renderRules()
+                  : view === "lists"
+                    ? renderLists()
+                    : view === "interfaces"
+                      ? renderInterfaces()
+                      : view === "audit"
+                        ? renderAudit()
+                        : view === "users"
+                          ? renderUsers(routerContext())
+                          : renderRouterView(view, routerContext());
   root.innerHTML = `<div class="app-shell">
     <aside class="sidebar ${sidebarOpen ? "open" : ""}" id="sidebar">${brandMarkup()}
       <div class="workspace"><div class="workspace-icon">${icon("server")}</div><div><b>${isDemo() ? "Demo Router" : e(state.hostname)}</b><small>${isDemo() ? "DEMO WORKSPACE" : "LINUX GATEWAY"}</small></div></div>
@@ -639,10 +667,10 @@ function render() {
     <main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false" data-action="menu">${icon("menu")}</button>${icon("network")}<span>OpenMikroRout</span>${icon("chevron")}<b>${e(title)}</b></div><div class="topbar-right"><span class="muted"><span class="dot"></span>${offline ? "Нет соединения" : "Сервер подключён"}</span><span class="divider"></span><span class="mode-chip ${isDemo() ? "" : "live"}">${isDemo() ? "DEMO MODE" : "LINUX · LIVE"}</span></div></header>
     <div class="content">${state.runtime_error ? `<div class="connection-error" role="alert">${icon("info")} Восстановление конфигурации требует внимания: ${e(state.runtime_error)}</div>` : ""}${offline ? '<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>' : ""}
       ${!canWrite() ? `<div class="read-only-banner">${icon("lock")}Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}
-      <div class="page-heading"><div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Backup</span></button></div></div>
-      ${["overview", "users", "security", "updates", "connections"].includes(view) ? "" : `<div class="configuration-summary" aria-label="Сводка конфигурации">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
+      <div class="page-heading"><div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Export</span></button></div></div>
+      ${["overview", "users", "security", "updates", "connections", "backups"].includes(view) ? "" : `<div class="configuration-summary" aria-label="Сводка конфигурации">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
       <section class="panel ${view === "overview" ? "overview-panel" : ""}">${tabs.length ? `<div class="panel-tabs">${tabs.map(([id, label, ico, total]) => `<button class="panel-tab ${view === id ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${label}<span class="tab-count">${total}</span></button>`).join("")}</div>` : ""}${body}</section>
-      ${["overview", "users", "security", "updates", "connections"].includes(view) ? "" : `<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div></details>`}
+      ${["overview", "users", "security", "updates", "connections", "backups"].includes(view) ? "" : `<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div></details>`}
       <div class="page-footer"><span>${icon("shield")}OpenMikroRout · Your network. Your rules.</span><span>Lightweight Linux router · IPv4</span></div>
     </div><div id="statusbar">${renderStatus()}</div></main></div>`;
   const navigation = document.querySelector(".sidebar-navigation");
@@ -778,9 +806,9 @@ function renderStatus() {
   if (!canWrite())
     return `<footer class="bottom-status"><div class="status-left"><div>${icon("lock")}Только просмотр · группа read</div><span>${state.pending ? "Применение конфигурации выполняется администратором" : state.dirty ? "На сервере есть неприменённый черновик" : "Конфигурация доступна для просмотра"}</span></div><div class="status-right"><button class="small" data-action="preview">${icon("terminal")}Предпросмотр</button><span>Revision ${state.revision}</span></div></footer>`;
   if (state.pending)
-    return `<footer class="bottom-status pending"><div class="status-left"><div class="status-message">${icon("clock")}<b>${state.pending.error ? "Ошибка отката. Требуется проверка сервера." : `Подтвердите связь: <span id="countdown">${secondsLeft()}</span> сек.`}</b></div><span>Без подтверждения — автоматический откат</span></div><div class="status-right"><button data-action="rollback">Откатить сейчас</button><button class="primary" data-action="confirm" ${state.pending.error ? "disabled" : ""}>${icon("check")}Подтвердить связь</button></div></footer>`;
+    return `<footer class="bottom-status pending"><div class="status-left"><div class="status-message">${icon("clock")}<b>${state.pending.error ? "Ошибка отката. Требуется проверка сервера." : `Подтвердите связь: <span id="countdown">${secondsLeft()}</span> сек.`}</b></div><span>Без подтверждения — автоматический откат${state.restore_accounts ? " · После подтверждения войдите с учётными данными из копии" : ""}</span></div><div class="status-right"><button data-action="rollback">Откатить сейчас</button><button class="primary" data-action="confirm" ${state.pending.error ? "disabled" : ""}>${icon("check")}Подтвердить связь</button></div></footer>`;
   if (state.dirty)
-    return `<footer class="bottom-status dirty"><div class="status-left"><div class="status-message">${icon("edit")}<b>Есть неприменённые изменения</b></div><span>Черновик сохранён на сервере</span></div><div class="status-right"><button class="ghost" data-action="discard">Отменить</button><button data-action="preview">${icon("terminal")}Предпросмотр</button><button class="primary" data-action="apply" ${offline ? "disabled" : ""}>${icon("check")}${isDemo() ? "Применить в демо" : "Применить"}</button></div></footer>`;
+    return `<footer class="bottom-status dirty"><div class="status-left"><div class="status-message">${icon("edit")}<b>Есть неприменённые изменения</b></div><span>${state.restore_accounts ? "Восстановление включает пользователей и 2FA; учётки заменятся после подтверждения" : "Черновик сохранён на сервере"}</span></div><div class="status-right"><button class="ghost" data-action="discard">Отменить</button><button data-action="preview">${icon("terminal")}Предпросмотр</button><button class="primary" data-action="apply" ${offline ? "disabled" : ""}>${icon("check")}${isDemo() ? "Применить в демо" : "Применить"}</button></div></footer>`;
   return `<footer class="bottom-status"><div class="status-left"><div><span class="dot"></span>${isDemo() ? "Деморежим · изменения сети отключены" : "Подтверждённая конфигурация сохранена"}</div><span>Revision ${state.revision}</span></div><div class="status-right"><span class="muted">${selected.size ? "Двойной щелчок — редактировать" : view === "rules" ? "Выберите правило для просмотра деталей" : "IP · DHCP · VLAN · Firewall"}</span>${!isDemo() ? '<button class="small" data-action="apply">Применить повторно</button>' : ""}<span>IPv4</span></div></footer>`;
 }
 function secondsLeft() {
@@ -1140,10 +1168,10 @@ async function refresh(manual = false) {
   const ids = new Set(next.config.rules.map((rule) => rule.id));
   selected = new Set([...selected].filter((id) => ids.has(id)));
   const settingsForm = document.querySelector(
-    "#router-dns-form,#router-domain-form",
+    "#router-dns-form,#router-domain-form,#backup-import-form",
   );
   if (
-    ["dns", "web_settings"].includes(view) &&
+    ["dns", "web_settings", "backups"].includes(view) &&
     settingsForm?.dataset.dirty === "true"
   ) {
     const statusbar = document.querySelector("#statusbar");
@@ -1215,6 +1243,7 @@ async function handleAction(button) {
   if (await handleSecurityAction(button, routerContext())) return;
   if (await handleConnectionsAction(button, routerContext())) return;
   if (await handleUpdatesAction(button, routerContext())) return;
+  if (await handleBackupAction(button, routerContext())) return;
   if (await handleWireGuardAction(button, routerContext())) return;
   if (await handleToolsAction(button, routerContext())) return;
   if (await handleRouterAction(button, routerContext())) return;
@@ -1401,47 +1430,9 @@ async function handleAction(button) {
     openEditor([...selected][0], true);
     return;
   }
-  if (action === "export") {
-    const blob = new Blob(
-      [JSON.stringify({ version: 1, config: state.config }, null, 2)],
-      { type: "application/json" },
-    );
-    const url = URL.createObjectURL(blob),
-      a = document.createElement("a");
-    a.href = url;
-    a.download = `openmikrorout-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast(
-      (state.config.network?.wireguard_interfaces || []).length
-        ? "Настройки экспортированы. Закрытые ключи скачиваются отдельно в WireGuard."
-        : "Конфигурация экспортирована",
-    );
-    return;
-  }
-  if (action === "import") {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".json,application/json";
-    input.addEventListener("change", () =>
-      run(async () => {
-        const file = input.files[0];
-        if (!file) return;
-        if (file.size > 1048576) throw new Error("Файл превышает 1 MiB");
-        const parsed = JSON.parse(await file.text());
-        if (parsed.version !== 1 || !parsed.config)
-          throw new Error("Ожидается экспорт OpenMikroRout версии 1");
-        const legacyNat = !Object.hasOwn(parsed.config, "network");
-        draft = prepareImportedConfig(parsed.config, state.config);
-        confirmDialog(
-          "Импорт конфигурации",
-          `Будет загружен черновик: ${draft.rules?.length ?? 0} NAT, ${draft.filter_rules?.length ?? 0} Filter, ${draft.network?.addresses?.length ?? 0} IP, ${draft.network?.dhcp_servers?.length ?? 0} DHCP. ${legacyNat ? "В старом NAT-экспорте нет сетевых разделов — текущие настройки IP, DHCP, Bridge, VLAN и Filter сохраняются. " : ""}Работающая сеть изменится после применения.`,
-          "import-confirm",
-          "Импортировать",
-        );
-      }),
-    );
-    input.click();
+  if (action === "export" || action === "import") {
+    view = "backups";
+    render();
     return;
   }
   if (action === "delete") {
@@ -1595,12 +1586,6 @@ async function handleAction(button) {
       toast("Список удалён");
       return;
     }
-    if (action === "import-confirm") {
-      await saveConfig(draft, confirmationRevision);
-      dialog.close();
-      toast("Конфигурация импортирована в черновик");
-      return;
-    }
     if (action === "discard-confirm") {
       assertDraftRevision(confirmationRevision, state.revision);
       acceptState(
@@ -1626,12 +1611,19 @@ async function handleAction(button) {
       return;
     }
     if (action === "confirm") {
-      acceptState(
-        await api("confirm", {
-          method: "POST",
-          body: JSON.stringify({ token: state.pending.token }),
-        }),
-      );
+      const result = await api("confirm", {
+        method: "POST",
+        body: JSON.stringify({ token: state.pending.token }),
+      });
+      if (result.reauthenticate) {
+        clearSession();
+        renderLogin();
+        toast(
+          "Восстановление подтверждено. Войдите с учётными данными из копии.",
+        );
+        return;
+      }
+      acceptState(result);
       toast("Применение подтверждено");
       return;
     }
@@ -1847,7 +1839,7 @@ document.addEventListener("input", (event) => {
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
   const settingsForm = event.target.closest(
-    "#router-dns-form,#router-domain-form",
+    "#router-dns-form,#router-domain-form,#backup-import-form",
   );
   if (settingsForm && canWrite()) settingsForm.dataset.dirty = "true";
   if (event.target.id === "rule-search") {
@@ -1860,6 +1852,9 @@ document.addEventListener("input", (event) => {
   }
 });
 document.addEventListener("change", (event) => {
+  handleBackupInput(event);
+  const backupForm = event.target.closest("#backup-import-form");
+  if (backupForm && canWrite()) backupForm.dataset.dirty = "true";
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
   const node = event.target;
@@ -1980,6 +1975,20 @@ document.addEventListener("focusout", (event) => {
 });
 document.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (
+    event.target.id === "backup-import-form" ||
+    event.target.id === "backup-proof"
+  ) {
+    const button =
+      event.target.id === "backup-import-form"
+        ? event.target.querySelector('[data-action="backup-inspect"]')
+        : dialog.querySelector(
+            '[data-action="backup-create"],[data-action="backup-stage"]',
+          );
+    if (button)
+      void handleAction(button).catch((error) => toast(error.message, true));
+    return;
+  }
   if (event.target.id === "router-domain-form") {
     const button = event.target.querySelector(
       '[data-action="router-save-domain"]',

@@ -16,3 +16,4 @@ dist/
 *.sqlite3*
 *.key
 *.pem
+*.backup

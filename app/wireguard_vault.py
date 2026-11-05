@@ -1,5 +1,6 @@
 """Encrypted WireGuard key storage, separate from exported router configuration."""
 
+import hmac
 import os
 import sqlite3
 import time
@@ -95,6 +96,43 @@ class WireGuardVault:
         if row is None:
             raise ValueError("WireGuard key is missing; import its private configuration first")
         return WireGuardKey(**dict(row))
+
+    def import_keys(self, materials: list[tuple[UUID, KeyKind, SecretStr]]) -> None:
+        """Import a complete backup atomically; never replace a key already used by this host."""
+        pending = []
+        for key_id, kind, wrapped in materials:
+            secret = wrapped.get_secret_value()
+            key_bytes(secret)
+            public = "" if kind == "preshared" else derive_public(secret)
+            pending.append((str(key_id), kind, public, secret))
+        if len({row[0] for row in pending}) != len(pending):
+            raise ValueError("Duplicate private-key identifiers")
+        with self.connection(write=True) as db:
+            db.execute("BEGIN IMMEDIATE")
+            count = db.execute("SELECT count(*) FROM keys").fetchone()[0]
+            for key_text, kind, public, secret in pending:
+                old = db.execute(
+                    "SELECT kind,encrypted FROM keys WHERE id=?", (key_text,)
+                ).fetchone()
+                if old:
+                    if old["kind"] != kind or not hmac.compare_digest(
+                        self.cipher.decrypt(key_text, kind, old["encrypted"]), secret
+                    ):
+                        raise ValueError("A backup key conflicts with an existing key")
+                    continue
+                count += 1
+                if count > MAX_KEYS:
+                    raise ValueError("WireGuard key vault is full")
+                db.execute(
+                    "INSERT INTO keys (id,kind,public_key,encrypted,created_at) VALUES (?,?,?,?,?)",
+                    (
+                        key_text,
+                        kind,
+                        public,
+                        self.cipher.encrypt(key_text, kind, secret),
+                        time.time(),
+                    ),
+                )
 
     def secret(self, key_id: UUID, kind: KeyKind) -> str:
         with self.connection() as db:

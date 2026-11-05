@@ -32,6 +32,8 @@ from app.auth import (
     UserUpdate,
     normalize_username,
 )
+from app.backup_api import backup_router
+from app.backups import BackupService
 from app.compiler import FirewallError
 from app.connections import ConnectionMonitor, ConnectionQuery, ConnectionSnapshot
 from app.demo import demo_config
@@ -164,6 +166,8 @@ def create_app(
         settings.read_username,
         settings.read_password,
     )
+    backups = BackupService(service, auth, wireguard_vault)
+    service.participant = backups
 
     def watchdog() -> None:
         while not stop.wait(1):
@@ -172,6 +176,7 @@ def create_app(
                 with service.lock:
                     if not store.read("pending") and not updates.active():
                         runtime.maintain()
+                backups.prune()
             except Exception:
                 log.exception("Automatic router rollback failed; recovery remains pending")
 
@@ -243,16 +248,7 @@ def create_app(
                 or request.headers.get("sec-fetch-site") == "cross-site"
             ):
                 denied = JSONResponse({"detail": "Same-origin request required"}, status_code=403)
-            else:
-                total = 0
-                chunks = []
-                async for chunk in request.stream():
-                    total += len(chunk)
-                    if total > 1_048_576:
-                        denied = JSONResponse({"detail": "Request exceeds 1 MiB"}, status_code=413)
-                        break
-                    chunks.append(chunk)
-                request._body = b"".join(chunks)
+
         if (
             api_request
             and not denied
@@ -296,6 +292,21 @@ def create_app(
             denied = JSONResponse(
                 {"detail": "Выполняется обновление сервиса. Дождитесь завершения."}, status_code=423
             )
+        if api_request and denied is None and request.method not in ("GET", "HEAD"):
+            total = 0
+            chunks = []
+            async for chunk in request.stream():
+                total += len(chunk)
+                limit = (
+                    16 * 1024 * 1024
+                    if request.url.path == "/api/configuration/inspect"
+                    else 1_048_576
+                )
+                if total > limit:
+                    denied = JSONResponse({"detail": "Request exceeds size limit"}, status_code=413)
+                    break
+                chunks.append(chunk)
+            request._body = b"".join(chunks)
         response = denied if denied is not None else await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
@@ -322,6 +333,7 @@ def create_app(
         return user
 
     app.include_router(wireguard_router(service, wireguard_vault, auth, full_access, authenticated))
+    app.include_router(backup_router(service, backups, auth, full_access, authenticated))
 
     @app.post("/api/tools/run", dependencies=[Depends(full_access)])
     def diagnostic(body: DiagnosticRequest) -> dict[str, Any]:
