@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenMikroRout — repository cover</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: #102538;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      }
+      .cover {
+        width: 1280px;
+        height: 640px;
+        position: relative;
+        overflow: hidden;
+        color: #f2f7fc;
+        background: #102538;
+      }
+      .grid {
+        position: absolute;
+        inset: 0;
+        opacity: 0.22;
+        background-image: radial-gradient(#6a91b5 0.8px, transparent 0.8px);
+        background-size: 32px 32px;
+        mask-image: linear-gradient(90deg, transparent 42%, #000);
+      }
+      .brand {
+        position: absolute;
+        top: 64px;
+        left: 72px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+      }
+      .brand img {
+        width: 76px;
+        height: 76px;
+        border-radius: 24px;
+      }
+      .wordmark {
+        font-size: 37px;
+        font-weight: 750;
+        letter-spacing: -1.8px;
+      }
+      .wordmark span {
+        color: #9cc7ef;
+      }
+      .eyebrow {
+        margin-top: 8px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 3.5px;
+        color: #94abc0;
+      }
+      h1 {
+        position: absolute;
+        top: 204px;
+        left: 72px;
+        margin: 0;
+        font-size: 76px;
+        line-height: 1.06;
+        font-weight: 700;
+        letter-spacing: -3.8px;
+      }
+      h1 span {
+        color: #a8d0f3;
+      }
+      .description {
+        position: absolute;
+        left: 75px;
+        top: 409px;
+        font-size: 21px;
+        line-height: 1.7;
+        color: #bbccdc;
+      }
+      .footer {
+        position: absolute;
+        bottom: 48px;
+        left: 76px;
+        right: 72px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-top: 1px solid #2b4358;
+        padding-top: 22px;
+        color: #8faac2;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 2px;
+      }
+      .footer span:last-child {
+        color: #c6d9e9;
+        font-size: 12px;
+        font-weight: 400;
+        letter-spacing: 0.2px;
+      }
+      .network {
+        position: absolute;
+        width: 560px;
+        height: 470px;
+        right: 25px;
+        top: 72px;
+      }
+      .node {
+        fill: #19354c;
+        stroke: #47718f;
+        stroke-width: 1.5;
+      }
+      .link {
+        fill: none;
+        stroke: #4f86af;
+        stroke-width: 2;
+      }
+      .packet {
+        fill: #b8dcf8;
+        stroke: #102538;
+        stroke-width: 3;
+      }
+      .node-title {
+        fill: #e3eff9;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .node-note {
+        fill: #94b2ca;
+        font-size: 11px;
+        letter-spacing: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <main
+      class="cover"
+      aria-label="OpenMikroRout: Your network. Your rules. WireGuard VPN, firewall, NAT and network management for Linux."
+    >
+      <div class="grid"></div>
+      <div class="brand">
+        <img
+          src="../../app/static/logo.png"
+          alt="OpenMikroRout Folded Route logo"
+        />
+        <div>
+          <div class="wordmark">Open<span>Mikro</span>Rout</div>
+          <div class="eyebrow">OPEN NETWORK ROUTER</div>
+        </div>
+      </div>
+      <h1>Your network.<br /><span>Your rules.</span></h1>
+      <p class="description">
+        WireGuard VPN. Firewall &amp; NAT.<br />One console for your Linux
+        network.
+      </p>
+      <svg
+        class="network"
+        viewBox="0 0 560 470"
+        role="img"
+        aria-label="A Linux router connects WAN, LAN, WireGuard and network services"
+      >
+        <path
+          class="link"
+          d="M280 123V191M155 254H201M359 254H407M280 317V382"
+        />
+        <path
+          class="link"
+          d="M155 254H175Q185 254 185 244V100Q185 86 199 86H215M359 254H380Q390 254 390 268V397Q390 411 376 411H345"
+          opacity=".3"
+        />
+        <rect x="215" y="49" width="130" height="75" rx="16" class="node" />
+        <path
+          d="M273 68L280 65L287 68V75C287 81 283 85 280 87C277 85 273 81 273 75Z"
+          fill="none"
+          stroke="#a8d0f3"
+          stroke-width="1.6"
+        />
+        <text x="280" y="107" text-anchor="middle" class="node-title">
+          WireGuard
+        </text>
+        <rect x="27" y="218" width="128" height="75" rx="16" class="node" />
+        <text x="91" y="249" text-anchor="middle" class="node-title">WAN</text>
+        <text x="91" y="271" text-anchor="middle" class="node-note">
+          UPLINK
+        </text>
+        <rect x="407" y="218" width="128" height="75" rx="16" class="node" />
+        <text x="471" y="249" text-anchor="middle" class="node-title">LAN</text>
+        <text x="471" y="271" text-anchor="middle" class="node-note">
+          BRIDGE / VLAN
+        </text>
+        <rect
+          x="201"
+          y="191"
+          width="158"
+          height="126"
+          rx="22"
+          fill="#224761"
+          stroke="#8bb8dc"
+          stroke-width="1.7"
+        />
+        <path
+          d="M251 221H309M251 221L259 214M309 221L301 228M309 240H251M309 240L301 233M251 240L259 247"
+          fill="none"
+          stroke="#c3e3fb"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+        <text x="280" y="276" text-anchor="middle" class="node-title">
+          Linux Router
+        </text>
+        <text x="280" y="296" text-anchor="middle" class="node-note">
+          FIREWALL / NAT
+        </text>
+        <rect x="215" y="382" width="130" height="60" rx="16" class="node" />
+        <text x="280" y="408" text-anchor="middle" class="node-title">
+          DHCP / DNS
+        </text>
+        <text x="280" y="427" text-anchor="middle" class="node-note">
+          IP SERVICES
+        </text>
+        <circle class="packet" cx="280" cy="158" r="5" />
+        <circle class="packet" cx="178" cy="254" r="5" />
+        <circle class="packet" cx="384" cy="254" r="5" />
+        <circle class="packet" cx="280" cy="349" r="5" />
+      </svg>
+      <footer class="footer">
+        <span>LINUX &nbsp; / &nbsp; IPv4 &nbsp; / &nbsp; SELF-HOSTED</span
+        ><span>github.com/gadmin2151/OpenMikroRout</span>
+      </footer>
+    </main>
+  </body>
+</html>
