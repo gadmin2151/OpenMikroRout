@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="docs/images/cover.jpg" alt="OpenMikroRout — Your network. Your rules." width="1280">
+  <img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/cover.jpg" alt="OpenMikroRout — Your network. Your rules." width="1280">
 </h1>
 
 <p align="center">
@@ -29,7 +29,7 @@ WireGuard, Firewall, NAT, маршруты, VLAN, DHCP и DNS собраны в 
 стандартными инструментами Linux. Облачный аккаунт для работы не нужен.
 
 <p align="center">
-  <a href="docs/images/overview.jpg"><img src="docs/images/overview.jpg" alt="Демо OpenMikroRout: скорости RX/TX, пакеты, соединения, устройства и графики за последнюю минуту" width="1280"></a>
+  <a href="docs/images/overview.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/overview.jpg" alt="Демо OpenMikroRout: скорости RX/TX, пакеты, соединения, устройства и графики за последнюю минуту" width="1280"></a>
   <br><sub>Обзор сети: трафик, пакеты, устройства и соединения. Все скриншоты сняты в деморежиме; показатели демонстрационные.</sub>
 </p>
 
@@ -53,31 +53,31 @@ WireGuard, Firewall, NAT, маршруты, VLAN, DHCP и DNS собраны в 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/images/nat.jpg"><img src="docs/images/nat.jpg" alt="Таблица NAT: цепочки, действия, адреса и порты" width="640"></a>
+      <a href="docs/images/nat.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/nat.jpg" alt="Таблица NAT: цепочки, действия, адреса и порты" width="640"></a>
       <br><b>Firewall / NAT</b><br>Упорядоченные правила, поиск, фильтры и drag-and-drop.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/images/rule-editor.jpg"><img src="docs/images/rule-editor.jpg" alt="Редактор NAT с вкладками General, Advanced, Action и Statistics" width="640"></a>
+      <a href="docs/images/rule-editor.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/rule-editor.jpg" alt="Редактор NAT с вкладками General, Advanced, Action и Statistics" width="640"></a>
       <br><b>Редактор правил</b><br>General, Advanced, Action и Statistics в знакомом окне свойств.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/images/wireguard.jpg"><img src="docs/images/wireguard.jpg" alt="WireGuard: демонстрационный сервер и три настроенных peer" width="640"></a>
+      <a href="docs/images/wireguard.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/wireguard.jpg" alt="WireGuard: демонстрационный сервер и три настроенных peer" width="640"></a>
       <br><b>WireGuard</b><br>Peers, разрешённые сети, endpoint, handshake и счётчики туннелей.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/images/dhcp.jpg"><img src="docs/images/dhcp.jpg" alt="DHCP-серверы для LAN и гостевого VLAN" width="640"></a>
+      <a href="docs/images/dhcp.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/dhcp.jpg" alt="DHCP-серверы для LAN и гостевого VLAN" width="640"></a>
       <br><b>DHCP и сегментация</b><br>Серверы на bridge и VLAN, пулы, сети и аренды адресов.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/images/connections.jpg"><img src="docs/images/connections.jpg" alt="Мониторинг входящих IPv4-соединений с фильтрами" width="640"></a>
+      <a href="docs/images/connections.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/connections.jpg" alt="Мониторинг входящих IPv4-соединений с фильтрами" width="640"></a>
       <br><b>Мониторинг соединений</b><br>Активные подключения и входящие попытки с фильтрацией.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/images/backup-restore.jpg"><img src="docs/images/backup-restore.jpg" alt="Страница экспорта RSC, зашифрованного backup и восстановления" width="640"></a>
+      <a href="docs/images/backup-restore.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/backup-restore.jpg" alt="Страница экспорта RSC, зашифрованного backup и восстановления" width="640"></a>
       <br><b>Backup / Restore</b><br>Перенос настроек, пользователей, 2FA и закрытых ключей WireGuard.
     </td>
   </tr>

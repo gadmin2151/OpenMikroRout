@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="docs/images/cover.jpg" alt="OpenMikroRout — Your network. Your rules." width="1280">
+  <img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/cover.jpg" alt="OpenMikroRout — Your network. Your rules." width="1280">
 </h1>
 
 <p align="center">
@@ -29,7 +29,7 @@ configuration on your own server and runs network operations locally using stand
 Linux tools. No cloud account is required.
 
 <p align="center">
-  <a href="docs/images/overview.jpg"><img src="docs/images/overview.jpg" alt="OpenMikroRout demo: RX/TX rates, packets, connections, devices and one-minute traffic charts" width="1280"></a>
+  <a href="docs/images/overview.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/overview.jpg" alt="OpenMikroRout demo: RX/TX rates, packets, connections, devices and one-minute traffic charts" width="1280"></a>
   <br><sub>Network overview: traffic, packets, devices and connections. All screenshots use demo data.</sub>
 </p>
 
@@ -53,31 +53,31 @@ Click any screenshot to view it at full resolution.
 <table>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/images/nat.jpg"><img src="docs/images/nat.jpg" alt="NAT rule table with chains, actions, addresses and ports" width="640"></a>
+      <a href="docs/images/nat.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/nat.jpg" alt="NAT rule table with chains, actions, addresses and ports" width="640"></a>
       <br><b>Firewall / NAT</b><br>Ordered rules, search, filters and drag-and-drop.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/images/rule-editor.jpg"><img src="docs/images/rule-editor.jpg" alt="NAT editor with General, Advanced, Action and Statistics tabs" width="640"></a>
+      <a href="docs/images/rule-editor.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/rule-editor.jpg" alt="NAT editor with General, Advanced, Action and Statistics tabs" width="640"></a>
       <br><b>Rule editor</b><br>General, Advanced, Action and Statistics in a familiar properties window.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/images/wireguard.jpg"><img src="docs/images/wireguard.jpg" alt="Demo WireGuard server with three configured peers" width="640"></a>
+      <a href="docs/images/wireguard.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/wireguard.jpg" alt="Demo WireGuard server with three configured peers" width="640"></a>
       <br><b>WireGuard</b><br>Peers, allowed networks, endpoints, handshakes and tunnel counters.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/images/dhcp.jpg"><img src="docs/images/dhcp.jpg" alt="DHCP servers for a LAN bridge and guest VLAN" width="640"></a>
+      <a href="docs/images/dhcp.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/dhcp.jpg" alt="DHCP servers for a LAN bridge and guest VLAN" width="640"></a>
       <br><b>DHCP and segmentation</b><br>Servers on bridges and VLANs, pools, networks and leases.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/images/connections.jpg"><img src="docs/images/connections.jpg" alt="Inbound IPv4 connection monitoring with filters" width="640"></a>
+      <a href="docs/images/connections.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/connections.jpg" alt="Inbound IPv4 connection monitoring with filters" width="640"></a>
       <br><b>Connection monitoring</b><br>Active connections and incoming attempts with filters.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/images/backup-restore.jpg"><img src="docs/images/backup-restore.jpg" alt="RSC export, encrypted backup and configuration restore" width="640"></a>
+      <a href="docs/images/backup-restore.jpg"><img src="https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/main/docs/images/backup-restore.jpg" alt="RSC export, encrypted backup and configuration restore" width="640"></a>
       <br><b>Backup / Restore</b><br>Transfer configuration, users, 2FA and WireGuard private keys.
     </td>
   </tr>
