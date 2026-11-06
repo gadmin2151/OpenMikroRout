@@ -1,0 +1,127 @@
+"""Validated, opt-in IPv4 Fail2ban protection; no arbitrary filters or commands."""
+
+import ipaddress
+import re
+from typing import Annotated, Literal, Self
+
+from pydantic import Field, field_validator, model_validator
+
+from app.link_models import LinkModel, interface_name
+from app.system_lists import country_code
+
+MAX_BAN_SECONDS = 2_147_483
+
+
+def profile_id(value: str) -> str:
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,19}", value):
+        raise ValueError("Profile ID must contain 1–20 lowercase letters, digits or underscores")
+    return value
+
+
+def ipv4_networks(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(str(ipaddress.IPv4Network(value, strict=False)) for value in values))
+
+
+class F2BProfile(LinkModel):
+    id: str = Field(min_length=1, max_length=20)
+    name: str = Field(min_length=1, max_length=80)
+    service: Literal["web", "ssh"] = "web"
+    enabled: bool = False
+    chain: Literal["input", "forward"] = "input"
+    ports: list[Annotated[int, Field(ge=1, le=65535)]] = Field(
+        default_factory=lambda: [8088], min_length=1, max_length=15
+    )
+    in_interface: str = Field(default="", max_length=15)
+    destination: str = Field(default="", max_length=18)
+    max_retry: int = Field(default=5, ge=1, le=100)
+    find_time: int = Field(default=600, ge=10, le=86400)
+    ban_time: int = Field(default=900, ge=1, le=MAX_BAN_SECONDS)
+    ignore_addresses: list[Annotated[str, Field(max_length=18)]] = Field(
+        default_factory=list, max_length=128
+    )
+    include_countries: list[Annotated[str, Field(pattern=r"^[A-Z]{2}$")]] = Field(
+        default_factory=list, max_length=64
+    )
+    exclude_countries: list[Annotated[str, Field(pattern=r"^[A-Z]{2}$")]] = Field(
+        default_factory=list, max_length=64
+    )
+    shared_listener: bool = False
+
+    _id = field_validator("id")(profile_id)
+    _ignore = field_validator("ignore_addresses")(ipv4_networks)
+
+    @field_validator("in_interface")
+    @classmethod
+    def validate_interface(cls, value: str) -> str:
+        return interface_name(value) if value else ""
+
+    @field_validator("destination")
+    @classmethod
+    def validate_destination(cls, value: str) -> str:
+        return str(ipaddress.IPv4Network(value, strict=False)) if value else ""
+
+    @field_validator("include_countries", "exclude_countries")
+    @classmethod
+    def validate_countries(cls, values: list[str]) -> list[str]:
+        return [country_code(value) for value in values]
+
+    @model_validator(mode="after")
+    def unique_values(self) -> Self:
+        self.ports = list(dict.fromkeys(self.ports))
+        self.include_countries = list(dict.fromkeys(self.include_countries))
+        self.exclude_countries = list(dict.fromkeys(self.exclude_countries))
+        if set(self.include_countries) & set(self.exclude_countries):
+            raise ValueError("A country cannot be both included and excluded")
+        if self.service == "ssh" and self.chain != "input":
+            raise ValueError("SSH protection reads this router's journal and requires input")
+        return self
+
+
+def default_profiles() -> list[F2BProfile]:
+    return [
+        F2BProfile(id="web", name="Web login", enabled=True),
+        F2BProfile(id="ssh", name="SSH", service="ssh", ports=[22]),
+    ]
+
+
+class F2BConfiguration(LinkModel):
+    enabled: bool = False
+    access_mode: Literal["direct", "local_proxy", "external_proxy"] = "direct"
+    trusted_proxies: list[Annotated[str, Field(max_length=18)]] = Field(
+        default_factory=list, max_length=16
+    )
+    profiles: list[F2BProfile] = Field(default_factory=default_profiles, max_length=16)
+
+    _proxies = field_validator("trusted_proxies")(ipv4_networks)
+
+    @model_validator(mode="after")
+    def validate_protection(self) -> Self:
+        if len({item.id for item in self.profiles}) != len(self.profiles):
+            raise ValueError("Fail2ban profile identifiers must be unique")
+        if any(ipaddress.IPv4Network(value).prefixlen == 0 for value in self.trusted_proxies):
+            raise ValueError("A trusted proxy cannot include the entire IPv4 internet")
+        if self.enabled and self.access_mode == "local_proxy" and not self.trusted_proxies:
+            raise ValueError("Local proxy mode requires explicit trusted proxy addresses")
+        if self.enabled and self.access_mode == "external_proxy":
+            raise ValueError(
+                "An external proxy requires an action on that proxy; local bans are ineffective"
+            )
+        return self
+
+
+def client_ipv4(config: F2BConfiguration, peer: str, forwarded_for: str = "") -> str | None:
+    """Use socket peer, or ONE proxy address only when peer is explicitly trusted."""
+    try:
+        address = ipaddress.IPv4Address(peer)
+        if config.access_mode == "external_proxy":
+            return None
+        if config.access_mode == "local_proxy":
+            if not any(address in ipaddress.IPv4Network(net) for net in config.trusted_proxies):
+                return None
+            # Multi-hop chains cannot be safely inferred from an unconfigured trust chain.
+            address = ipaddress.IPv4Address(forwarded_for.strip())
+        if address.is_loopback or address.is_unspecified or address.is_multicast:
+            return None
+        return str(address)
+    except ipaddress.AddressValueError:
+        return None

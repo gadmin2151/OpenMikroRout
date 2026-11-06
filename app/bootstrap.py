@@ -43,6 +43,26 @@ def read_confirmed(data_dir: Path) -> Configuration:
 def restore_confirmed_filters(data_dir: Path, driver: FilterDriver | None = None) -> None:
     config = read_confirmed(data_dir)
     try:
+        # Restore sets and original ban deadlines before installing rules that reference them.
+        if driver is None:
+            from app.fail2ban_runtime import Fail2banService
+            from app.geoip import GeoIPService
+            from app.ipsets import LinuxIPSetDriver
+            from app.system_list_runtime import SystemListRuntime
+
+            geoip = GeoIPService(data_dir)
+            sets = LinuxIPSetDriver(data_dir)
+            SystemListRuntime(geoip, sets).recover(config)
+            protection = Fail2banService(
+                data_dir,
+                False,
+                sets,
+                lambda address: str(geoip.lookup(address).get("country") or ""),
+            )
+            try:
+                protection.restore(config.fail2ban)
+            finally:
+                protection.journal.close()
         filters = driver if driver is not None else LinuxFilterDriver()
         payload = filter_patch(filters.snapshot(), config)
         # Both calls use --noflush in the existing Linux adapter: foreign chains survive.

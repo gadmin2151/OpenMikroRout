@@ -24,7 +24,7 @@ jobs:
       - name: Install verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends iptables iproute2 dnsmasq-base conntrack wireguard-tools iputils-ping traceroute
+          sudo apt-get install -y --no-install-recommends iptables iproute2 dnsmasq-base conntrack wireguard-tools iputils-ping traceroute ipset fail2ban python3-systemd lldpd nmap
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements-dev.lock
           npm install --global pnpm@12.16.1
@@ -37,10 +37,20 @@ jobs:
           .venv/bin/pytest -q
           .venv/bin/python -m pip check
       - name: Isolated Linux network tests
-        run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py tests/test_wireguard_kernel.py -q
+        run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py tests/test_wireguard_kernel.py tests/test_system_lists_kernel.py tests/test_fail2ban_kernel.py tests/test_discovery_kernel.py -q
       - name: Interface checks
         run: pnpm check
       - name: Build container and check isolated demo startup
         run: |
           docker build --tag openmikrorout:ci .
           docker run --rm -i --network none --cap-drop ALL --read-only --memory 256m --pids-limit 64 --tmpfs /data:rw,nosuid,nodev,noexec,size=32m --tmpfs /tmp:rw,nosuid,nodev,noexec,size=16m -e OMR_MODE=demo openmikrorout:ci python - < scripts/container_smoke.py
+      - name: Check restricted Linux container and Fail2ban lifecycle
+        run: |
+          docker run --rm -i --network none --cap-drop ALL \
+            --cap-add NET_ADMIN --cap-add NET_RAW --cap-add NET_BIND_SERVICE \
+            --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges:true \
+            --read-only --memory 512m --cpus 1 --pids-limit 128 \
+            --tmpfs /data:rw,nosuid,nodev,noexec,size=64m,mode=700 \
+            --tmpfs /tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777 \
+            --tmpfs /run:rw,nosuid,nodev,noexec,size=1m,mode=755 \
+            openmikrorout:ci python - < scripts/container_fail2ban_smoke.py

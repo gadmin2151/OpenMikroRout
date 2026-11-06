@@ -37,7 +37,7 @@ import {
   hasWriteAccess,
   isReadAction,
   applyReadAccess,
-} from "./access-ui.js?v=5";
+} from "./access-ui.js?v=6";
 import { renderUsers, handleUsersAction } from "./users-ui.js?v=2";
 import { renderSecurity, handleSecurityAction } from "./security-ui.js?v=1";
 import {
@@ -48,10 +48,11 @@ import {
 } from "./updates-ui.js?v=1";
 import {
   renderConnections,
+  setConnectionSource,
   refreshConnections,
   resetConnections,
   handleConnectionsAction,
-} from "./connections-ui.js?v=1";
+} from "./connections-ui.js?v=2";
 import {
   routerViews,
   renderRouterView,
@@ -59,7 +60,28 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=12";
+} from "./router-pages.js?v=13";
+
+import {
+  protectionViews,
+  renderProtection,
+  refreshProtection,
+  resetProtection,
+  handleProtectionAction,
+  handleProtectionInput,
+  renderSystemLists,
+  addressListChoices,
+  renderF2BRuleSummary,
+} from "./protection-ui.js?v=1";
+import {
+  discoveryViews,
+  renderDiscovery,
+  refreshDiscovery,
+  resetDiscovery,
+  handleDiscoveryAction,
+  handleDiscoveryInput,
+} from "./discovery-ui.js?v=1";
+import { proofForm, proof, clearProof } from "./security-ui.js?v=1";
 
 const paths = {
   grip: "M8 5h.01 M16 5h.01 M8 12h.01 M16 12h.01 M8 19h.01 M16 19h.01",
@@ -190,6 +212,8 @@ function clearSession() {
   resetConnections();
   resetWireGuard();
   resetTools();
+  resetProtection();
+  resetDiscovery();
   loginUsername = currentUser()?.username || loginUsername;
   authGeneration++;
   state = null;
@@ -424,6 +448,7 @@ function renderNavigation(count) {
         ["dhcp_servers", "dhcp_networks", "leases"],
       ),
       navButton("pools", "Pool", "list", count("pools")),
+      navButton("hosts", "Hosts / Neighbors", "network"),
       navButton("dns", "DNS & Forwarding", "activity", "", [
         "dns",
         "dns_static",
@@ -436,7 +461,7 @@ function renderNavigation(count) {
         ["filter", "rules", "lists", "connections"],
       ),
     ].join(""),
-  )}${navButton("tools", "Tools", "terminal")}${navGroup("system", "System", "server", `${navButton("web_settings", "Web Interface", "network")}${navButton("backups", "Backup / Restore", "file")}${state.auth_enabled ? navButton("security", "Security", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
+  )}${navGroup("protection", "Security", "shield", `${navButton("fail2ban", "Fail2ban", "shield")}${navButton("geoip", "GeoIP", "network")}`)}${navGroup("tools-group", "Tools", "terminal", `${navButton("tools", "Diagnostics", "terminal")}${navButton("network_scan", "Network Scan", "search")}${navButton("port_scan", "Port Scan", "activity")}`)}${navGroup("system", "System", "server", `${navButton("web_settings", "Web Interface", "network")}${navButton("backups", "Backup / Restore", "file")}${state.auth_enabled ? navButton("security", "My account · 2FA", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
 }
 async function refreshSecurity() {
   if (state?.current_user) securityStatus = await api("me/totp");
@@ -487,6 +512,18 @@ function accountMarkup() {
 function routerContext() {
   return {
     state,
+    showHostConnections: (address) => {
+      setConnectionSource(address);
+      return handleAction({
+        dataset: { action: "view", view: "connections" },
+        disabled: false,
+      });
+    },
+    navigate: (name) =>
+      handleAction({
+        dataset: { action: "view", view: name },
+        disabled: false,
+      }),
     generation: authGeneration,
     getGeneration: () => authGeneration,
     isCurrentView: (name) => !!state && view === name,
@@ -538,6 +575,8 @@ function render() {
     rules = cfg.rules;
   const count = (key) => (network[key] || []).length;
   const [title, description] =
+    protectionViews[view] ||
+    discoveryViews[view] ||
     routerViews[view] ||
     {
       rules: [
@@ -639,30 +678,35 @@ function render() {
       ["dns_static", "Static", "list", count("dns_static")],
     ];
   else tabs = [];
-  const body =
-    view === "backups"
-      ? renderBackups(routerContext())
-      : view === "tools"
-        ? renderTools(routerContext())
-        : ["wireguard", "wireguard_peers"].includes(view)
-          ? renderWireGuard(routerContext(), view === "wireguard_peers")
-          : view === "updates"
-            ? renderUpdates(routerContext())
-            : view === "connections"
-              ? renderConnections(routerContext())
-              : view === "security"
-                ? renderSecurity(routerContext())
-                : view === "rules"
-                  ? renderRules()
-                  : view === "lists"
-                    ? renderLists()
-                    : view === "interfaces"
-                      ? renderInterfaces()
-                      : view === "audit"
-                        ? renderAudit()
-                        : view === "users"
-                          ? renderUsers(routerContext())
-                          : renderRouterView(view, routerContext());
+  const body = protectionViews[view]
+    ? renderProtection(view, routerContext())
+    : discoveryViews[view]
+      ? renderDiscovery(view, routerContext())
+      : view === "backups"
+        ? renderBackups(routerContext())
+        : view === "tools"
+          ? renderTools(routerContext())
+          : ["wireguard", "wireguard_peers"].includes(view)
+            ? renderWireGuard(routerContext(), view === "wireguard_peers")
+            : view === "updates"
+              ? renderUpdates(routerContext())
+              : view === "connections"
+                ? renderConnections(routerContext())
+                : view === "security"
+                  ? renderSecurity(routerContext())
+                  : view === "rules"
+                    ? renderRules()
+                    : view === "lists"
+                      ? renderLists()
+                      : view === "interfaces"
+                        ? renderInterfaces()
+                        : view === "audit"
+                          ? renderAudit()
+                          : view === "users"
+                            ? renderUsers(routerContext())
+                            : (view === "filter"
+                                ? renderF2BRuleSummary(routerContext())
+                                : "") + renderRouterView(view, routerContext());
   root.innerHTML = `<div class="app-shell">
     <aside class="sidebar ${sidebarOpen ? "open" : ""}" id="sidebar">${brandMarkup()}
       <div class="workspace"><div class="workspace-icon">${icon("server")}</div><div><b>${isDemo() ? "Demo Router" : e(state.hostname)}</b><small>${isDemo() ? "DEMO WORKSPACE" : "LINUX GATEWAY"}</small></div></div>
@@ -673,9 +717,9 @@ function render() {
     <div class="content">${state.runtime_error ? `<div class="connection-error" role="alert">${icon("info")} Восстановление конфигурации требует внимания: ${e(state.runtime_error)}</div>` : ""}${offline ? '<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>' : ""}
       ${!canWrite() ? `<div class="read-only-banner">${icon("lock")}Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}
       <div class="page-heading"><div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Export</span></button></div></div>
-      ${["overview", "users", "security", "updates", "connections", "backups"].includes(view) ? "" : `<div class="configuration-summary" aria-label="Сводка конфигурации">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
+      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : `<div class="configuration-summary" aria-label="Сводка конфигурации">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
       <section class="panel ${view === "overview" ? "overview-panel" : ""}">${tabs.length ? `<div class="panel-tabs">${tabs.map(([id, label, ico, total]) => `<button class="panel-tab ${view === id ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${label}<span class="tab-count">${total}</span></button>`).join("")}</div>` : ""}${body}</section>
-      ${["overview", "users", "security", "updates", "connections", "backups"].includes(view) ? "" : `<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div></details>`}
+      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : `<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div></details>`}
       <div class="page-footer"><span>${icon("shield")}OpenMikroRout · Your network. Your rules.</span><span>Lightweight Linux router · IPv4</span></div>
     </div><div id="statusbar">${renderStatus()}</div></main></div>`;
   const navigation = document.querySelector(".sidebar-navigation");
@@ -791,7 +835,7 @@ function renderLists() {
     })
     .join(
       "",
-    )}</div>${!state.config.address_lists.length ? empty("list", "Пока нет списков адресов", "Добавьте IP-адреса или подсети и используйте список в правилах.") : ""}</div>`;
+    )}</div>${!state.config.address_lists.length ? empty("list", "Пока нет списков адресов", "Добавьте IP-адреса или подсети и используйте список в правилах.") : ""}</div>${renderSystemLists(routerContext())}`;
 }
 function renderInterfaces() {
   return `<div class="toolbar"><span class="muted">${isDemo() ? "Пример сетевой конфигурации" : "Обнаруженные интерфейсы Linux-хоста"}</span><button class="small" data-action="refresh">${icon("refresh")}Обновить</button></div><div class="view-panel"><div class="interface-grid">${interfaces.map((i) => `<article class="interface-card">${icon("network")}<h3>${e(i.name)}</h3><p>${e(i.address || "IPv4 не назначен")}</p><div class="interface-status"><span class="badge">${e(i.state)}</span><span>${e(i.role)}</span></div></article>`).join("")}</div>${!interfaces.length ? empty("network", "Нет данных об интерфейсах", "Нажмите «Обновить», чтобы повторить запрос.") : ""}<p class="interface-note">${isDemo() ? "В деморежиме показаны примерные интерфейсы. В Linux здесь появятся реальные интерфейсы сервера." : `IPv4 forwarding: <b>${forwarding ? "включён" : "выключен"}</b>. IP-адреса задаются в IP Addresses, bridge и VLAN — в соответствующих разделах. Forwarding настраивается в DNS & Forwarding; разрешения транзита — в Firewall Filter.`}</p></div>`;
@@ -933,8 +977,8 @@ function renderEditor() {
     </div>`;
   if (editorTab === "advanced")
     content = `<div class="winbox-form">
-    ${selectField("Src. Address List", "src_list", r.src_list, [["", "Не использовать"], ...state.config.address_lists.map((item) => [item.name, item.name])])}
-    ${selectField("Dst. Address List", "dst_list", r.dst_list, [["", "Не использовать"], ...state.config.address_lists.map((item) => [item.name, item.name])])}
+    ${selectField("Src. Address List", "src_list", r.src_list, [["", "Не использовать"], ...addressListChoices(state.config)])}
+    ${selectField("Dst. Address List", "dst_list", r.dst_list, [["", "Не использовать"], ...addressListChoices(state.config)])}
     ${selectField("In. Interface List", "in_interface_list", r.in_interface_list || "", [["", "Не использовать"], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}${selectField("Out. Interface List", "out_interface_list", r.out_interface_list || "", [["", "Не использовать"], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}<div class="field-note">Для source и destination укажите адрес в General или список здесь. Если список ещё не создан, добавьте его в Address Lists.</div>
     <div class="form-divider"></div><div class="field"><span>Connection State</span><div class="states">${["NEW", "ESTABLISHED", "RELATED", "INVALID", "UNTRACKED"].map((value) => `<label class="checkbox-label"><input type="checkbox" name="state" value="${value}" ${r.connection_states.includes(value) ? "checked" : ""}>${value.toLowerCase()}</label>`).join("")}</div><small>Без отметок — любое состояние.</small></div></div>`;
   if (editorTab === "action")
@@ -1181,10 +1225,16 @@ async function refresh(manual = false) {
   const ids = new Set(next.config.rules.map((rule) => rule.id));
   selected = new Set([...selected].filter((id) => ids.has(id)));
   const settingsForm = document.querySelector(
-    "#router-dns-form,#router-domain-form,#backup-import-form",
+    "#router-dns-form,#router-domain-form,#backup-import-form,#f2b-settings,#geo-settings,#discovery-settings,#scan-settings",
   );
   if (
-    ["dns", "web_settings", "backups"].includes(view) &&
+    [
+      "dns",
+      "web_settings",
+      "backups",
+      ...Object.keys(protectionViews),
+      ...Object.keys(discoveryViews),
+    ].includes(view) &&
     settingsForm?.dataset.dirty === "true"
   ) {
     const statusbar = document.querySelector("#statusbar");
@@ -1237,6 +1287,8 @@ async function refresh(manual = false) {
     render();
   }
   await Promise.all([refreshTelemetry(), refreshTelemetryHistory()]);
+  await refreshProtection(routerContext());
+  await refreshDiscovery(routerContext());
   if (view === "connections" && !dialog.open)
     await refreshConnections(routerContext());
   if (view === "updates") await refreshUpdates(routerContext());
@@ -1252,6 +1304,8 @@ async function handleAction(button) {
     toast("Группа read: доступен только просмотр.", true);
     return;
   }
+  if (await handleProtectionAction(button, routerContext())) return;
+  if (await handleDiscoveryAction(button, routerContext())) return;
   if (await handleUsersAction(button, routerContext())) return;
   if (await handleSecurityAction(button, routerContext())) return;
   if (await handleConnectionsAction(button, routerContext())) return;
@@ -1273,7 +1327,7 @@ async function handleAction(button) {
   }
   if (action === "nav-group") {
     const group = button.dataset.group;
-    if (!["ip", "system"].includes(group)) return;
+    if (!["ip", "system", "protection", "tools-group"].includes(group)) return;
     if (expandedGroups.has(group)) expandedGroups.delete(group);
     else expandedGroups.add(group);
     render();
@@ -1351,6 +1405,8 @@ async function handleAction(button) {
       setNavigationOpen(false);
     selected.clear();
     render();
+    await refreshProtection(routerContext());
+    await refreshDiscovery(routerContext());
     if (["wireguard", "wireguard_peers"].includes(view))
       await refreshWireGuard(routerContext());
     if (
@@ -1488,6 +1544,18 @@ async function handleAction(button) {
       "apply-confirm",
       "Применить",
     );
+    if (state.security_dirty && state.auth_enabled) {
+      dialog
+        .querySelector(".dialog-content")
+        .insertAdjacentHTML(
+          "beforeend",
+          proofForm(
+            routerContext(),
+            "apply-security-proof",
+            "Изменяется защита роутера. Подтвердите учётные данные.",
+          ),
+        );
+    }
     return;
   }
   await run(async () => {
@@ -1507,7 +1575,7 @@ async function handleAction(button) {
       dialogFrame(
         "Предпросмотр конфигурации",
         "Проверка не изменяет правила хоста.",
-        `<p class="preview-note">${isDemo() ? "Синтаксис конфигурации проверен приложением. Проверка ядром доступна только в Linux." : "Проверка iptables-restore --test успешно пройдена."} Ниже — NAT, Firewall Filter, виртуальные интерфейсы и настройки IP / DHCP / DNS из общего черновика.</p><pre class="code-preview">${e(result.script)}</pre>${result.router ? `<h3 class="preview-section-title">Firewall Filter</h3><pre class="code-preview">${e(result.router.filter_script || "")}</pre><h3 class="preview-section-title">Links · Bridge / VLAN / Virtual</h3><pre class="code-preview">${e(JSON.stringify(result.router.links || {}, null, 2))}</pre><h3 class="preview-section-title">IP · DHCP · DNS · Routes</h3><pre class="code-preview">${e(JSON.stringify(result.router.network || {}, null, 2))}</pre>${result.router.wireguard ? `<h3 class="preview-section-title">WireGuard · interfaces / peers</h3><pre class="code-preview">${e(JSON.stringify(result.router.wireguard, null, 2))}</pre>` : ""}${result.router.vpn_routes ? `<h3 class="preview-section-title">WireGuard · source routing</h3><pre class="code-preview">${e(JSON.stringify(result.router.vpn_routes, null, 2))}</pre>` : ""}` : result.network ? `<h3 class="preview-section-title">Network configuration</h3><pre class="code-preview">${e(JSON.stringify(result.network, null, 2))}</pre>` : ""}`,
+        `<p class="preview-note">${isDemo() ? "Синтаксис конфигурации проверен приложением. Проверка ядром доступна только в Linux." : "Проверка iptables-restore --test успешно пройдена."} Ниже — NAT, Firewall Filter, виртуальные интерфейсы и настройки IP / DHCP / DNS из общего черновика.</p><pre class="code-preview">${e(result.script)}</pre>${result.router ? `<h3 class="preview-section-title">Firewall Filter</h3><pre class="code-preview">${e(result.router.filter_script || "")}</pre><h3 class="preview-section-title">Links · Bridge / VLAN / Virtual</h3><pre class="code-preview">${e(JSON.stringify(result.router.links || {}, null, 2))}</pre><h3 class="preview-section-title">IP · DHCP · DNS · Routes</h3><pre class="code-preview">${e(JSON.stringify(result.router.network || {}, null, 2))}</pre>${result.router.wireguard ? `<h3 class="preview-section-title">WireGuard · interfaces / peers</h3><pre class="code-preview">${e(JSON.stringify(result.router.wireguard, null, 2))}</pre>` : ""}${result.router.system_lists ? `<h3 class="preview-section-title">System address lists · GeoIP / Fail2ban</h3><pre class="code-preview">${e(JSON.stringify(result.router.system_lists, null, 2))}</pre>` : ""}${result.router.fail2ban ? `<h3 class="preview-section-title">Fail2ban</h3><pre class="code-preview">${e(JSON.stringify(result.router.fail2ban, null, 2))}</pre>` : ""}${result.router.vpn_routes ? `<h3 class="preview-section-title">WireGuard · source routing</h3><pre class="code-preview">${e(JSON.stringify(result.router.vpn_routes, null, 2))}</pre>` : ""}` : result.network ? `<h3 class="preview-section-title">Network configuration</h3><pre class="code-preview">${e(JSON.stringify(result.network, null, 2))}</pre>` : ""}`,
       );
       return;
     }
@@ -1613,12 +1681,21 @@ async function handleAction(button) {
     }
     if (action === "apply-confirm") {
       assertDraftRevision(confirmationRevision, state.revision);
+      const credentials =
+        state.security_dirty && state.auth_enabled
+          ? proof(routerContext(), "apply-security-proof")
+          : null;
+      if (state.security_dirty && state.auth_enabled && !credentials) return;
       acceptState(
         await api("apply", {
           method: "POST",
-          body: JSON.stringify({ revision: confirmationRevision }),
+          body: JSON.stringify({
+            revision: confirmationRevision,
+            proof: credentials,
+          }),
         }),
       );
+      clearProof(routerContext());
       dialog.close();
       toast("Подтвердите связь до истечения таймера");
       return;
@@ -1851,8 +1928,10 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("input", (event) => {
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
+  if (handleProtectionInput(event, routerContext())) return;
+  if (handleDiscoveryInput(event, routerContext())) return;
   const settingsForm = event.target.closest(
-    "#router-dns-form,#router-domain-form,#backup-import-form",
+    "#router-dns-form,#router-domain-form,#backup-import-form,#f2b-settings,#geo-settings,#discovery-settings,#scan-settings",
   );
   if (settingsForm && canWrite()) settingsForm.dataset.dirty = "true";
   if (event.target.id === "rule-search") {
@@ -1870,6 +1949,8 @@ document.addEventListener("change", (event) => {
   if (backupForm && canWrite()) backupForm.dataset.dirty = "true";
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
+  if (handleProtectionInput(event, routerContext())) return;
+  if (handleDiscoveryInput(event, routerContext())) return;
   const node = event.target;
   if (node.id === "telemetry-period" && telemetryExpanded) {
     const period = Number(node.value);
@@ -1988,6 +2069,20 @@ document.addEventListener("focusout", (event) => {
 });
 document.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (
+    event.target.matches(
+      "#f2b-settings,#geo-settings,#f2b-profile-form,#geo-lookup,#system-list-search,[data-protection-search],#protection-proof,#apply-security-proof,[data-discovery-form]",
+    )
+  ) {
+    const button =
+      event.target.querySelector("button[data-action]") ||
+      dialog.querySelector(
+        '[data-action="f2b-profile-save"],[data-action="protection-confirm"],[data-action="apply-confirm"]',
+      );
+    if (button)
+      void handleAction(button).catch((error) => toast(error.message, true));
+    return;
+  }
   if (
     event.target.id === "backup-import-form" ||
     event.target.id === "backup-proof"
@@ -2149,10 +2244,11 @@ document.addEventListener("visibilitychange", () => {
 
 dialog.addEventListener("close", () => {
   clearWireGuardSecrets();
+  clearProof(routerContext());
   if (
     !dialog.open &&
     dialog.querySelector(
-      "#security-recovery-codes,#security-setup-form,#wg-form,#wg-export-proof,#wg-private-profile",
+      "#security-recovery-codes,#security-setup-form,#wg-form,#wg-export-proof,#wg-private-profile,#protection-proof,#apply-security-proof",
     )
   )
     dialog.innerHTML = "";

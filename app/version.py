@@ -1,3 +1,3 @@
 """Application version used by the API and signed release packages."""
 
-VERSION = "0.5.1"
+VERSION = "0.6.0"

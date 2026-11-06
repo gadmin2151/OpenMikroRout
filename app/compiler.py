@@ -6,6 +6,7 @@ import shlex
 from collections.abc import Iterator
 
 from app.models import Configuration, NatRule, RuleMatch
+from app.system_lists import is_system_list, kernel_set_name, resolved_system_lists
 
 CHAINS = {"dstnat": "NATP_PRE", "srcnat": "NATP_POST", "output": "NATP_OUT"}
 HOOKS = {"PREROUTING": "NATP_PRE", "POSTROUTING": "NATP_POST", "OUTPUT": "NATP_OUT"}
@@ -68,6 +69,9 @@ def match_tokens(
     for flag, value in (("--sports", rule.src_ports), ("--dports", rule.dst_ports)):
         if value:
             tokens += ["-m", "multiport", flag, value.replace("-", ":")]
+    for ref, direction in ((rule.src_list, "src"), (rule.dst_list, "dst")):
+        if is_system_list(ref):
+            tokens += ["-m", "set", "--match-set", kernel_set_name(ref), direction]
     if rule.connection_states:
         tokens += ["-m", "conntrack", "--ctstate", ",".join(rule.connection_states)]
     tokens += ["-m", "comment", "--comment", f"{marker}:{rule.id}"]
@@ -76,6 +80,7 @@ def match_tokens(
 
 def expanded_matches(config: Configuration, rule: RuleMatch) -> Iterator[tuple[str, str, str, str]]:
     lists = {item.name: item.addresses for item in config.address_lists}
+    lists.update({name: [""] for name in resolved_system_lists(config)})
     interfaces = {item.name: item.members for item in config.network.interface_lists}
     sources = lists[rule.src_list] if rule.src_list else [rule.src_address]
     destinations = lists[rule.dst_list] if rule.dst_list else [rule.dst_address]

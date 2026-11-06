@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from app.compiler import FirewallError
+from app.fail2ban_runtime import Fail2banService
 from app.filtering import FilterDriver, filter_counters, filter_patch, filter_rollback
 from app.models import Configuration
 from app.network_models import NetworkConfiguration
+from app.system_list_runtime import SystemListRuntime
 
 if TYPE_CHECKING:
     from app.wireguard_vault import WireGuardVault
@@ -40,12 +42,26 @@ class RouterRuntime:
         filters: FilterDriver,
         wireguard: WireGuardComponent | None = None,
         vpn_routes: NetworkComponent | None = None,
+        system_lists: SystemListRuntime | None = None,
+        fail2ban: Fail2banService | None = None,
     ) -> None:
         self.network = network
         self.links = links
         self.filters = filters
         self.wireguard = wireguard
         self.vpn_routes = vpn_routes
+        self.system_lists = system_lists
+        self.fail2ban = fail2ban
+
+    def prepare(self, target: Configuration, *, create: bool = True) -> None:
+        if self.system_lists:
+            self.system_lists.prepare(target, create=create)
+
+    def recover_security(self, applied: Configuration) -> None:
+        if self.system_lists:
+            self.system_lists.recover(applied)
+        if self.fail2ban:
+            self.fail2ban.restore(applied.fail2ban)
 
     def snapshot(self, previous: Configuration) -> dict[str, Any]:
         snapshot = {
@@ -57,9 +73,18 @@ class RouterRuntime:
             snapshot["wireguard"] = self.wireguard.snapshot(previous.network)
         if self.vpn_routes:
             snapshot["vpn_routes"] = self.vpn_routes.snapshot(previous.network)
+        if self.system_lists:
+            snapshot["system_lists"] = self.system_lists.snapshot(previous)
+        if self.fail2ban:
+            snapshot["fail2ban"] = self.fail2ban.snapshot(previous.fail2ban)
         return snapshot
 
-    def check(self, previous: Configuration, target: Configuration) -> None:
+    def check(
+        self, previous: Configuration, target: Configuration, *, allow_prepare: bool = True
+    ) -> None:
+        self.prepare(target, create=allow_prepare)
+        if self.fail2ban:
+            self.fail2ban.check(previous.fail2ban, target.fail2ban)
         self.links.check(previous.network, target.network)
         if self.wireguard:
             self.wireguard.check(previous.network, target.network)
@@ -78,9 +103,15 @@ class RouterRuntime:
             preview["wireguard"] = self.wireguard.preview(previous.network, target.network)
         if self.vpn_routes:
             preview["vpn_routes"] = self.vpn_routes.preview(previous.network, target.network)
+        if self.system_lists:
+            preview["system_lists"] = self.system_lists.preview(target)
+        if self.fail2ban:
+            preview["fail2ban"] = self.fail2ban.preview(previous.fail2ban, target.fail2ban)
         return preview
 
     def apply(self, previous: Configuration, target: Configuration) -> None:
+        if self.system_lists:
+            self.system_lists.apply(target)
         self.links.apply(previous.network, target.network)
         if self.wireguard:
             self.wireguard.apply(previous.network, target.network)
@@ -89,9 +120,16 @@ class RouterRuntime:
         self.network.apply(previous.network, target.network)
         self.links.finalize(previous.network, target.network)
         self.filters.restore(filter_patch(self.filters.snapshot(), target))
+        if self.fail2ban:
+            self.fail2ban.apply(previous.fail2ban, target.fail2ban)
 
     def rollback(self, snapshot: dict[str, Any]) -> None:
         errors: list[str] = []
+        if self.system_lists and "system_lists" in snapshot:
+            try:
+                self.system_lists.rollback(snapshot["system_lists"])
+            except (FirewallError, OSError) as exc:
+                errors.append(f"System list recovery: {exc}")
         # Old link shells must exist before old addresses and services can be restored.
         if "links" in snapshot:
             try:
@@ -110,6 +148,11 @@ class RouterRuntime:
                 self.wireguard.rollback(snapshot["wireguard"])
             except (FirewallError, OSError) as exc:
                 errors.append(f"WireGuard recovery: {exc}")
+        if self.fail2ban and "fail2ban" in snapshot:
+            try:
+                self.fail2ban.rollback(snapshot["fail2ban"])
+            except (FirewallError, OSError) as exc:
+                errors.append(f"Fail2ban recovery: {exc}")
         if "network" in snapshot:
             try:
                 self.network.rollback(snapshot["network"])

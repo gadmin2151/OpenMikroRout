@@ -1,7 +1,7 @@
 FROM python:3.13-slim-bookworm@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OMR_DATA_DIR=/data
 WORKDIR /opt/openmikrorout
-RUN apt-get update && apt-get install -y --no-install-recommends iptables iproute2 dnsmasq-base conntrack wireguard-tools iputils-ping traceroute \
+RUN apt-get update && apt-get install -y --no-install-recommends iptables iproute2 dnsmasq-base conntrack wireguard-tools iputils-ping traceroute ipset fail2ban python3-systemd lldpd nmap \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.lock ./
 RUN pip install --no-cache-dir -r requirements.lock

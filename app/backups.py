@@ -40,7 +40,10 @@ def config_hash(config: Configuration) -> str:
 
 
 def configuration_summary(config: Configuration) -> dict[str, int]:
-    result = {key: len(getattr(config, key)) for key in ("rules", "filter_rules", "address_lists")}
+    result = {
+        key: len(getattr(config, key))
+        for key in ("rules", "filter_rules", "address_lists", "system_lists")
+    }
     for key, value in config.network.model_dump(mode="json").items():
         if isinstance(value, list):
             result[key] = len(value)

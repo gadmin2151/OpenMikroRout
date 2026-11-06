@@ -106,6 +106,12 @@ class DemoDriver:
                     lines.insert(1, line)
             elif line.startswith("-A "):
                 lines.insert(lines.index("COMMIT"), line)
+            elif line.startswith("-I "):
+                _, chain, position, rule = line.split(" ", 3)
+                indexes = [i for i, item in enumerate(lines) if item.startswith(f"-A {chain} ")]
+                offset = int(position) - 1
+                index = indexes[offset] if offset < len(indexes) else lines.index("COMMIT")
+                lines.insert(index, f"-A {chain} {rule}")
             elif line.startswith("-D "):
                 target = "-A " + line[3:]
                 lines = [item for item in lines if item != target]
@@ -192,15 +198,17 @@ class FirewallService:
             )
             return self.state()
 
-    def preview(self) -> dict[str, Any]:
+    def preview(self, *, allow_prepare: bool = True) -> dict[str, Any]:
         with self.lock:
             target = self.config()
             previous = Configuration.model_validate(self.store.read("applied"))
+            if self.runtime:
+                self.runtime.prepare(target, create=allow_prepare)
             payload = patch(self.driver.snapshot(), target)
             self.driver.restore(payload, test=True)
             router: dict[str, Any] = {}
             if self.runtime:
-                self.runtime.check(previous, target)
+                self.runtime.check(previous, target, allow_prepare=allow_prepare)
                 router = self.runtime.preview(previous, target)
             return {"script": payload, "valid": True, "router": router}
 
@@ -214,6 +222,8 @@ class FirewallService:
     ) -> dict[str, Any]:
         with self.lock:
             previous = Configuration.model_validate(self.store.read("applied"))
+            if self.runtime:
+                self.runtime.prepare(config)
             snapshot = self.driver.snapshot()
             payload = patch(snapshot, config)
             self.driver.restore(payload, test=True)
@@ -363,6 +373,10 @@ class FirewallService:
                 "revision": self.store.read("revision"),
                 "dirty": config != self.store.read("applied")
                 or bool(self.store.read("restore_plan")),
+                "security_dirty": any(
+                    config.get(key) != self.store.read("applied").get(key)
+                    for key in ("fail2ban", "geoip", "system_lists", "discovery", "scanning")
+                ),
                 "runtime_error": self.store.read("runtime_error"),
                 "restore_accounts": bool((self.store.read("restore_plan") or {}).get("accounts")),
                 "pending": {key: pending[key] for key in ("deadline", "token", "error")}

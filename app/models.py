@@ -7,8 +7,12 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.config_migrations import migrate_legacy_address_lists
+from app.discovery_models import DiscoverySettings, ScanSettings
+from app.fail2ban_models import F2BConfiguration
 from app.ipv4 import domain_name
 from app.network_models import NetworkConfiguration
+from app.system_lists import GeoIPSettings, SystemAddressList, is_system_list, resolved_system_lists
 
 MAX_COMPILED_RULES = 4096
 MAX_RULE_EXPANSION = 256
@@ -53,6 +57,13 @@ class AddressList(Model):
     name: str = Field(min_length=1, max_length=40, pattern=r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$")
     addresses: list[Annotated[str, Field(max_length=32)]] = Field(min_length=1, max_length=256)
     comment: str = Field(default="", max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        if is_system_list(value):
+            raise ValueError("The geo_ and f2b_ prefixes are reserved for system address lists")
+        return value
 
     @field_validator("addresses")
     @classmethod
@@ -169,9 +180,19 @@ class FilterRule(RuleMatch):
 
 
 class Configuration(Model):
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy(cls, value: object) -> object:
+        return migrate_legacy_address_lists(value)
+
+    fail2ban: F2BConfiguration = Field(default_factory=F2BConfiguration)
+    discovery: DiscoverySettings = Field(default_factory=DiscoverySettings)
+    scanning: ScanSettings = Field(default_factory=ScanSettings)
     rules: list[NatRule] = Field(default_factory=list, max_length=512)
     filter_rules: list[FilterRule] = Field(default_factory=list, max_length=512)
     address_lists: list[AddressList] = Field(default_factory=list, max_length=128)
+    system_lists: list[SystemAddressList] = Field(default_factory=list, max_length=277)
+    geoip: GeoIPSettings = Field(default_factory=GeoIPSettings)
     network: NetworkConfiguration = Field(default_factory=NetworkConfiguration)
     web_domain: str = Field(default="", max_length=254)
 
@@ -188,6 +209,9 @@ class Configuration(Model):
     @model_validator(mode="after")
     def validate_references(self) -> Self:
         lists = {item.name: item for item in self.address_lists}
+        systems = resolved_system_lists(self)
+        if len({item.name for item in self.system_lists}) != len(self.system_lists):
+            raise ValueError("System address list names must be unique")
         interfaces = {item.name: item for item in self.network.interface_lists}
         if len(lists) != len(self.address_lists):
             raise ValueError("Address list names must be unique")
@@ -199,9 +223,9 @@ class Configuration(Model):
         for rule in rules:
             expansion = 1
             for ref in (rule.src_list, rule.dst_list):
-                if ref and ref not in lists:
+                if ref and ref not in lists and ref not in systems:
                     raise ValueError(f"Unknown address list: {ref}")
-                if ref:
+                if ref in lists:
                     expansion *= len(lists[ref].addresses)
             for ref in (rule.in_interface_list, rule.out_interface_list):
                 if ref and ref not in interfaces:

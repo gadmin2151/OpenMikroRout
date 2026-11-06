@@ -120,3 +120,12 @@ export async function handleConnectionsAction(button, ctx) {
   });
   return true;
 }
+
+export function setConnectionSource(address) {
+  controller?.abort();
+  request = null;
+  snapshot = null;
+  error = "";
+  kind = "active";
+  filters = { source: address };
+}

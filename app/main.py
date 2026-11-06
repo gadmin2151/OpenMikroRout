@@ -38,9 +38,12 @@ from app.compiler import FirewallError
 from app.connections import ConnectionMonitor, ConnectionQuery, ConnectionSnapshot
 from app.demo import demo_config
 from app.diagnostics import DiagnosticRequest, NetworkDiagnostics
+from app.fail2ban_container import ContainerFail2ban
 from app.firewall import Conflict, DemoDriver, Driver, FirewallService, LinuxDriver
 from app.models import Configuration, ConfirmRequest, LoginRequest, RevisionRequest, SaveRequest
 from app.runtime import RouterRuntime, create_runtime
+from app.security_api import ProtectedApply, reauthenticate, security_router
+from app.security_services import SecurityServices
 from app.storage import Store
 from app.telemetry import TelemetryCollector, TelemetrySnapshot
 from app.telemetry_history import HistoryResponse, TelemetryHistory
@@ -168,6 +171,12 @@ def create_app(
     )
     backups = BackupService(service, auth, wireguard_vault)
     service.participant = backups
+    security_services = SecurityServices(
+        settings.data_dir, settings.mode == "demo" or injected_driver, service, updates
+    )
+    runtime.system_lists = security_services.lists
+    runtime.fail2ban = security_services.fail2ban
+    companion = ContainerFail2ban(security_services.fail2ban)
 
     def watchdog() -> None:
         while not stop.wait(1):
@@ -191,10 +200,13 @@ def create_app(
                     "Another OpenMikroRout process already owns this data directory"
                 ) from exc
             try:
+                companion.start(applied.fail2ban)
+                runtime.recover_security(applied)
                 service.recover(startup=True)
                 if settings.mode == "linux" and not injected_driver:
                     service.restore_confirmed()
             except (FirewallError, OSError) as exc:
+                companion.stop()
                 store.write({"runtime_error": str(exc)}, "startup_failed", str(exc))
                 log.exception(
                     "Startup router recovery failed; administrator intervention may be needed"
@@ -206,15 +218,22 @@ def create_app(
             thread.start()
             connections.start()
             telemetry_history.start()
+            security_services.start()
             try:
                 yield
             finally:
                 stop.set()
+                security_services.close()
                 telemetry_history.stop()
                 connections.stop()
                 thread.join(timeout=20)
                 if store.read("pending"):
-                    service.rollback("Service stopped before confirmation")
+                    try:
+                        service.rollback("Service stopped before confirmation")
+                    finally:
+                        companion.stop()
+                else:
+                    companion.stop()
 
     app = FastAPI(
         title="OpenMikroRout",
@@ -228,6 +247,7 @@ def create_app(
     app.state.connections = connections
     app.state.updates = updates
     app.state.telemetry_history = telemetry_history
+    app.state.security_services = security_services
     app.add_middleware(
         PanelHostMiddleware, allowed_hosts=settings.allowed_hosts, domains=service.panel_domains
     )
@@ -334,6 +354,9 @@ def create_app(
 
     app.include_router(wireguard_router(service, wireguard_vault, auth, full_access, authenticated))
     app.include_router(backup_router(service, backups, auth, full_access, authenticated))
+    app.include_router(
+        security_router(service, security_services, auth, full_access, authenticated)
+    )
 
     @app.post("/api/tools/run", dependencies=[Depends(full_access)])
     def diagnostic(body: DiagnosticRequest) -> dict[str, Any]:
@@ -448,7 +471,20 @@ def create_app(
     @app.post("/api/login")
     def login(body: LoginRequest, request: Request, response: Response) -> LoginResponse:
         client = request.client.host if request.client else "unknown"
-        token, user = auth.login(body.username, body.password, client, body.code)
+        try:
+            token, user = auth.login(body.username, body.password, client, body.code)
+        except AuthError as exc:
+            # Only confirmed invalid credentials count, never throttling, CSRF or server errors.
+            if exc.status == 401 and str(exc) in (
+                "Incorrect username or password",
+                "Incorrect password or authenticator code",
+            ):
+                security_services.fail2ban.journal.failure(
+                    security_services.fail2ban.settings,
+                    client,
+                    request.headers.get("x-forwarded-for", ""),
+                )
+            raise
         if token is not None:
             session_cookie(response, token)
         return LoginResponse(auth_enabled=auth.enabled, user=user)
@@ -500,12 +536,19 @@ def create_app(
         return service.discard(body.revision)
 
     @app.post("/api/preview", dependencies=[Depends(authenticated)])
-    def preview() -> dict[str, Any]:
-        return service.preview()
+    def preview(request: Request) -> dict[str, Any]:
+        user = request.state.current_user
+        return service.preview(
+            allow_prepare=not auth.enabled or (user is not None and user.role == "full")
+        )
 
     @app.post("/api/apply", dependencies=[Depends(authenticated)])
-    def apply(body: RevisionRequest) -> dict[str, Any]:
-        return service.apply(body.revision)
+    def apply(body: ProtectedApply, request: Request) -> dict[str, Any]:
+        with service.lock:
+            service.check_revision(body.revision)
+            if service.state()["security_dirty"]:
+                reauthenticate(auth, request, body.proof)
+            return service.apply(body.revision)
 
     @app.post("/api/confirm", dependencies=[Depends(authenticated)])
     def confirm(body: ConfirmRequest) -> dict[str, Any]:

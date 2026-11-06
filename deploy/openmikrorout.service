@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenMikroRout - lightweight Linux router
-After=network-online.target openmikrorout-update-recover.service
+After=network-online.target openmikrorout-update-recover.service openmikrorout-fail2ban.service
 Wants=network-online.target
 
 [Service]

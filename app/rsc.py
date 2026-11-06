@@ -25,10 +25,17 @@ SECTIONS = {
     "/ip dns static": "dns_static",
     "/interface wireguard peers": "wireguard_peers",
     "/ip firewall address-list": "address_lists",
+    "/ip firewall system-list": "system_lists",
     "/ip firewall nat": "rules",
     "/ip firewall filter": "filter_rules",
 }
-ROOT_LISTS = {"address_lists", "rules", "filter_rules"}
+ROOT_LISTS = {"address_lists", "system_lists", "rules", "filter_rules"}
+ROOT_SETTINGS = {
+    "/security fail2ban": "fail2ban",
+    "/security geoip": "geoip",
+    "/ip discovery": "discovery",
+    "/tool scanning": "scanning",
+}
 
 
 class ScriptError(ValueError):
@@ -50,6 +57,8 @@ def export_rsc(config: Configuration, *, max_bytes: int = MAX_SCRIPT) -> str:
         "/ip settings set " + encode_properties({"forwarding": data["network"]["forwarding"]})
     )
     lines.append("/ip dns set " + encode_properties(data["network"]["dns"]))
+    for path, key in ROOT_SETTINGS.items():
+        lines.append(path + " set " + encode_properties(data[key]))
     for path, key in SECTIONS.items():
         rows = data[key] if key in ROOT_LISTS else data["network"][key]
         lines.extend(["", "# " + path])
@@ -93,10 +102,12 @@ def import_rsc(text: str) -> Configuration:
         raise ScriptError("Ожидается OpenMikroRout RSC 1. Скрипты RouterOS не исполняются")
     data = Configuration().model_dump(mode="json")
     scalars: set[str] = set()
+    has_system_lists = False
     commands = {path + " add": key for path, key in SECTIONS.items()}
     commands.update(
         {"/system web set": "web", "/ip settings set": "settings", "/ip dns set": "dns"}
     )
+    commands.update({path + " set": key for path, key in ROOT_SETTINGS.items()})
     for number, raw in enumerate(lines[1:], 2):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -105,12 +116,15 @@ def import_rsc(text: str) -> Configuration:
         if command is None:
             raise ScriptError(f"Строка {number}: неподдерживаемая команда")
         key = commands[command]
+        has_system_lists = has_system_lists or key == "system_lists"
         values = decode_properties(line[len(command) :], number)
-        if key in ("web", "settings", "dns"):
+        if key in ("web", "settings", "dns", *ROOT_SETTINGS.values()):
             if key in scalars:
                 raise ScriptError(f"Строка {number}: раздел set уже задан")
             scalars.add(key)
-            if key == "web":
+            if key in ROOT_SETTINGS.values():
+                data[key] = values
+            elif key == "web":
                 if set(values) != {"domain"}:
                     raise ScriptError(f"Строка {number}: ожидается только domain")
                 data["web_domain"] = values["domain"]
@@ -123,6 +137,11 @@ def import_rsc(text: str) -> Configuration:
         else:
             target = data if key in ROOT_LISTS else data["network"]
             target[key].append(values)
+    if "fail2ban" not in scalars and not has_system_lists:
+        # Pre-system-list RSC scripts must enter the same compatibility migration as
+        # old JSON/backups; synthetic new defaults are not evidence of a new schema.
+        data.pop("fail2ban", None)
+        data.pop("system_lists", None)
     try:
         return Configuration.model_validate(data)
     except (ValueError, ValidationError) as exc:

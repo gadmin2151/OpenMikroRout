@@ -6,6 +6,7 @@ import shutil
 from typing import Protocol
 
 from app.compiler import FirewallError, expanded_matches, match_tokens
+from app.fail2ban_rules import F2B_CHAINS, f2b_anchor, f2b_rules
 from app.models import Configuration
 
 CHAINS = {"input": "OMR_INPUT", "forward": "OMR_FORWARD", "output": "OMR_OUTPUT"}
@@ -34,13 +35,20 @@ def inspect(snapshot: str) -> tuple[list[str], set[str]]:
             continue
         tokens = shlex.split(line)
         chain = tokens[1]
-        if chain in CHAINS.values():
+        if chain in (*CHAINS.values(), *F2B_CHAINS.values()):
             if "--comment" not in tokens or not tokens[tokens.index("--comment") + 1].startswith(
                 MARKER
             ):
                 raise FirewallError(f"Reserved chain {chain} contains an unmanaged rule")
             rules.append(line)
         for flag in ("-j", "-g"):
+            if flag in tokens and tokens[tokens.index(flag) + 1] in F2B_CHAINS.values():
+                if chain not in ("INPUT", "FORWARD") or tokens != f2b_anchor(chain):
+                    raise FirewallError("An unmanaged rule references a reserved Fail2ban chain")
+                key = f"f2b:{chain}"
+                if key in hooks:
+                    raise FirewallError("Duplicate OpenMikroRout Fail2ban hook detected")
+                hooks.add(key)
             if flag in tokens and tokens[tokens.index(flag) + 1] in CHAINS.values():
                 if chain not in HOOKS or tokens != anchor(chain, HOOKS[chain]):
                     raise FirewallError(
@@ -69,18 +77,38 @@ def compiled_filters(config: Configuration) -> list[str]:
     return result
 
 
+def _f2b_declarations(snapshot: str, enabled: bool) -> list[str]:
+    return [
+        f":{chain} - [0:0]" for chain in F2B_CHAINS.values() if enabled or f":{chain} " in snapshot
+    ]
+
+
 def filter_patch(snapshot: str, config: Configuration) -> str:
     _, hooks = inspect(snapshot)
+    protection = config.fail2ban
     lines = ["*filter", *(f":{chain} - [0:0]" for chain in CHAINS.values())]
+    lines += _f2b_declarations(snapshot, protection.enabled)
     lines += compiled_filters(config)
+    lines += f2b_rules(protection)
     lines += [" ".join(anchor(hook, chain)) for hook, chain in HOOKS.items() if hook not in hooks]
+    for hook in ("INPUT", "FORWARD"):
+        tokens = f2b_anchor(hook)
+        if f"f2b:{hook}" in hooks:
+            lines.append(" ".join(["-D", *tokens[1:]]))
+        if protection.enabled and any(
+            p.enabled and p.chain == hook.lower() for p in protection.profiles
+        ):
+            # Move ONLY our jump to the front so even earlier foreign ACCEPT rules cannot bypass it.
+            lines.append(" ".join(["-I", hook, "1", *tokens[2:]]))
     return "\n".join([*lines, "COMMIT", ""])
 
 
 def filter_rollback(current: str, previous: str) -> str:
     _, current_hooks = inspect(current)
     rules, old_hooks = inspect(previous)
-    lines = ["*filter", *(f":{chain} - [0:0]" for chain in CHAINS.values()), *rules]
+    lines = ["*filter", *(f":{chain} - [0:0]" for chain in CHAINS.values())]
+    lines += _f2b_declarations(current + previous, False)
+    lines += rules
     for hook, chain in HOOKS.items():
         tokens = anchor(hook, chain)
         if hook in current_hooks and hook not in old_hooks:
@@ -88,6 +116,12 @@ def filter_rollback(current: str, previous: str) -> str:
             lines.append(" ".join(tokens))
         elif hook in old_hooks and hook not in current_hooks:
             lines.append(" ".join(tokens))
+    for hook in ("INPUT", "FORWARD"):
+        tokens = f2b_anchor(hook)
+        if f"f2b:{hook}" in current_hooks:
+            lines.append(" ".join(["-D", *tokens[1:]]))
+        if f"f2b:{hook}" in old_hooks:
+            lines.append(" ".join(["-I", hook, "1", *tokens[2:]]))
     return "\n".join([*lines, "COMMIT", ""])
 
 

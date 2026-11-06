@@ -37,6 +37,8 @@ Linux tools. No cloud account is required.
 
 | Area                        | Included                                                                                                                                                    |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Security** | Fail2ban with expiring address lists, local GeoIP country matching in Firewall/NAT; disabled by default |
+| **Hosts & Scan** | ARP/DHCP/LLDP/CDP/MNDP inventory and bounded asynchronous network/port scans with cancellation |
 | **WireGuard VPN**           | Server, client and site-to-site; setup wizards, `.conf` import, peers, Allowed IPs, PSK, client profiles and QR codes                                       |
 | **VPN routing**             | Selected LAN source networks, dedicated routing tables, kill switch, peer status and DNS endpoint refresh                                                   |
 | **Firewall and NAT**        | `input` / `forward` / `output`, `srcnat` / `dstnat`, masquerade, port forwarding, address/interface lists, protocols, ports and connection states           |
@@ -154,6 +156,8 @@ imported directly.
 Application backups exclude the host OS/PVE, unmanaged resources, monitoring history
 and dynamic leases. See the [administration guide](docs/ADMINISTRATION.md#текущие-ограничения)
 for limits and coexistence with other network managers.
+
+Native Linux installations require optional system packages before enabling the new modules. See [Security & Discovery setup](docs/SECURITY-DISCOVERY.md) (Russian).
 
 ## Documentation
 

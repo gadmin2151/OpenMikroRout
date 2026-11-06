@@ -1,3 +1,4 @@
+import { addressListChoices } from "./protection-ui.js?v=1";
 import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
 import { renderTelemetry } from "./telemetry-ui.js?v=7";
@@ -361,8 +362,7 @@ function optionsFor(ctx, type, item) {
       server.name,
       server.name,
     ]);
-  if (type === "address-list")
-    return ctx.state.config.address_lists.map((list) => [list.name, list.name]);
+  if (type === "address-list") return addressListChoices(ctx.state.config);
   if (type === "interface-list")
     return (network.interface_lists || []).map((list) => [
       list.name,

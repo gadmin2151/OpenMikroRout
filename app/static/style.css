@@ -4178,3 +4178,93 @@ body.telemetry-expanded-open {
     margin-top: 0;
   }
 }
+
+/* Security and discovery use the same compact, stable router workspace. */
+.protection-page {
+  display: grid;
+  gap: 20px;
+}
+.security-status {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft, #f3f6f7);
+}
+.security-settings fieldset {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px;
+  margin: 0;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.security-settings legend {
+  font-weight: 650;
+  padding: 0 8px;
+}
+.security-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.security-search,
+.security-actions,
+.security-pagination {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+.security-search .field {
+  flex: 1;
+  min-width: 180px;
+}
+.security-pagination {
+  justify-content: flex-end;
+  align-items: center;
+  padding: 14px 0;
+  font-variant-numeric: tabular-nums;
+}
+.security-pagination span {
+  margin-right: auto;
+}
+.system-lists,
+.system-firewall {
+  padding: 22px;
+  border-top: 1px solid var(--line);
+}
+.cell-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+.security-actions button,
+.security-pagination button,
+.security-search button {
+  min-height: 40px;
+}
+.protection-page .rules-table td {
+  font-variant-numeric: tabular-nums;
+}
+.protection-page .table-scroll,
+.discovery-page .table-scroll,
+.system-lists .table-scroll,
+.system-firewall .table-scroll {
+  min-height: 0;
+}
+.security-settings button.primary {
+  justify-self: start;
+}
+@media (max-width: 720px) {
+  .security-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .security-settings fieldset {
+    padding: 14px;
+  }
+}

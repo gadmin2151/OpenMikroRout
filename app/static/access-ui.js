@@ -34,6 +34,22 @@ const readActions = new Set([
   "connections-filter",
   "connections-reset",
   "connections-refresh",
+  "protection-refresh",
+  "protection-search",
+  "protection-page",
+  "geo-lookup",
+  "f2b-edit",
+  "system-list-open",
+  "system-list-page",
+  "system-list-search",
+  "discovery-refresh",
+  "discovery-search",
+  "discovery-page",
+  "discovery-host",
+  "discovery-connections",
+  "scan-refresh",
+  "scan-job",
+  "scan-page",
   "wg-refresh",
   "wg-interface-edit",
   "wg-peer-edit",
@@ -63,7 +79,7 @@ export function applyReadAccess(scope, state) {
     handle.draggable = false;
   }
   const forms =
-    "#rule-form,#list-form,#router-form,#router-port-form,#router-dns-form,#router-domain-form,#backup-import-form,#user-form,#wg-form";
+    "#rule-form,#list-form,#router-form,#router-port-form,#router-dns-form,#router-domain-form,#backup-import-form,#user-form,#wg-form,#f2b-profile-form,#f2b-settings,#geo-settings,#discovery-settings,#scan-settings";
   for (const form of scope.querySelectorAll(forms)) {
     for (const field of form.querySelectorAll("input,select,textarea,button")) {
       if (
