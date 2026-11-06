@@ -94,6 +94,12 @@ def main() -> None:
         os.fchmod(output.fileno(), 0o644)
         with tarfile.open(fileobj=io.BytesIO(source), mode="r:") as original:
             for member in original:
+                # Rejected design studies are available in Git, but are not runtime assets.
+                # Keep signed updates small enough for the existing bounded downloader.
+                if member.name == "app/static/brand-options" or member.name.startswith(
+                    "app/static/brand-options/"
+                ):
+                    continue
                 if not (member.isfile() or member.isdir()):
                     raise SystemExit("Only regular committed files may be packaged")
                 stream = original.extractfile(member) if member.isfile() else None

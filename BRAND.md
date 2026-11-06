@@ -119,3 +119,7 @@ These references informed the polished dark-surface, geometric product-identity 
 The selected OpenMikroRout mark uses the Folded Route ribbon silhouette. No private repositories were
 accessed for this branding work, and none of the referenced artwork is bundled as
 an OpenMikroRout application asset.
+
+Архивные варианты в `app/static/brand-options/` доступны в исходном репозитории.
+Подписанный пакет обновления содержит только рабочие ресурсы, включая выбранный
+`app/static/logo.png`; галерея вариантов не входит в native-установку.
