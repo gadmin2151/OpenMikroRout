@@ -96,6 +96,9 @@ def test_arp_rejects_incomplete_multicast_and_other_interfaces() -> None:
 
 def test_inventory_keeps_provenance_multiple_ips_and_distinct_segments(tmp_path: Path) -> None:
     service = DiscoveryService(tmp_path, True, DiscoverySettings)
+    # Search includes vendor fields. Keep this fixture independent of the host's
+    # optional Nmap OUI database (which can label both MACs as Routerboard).
+    service.vendors = {"000C42": "Fixture Routerboard"}
     now = time.time()
     service.ingest(
         {
@@ -112,7 +115,7 @@ def test_inventory_keeps_provenance_multiple_ips_and_distinct_segments(tmp_path:
             "source": "mndp",
             "mac": "00:0c:42:00:01:02",
             "addresses": ["10.0.0.3"],
-            "hostname": "Router",
+            "hostname": "qa-provenance-host-unique",
             "model": "RB5009",
         },
         now,
@@ -132,7 +135,8 @@ def test_inventory_keeps_provenance_multiple_ips_and_distinct_segments(tmp_path:
     assert host["addresses"] == ["10.0.0.2", "10.0.0.3"]
     assert host["sources"] == ["arp", "mndp"]
     assert host["first_seen"] == now - 5
-    assert service.hosts(query="Router")["total"] == 1
+    assert service.hosts(query="qa-provenance-host-unique")["total"] == 1
+    assert service.hosts(query="Fixture Routerboard")["total"] == 2
     assert service.hosts(query="%") == {
         "items": [],
         "total": 0,
