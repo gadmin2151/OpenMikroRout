@@ -54,6 +54,12 @@ with green and TX with a steel-coloured dashed line.
 UI typography uses native system fonts. No external font or image service is required
 for normal application use.
 
+The login screen uses a matte navy brand panel and a light form with the same green
+primary action as the workspace. On narrow screens the brand becomes a compact
+header. Username, password and optional 2FA/recovery-code fields remain available;
+password visibility, keyboard focus, loading feedback and authentication errors
+have explicit accessible states. Decorative network lines remain static.
+
 ## Additional logo directions
 
 The initial six SVG directions were rejected during visual review. They remain

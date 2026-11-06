@@ -1,5 +1,10 @@
 import { assertDraftRevision } from "./draft-guards.js";
 import {
+  loginMarkup,
+  bindLoginControls,
+  setLoginBusy,
+} from "./login-ui.js?v=1";
+import {
   renderBackups,
   handleBackupAction,
   handleBackupInput,
@@ -1018,7 +1023,15 @@ function showHelp() {
 }
 
 function renderLogin(error = "") {
-  root.innerHTML = `<div class="login"><form class="login-card" id="login-form">${brandMarkup()}<h2>Вход в OpenMikroRout</h2><p>Войдите в учётную запись. Группа read разрешает просмотр, full — управление роутером.</p><label class="field"><span>Имя пользователя</span><input type="text" name="username" autocomplete="username" maxlength="64" value="${e(loginUsername)}" required autofocus></label><label class="field"><span>Пароль</span><input type="password" name="password" autocomplete="current-password" maxlength="512" required></label><label class="field"><span>Код 2FA или резервный код</span><input name="code" type="text" autocomplete="one-time-code" maxlength="64"><small>Оставьте пустым, если 2FA выключена.</small></label><button class="primary" type="submit">Войти ${icon("arrow")}</button><small role="alert">${e(error)}</small></form></div>`;
+  document.title = "OpenMikroRout · Вход";
+  root.innerHTML = loginMarkup({
+    brand: brandMarkup(),
+    icon,
+    e,
+    username: loginUsername,
+    error,
+  });
+  bindLoginControls(document.querySelector("#login-form"), Boolean(error));
 }
 function updateRuleCounters() {
   if (
@@ -2035,8 +2048,10 @@ document.addEventListener("submit", (event) => {
   }
   if (event.target.id === "login-form")
     void run(async () => {
+      const form = event.target;
+      setLoginBusy(form, true);
       try {
-        const values = new FormData(event.target);
+        const values = new FormData(form);
         loginUsername = String(values.get("username") || "").trim();
         const password = String(values.get("password") || "");
         await api("login", {
@@ -2047,11 +2062,14 @@ document.addEventListener("submit", (event) => {
             code: String(values.get("code") || "").trim(),
           }),
         });
-        event.target.querySelector('[name="password"]').value = "";
+        form.querySelector('[name="password"]').value = "";
+        form.querySelector('[name="code"]').value = "";
         clearSession();
         await refresh(true);
       } catch (error) {
         renderLogin(error.message);
+      } finally {
+        if (form.isConnected) setLoginBusy(form, false);
       }
     });
 });
