@@ -1,190 +1,168 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { URL } from "node:url";
 import vm from "node:vm";
 import {
-  matchesWireGuardPeer,
   renderWireGuard,
   handleWireGuardAction,
-  handleWireGuardFilter,
   resetWireGuard,
 } from "../../app/static/wireguard-ui.js";
 import { isReadAction } from "../../app/static/access-ui.js";
-import { compileQueryExpression } from "../../app/static/query-builder.js";
+import { html, t } from "../../app/static/i18n.js";
+import {
+  compileQueryExpression,
+  getAppliedQuery,
+  handleQueryBuilderAction,
+  handleQueryBuilderInput,
+  resetAllQueryBuilders,
+} from "../../app/static/query-builder.js";
 import { natQuerySchema } from "../../app/static/config-filter-schemas.js";
 
+const originalDocument = globalThis.document;
+afterEach(() => {
+  globalThis.document = originalDocument;
+  resetWireGuard();
+  resetAllQueryBuilders();
+});
 const source = readFileSync(
   new URL("../../app/static/app.js", import.meta.url),
   "utf8",
 );
-const natPredicate = source.slice(
+const functions = source.slice(
   source.indexOf("function filteredRules()"),
-  source.indexOf("function syncNatFilterControls()"),
+  source.indexOf("function updateRuleTable()"),
 );
 const rules = [
   { id: "web", name: "Public Web", chain: "dstnat", protocol: "tcp" },
   { id: "dns", name: "Local DNS", chain: "dstnat", protocol: "udp" },
   { id: "wan", name: "WAN", chain: "srcnat", protocol: "any" },
 ];
+const node = (field, op, value) => ({ kind: "condition", field, op, value });
+function edit(scope, path, part, value) {
+  const region = {
+    dataset: { queryBuilder: scope },
+    querySelector: () => null,
+  };
+  return handleQueryBuilderInput({
+    target: {
+      dataset: { queryPart: part, queryPath: path },
+      value,
+      closest: () => region,
+    },
+  });
+}
+function add(scope, path = "", kind = "condition") {
+  return handleQueryBuilderAction({
+    dataset: { action: "query-builder-add", scope, queryPath: path, kind },
+  });
+}
 
-test("NAT table exclusions combine by criterion and leave router rule data untouched", () => {
+test("NAT uses only the applied Boolean builder and never mutates router rule data", () => {
+  const before = globalThis.structuredClone(rules);
+  let applied = null;
   const context = vm.createContext({
     state: { config: { rules } },
-    search: "",
-    chainFilter: "",
-    protocolFilter: "",
-    natFilterNegations: new Set(),
-    getAppliedQuery: () => null,
+    getAppliedQuery: () => applied,
     compileQueryExpression,
     natQuerySchema,
   });
-  vm.runInContext(natPredicate, context);
-  const select = (search, chain, protocol, negate) => {
-    Object.assign(context, {
-      search,
-      chainFilter: chain,
-      protocolFilter: protocol,
-      natFilterNegations: new Set(negate),
-    });
-    return Array.from(
-      vm.runInContext("filteredRules().map(item => item.id)", context),
-    );
-  };
-  assert.deepEqual(select("", "", "", []), ["web", "dns", "wan"]);
-  assert.deepEqual(select("", "dstnat", "tcp", []), ["web"]);
-  assert.deepEqual(select("", "dstnat", "tcp", ["protocol"]), ["dns"]);
-  assert.deepEqual(select("", "dstnat", "", ["chain"]), ["wan"]);
-  assert.deepEqual(select("web", "", "", ["search"]), ["dns", "wan"]);
-  assert.deepEqual(
-    select("dns", "srcnat", "tcp", ["search", "chain", "protocol"]),
-    [],
-  );
-  assert.deepEqual(select("", "", "", ["search", "chain", "protocol"]), [
-    "web",
-    "dns",
-    "wan",
-  ]);
-  assert.deepEqual(
-    rules.map((row) => row.id),
-    ["web", "dns", "wan"],
-  );
-  assert.ok(rules.every((row) => !("negate" in row)));
-  assert.equal(isReadAction("nat-filter-negate"), true);
-});
-
-test("WireGuard peer exclusions preserve positive search and combine interface and query inversions", () => {
-  const alice = {
-    name: "Alice",
-    interface: "wg0",
-    allowed_ips: ["10.7.0.2/32"],
-    comment: "admin",
-  };
-  const bob = { name: "Bob", interface: "wg1", allowed_ips: ["10.8.0.2/32"] };
-  assert.equal(
-    matchesWireGuardPeer(alice, { query: "ADMIN", interface: "wg0" }),
-    true,
-  );
-  assert.equal(
-    matchesWireGuardPeer(alice, { query: "admin", negate: ["query"] }),
-    false,
-  );
-  assert.equal(
-    matchesWireGuardPeer(bob, { query: "admin", negate: ["query"] }),
-    true,
-  );
-  assert.equal(
-    matchesWireGuardPeer(bob, { interface: "wg0", negate: ["interface"] }),
-    true,
-  );
-  assert.equal(
-    matchesWireGuardPeer(alice, {
-      query: "Bob",
-      interface: "wg1",
-      negate: ["query", "interface"],
-    }),
-    true,
-  );
-  assert.equal(
-    matchesWireGuardPeer(bob, {
-      query: "",
-      interface: "",
-      negate: ["query", "interface"],
-    }),
-    true,
-  );
-});
-
-test("Enter in a search form dispatches Search, never the first ! control", () => {
-  const start = source.indexOf("function formSubmitAction(event)");
-  const end = source.indexOf('document.addEventListener("submit"', start);
-  const context = vm.createContext({});
-  vm.runInContext(source.slice(start, end), context);
-  const search = { matches: () => true };
-  const negative = { matches: () => false };
-  const legacySave = {};
-  const form = {
-    querySelector(selector) {
-      if (selector.includes('[type="button"]')) return search;
-      if (selector.includes("[data-display-negate]")) return legacySave;
-      return negative;
-    },
-  };
-  for (const submitter of [search, negative, undefined]) {
-    context.event = { target: form, submitter };
-    assert.equal(vm.runInContext("formSubmitAction(event)", context), search);
-  }
-  context.event = {
-    target: {
-      querySelector: (selector) =>
-        selector.includes('[type="button"]') ? null : legacySave,
-    },
-  };
-  assert.equal(vm.runInContext("formSubmitAction(event)", context), legacySave);
-});
-
-test("read users toggle peer display exclusions without replacing inputs or invoking any API", async () => {
-  resetWireGuard();
-  const originalDocument = globalThis.document;
-  const controls = {
-    "#wg-peer-search": { value: "Alice" },
-    "#wg-peer-interface": { value: "" },
-  };
-  const buttons = {};
-  for (const name of ["query", "interface"])
-    buttons[name] = {
-      disabled: true,
-      setAttribute(name, value) {
-        this[name] = value;
+  vm.runInContext(functions, context);
+  const selected = () =>
+    Array.from(vm.runInContext("filteredRules().map(row => row.id)", context));
+  assert.deepEqual(selected(), ["web", "dns", "wan"]);
+  applied = {
+    kind: "group",
+    join: "or",
+    children: [
+      {
+        kind: "group",
+        join: "and",
+        children: [
+          node("chain", "eq", "dstnat"),
+          node("protocol", "neq", "tcp"),
+        ],
       },
-    };
-  const container = {
-    querySelector(selector) {
-      return (
-        buttons[/data-display-negate="([^"]+)"/.exec(selector)?.[1]] || null
-      );
-    },
+      node("name", "contains", "wan"),
+    ],
   };
-  const rows = { one: { hidden: false }, two: { hidden: false } };
+  assert.deepEqual(selected(), ["dns", "wan"]);
+  applied = null;
+  assert.deepEqual(selected(), ["web", "dns", "wan"]);
+  assert.deepEqual(rules, before);
+  assert.equal(isReadAction("nat-query-apply"), true);
+  assert.equal(isReadAction("apply"), false);
+});
+
+test("NAT renders one builder without legacy quick search, selectors or ! buttons", () => {
+  const context = vm.createContext({
+    state: { config: { rules }, pending: null },
+    selected: new Set(),
+    offline: false,
+    canWrite: () => false,
+    icon: () => "",
+    html,
+    t,
+    getAppliedQuery: () => null,
+    compileQueryExpression,
+    natQuerySchema,
+    renderQueryBuilder: (scope) =>
+      `<details data-query-builder="${scope}"></details>`,
+    ruleColumns: [],
+    visibleColumns: new Set(),
+    renderRuleRows: () => "",
+    empty: () => "",
+    isDemo: () => false,
+  });
+  vm.runInContext(functions, context);
+  const markup = vm.runInContext("renderRules()", context);
+  assert.equal((markup.match(/data-query-builder="nat"/g) || []).length, 1);
+  assert.doesNotMatch(
+    markup,
+    /id="(?:search|chain-filter|protocol-filter)"|data-display-negate/,
+  );
+  assert.match(markup, /data-action="add" disabled/);
+});
+
+test("read users apply and clear grouped WireGuard peer criteria without APIs or old controls", async () => {
+  const rows = {
+    one: { hidden: false },
+    two: { hidden: false },
+    three: { hidden: false },
+  };
   const count = { textContent: "" },
     empty = { hidden: true };
   globalThis.document = {
     querySelector(selector) {
-      if (selector === "#wg-display-filters") return container;
       if (selector === "[data-wg-filter-count]") return count;
       if (selector === "[data-wg-filter-empty]") return empty;
-      const id = /data-wg-peer-row="([^"]+)"/.exec(selector)?.[1];
-      return rows[id] || controls[selector] || null;
+      return rows[/data-wg-peer-row="([^"]+)"/.exec(selector)?.[1]] || null;
     },
   };
   const ctx = {
     state: {
       config: {
         network: {
-          wireguard_interfaces: [{ name: "wg0" }],
+          wireguard_interfaces: [{ name: "wg0" }, { name: "wg1" }],
           wireguard_peers: [
-            { id: "one", name: "Alice", interface: "wg0", allowed_ips: [] },
-            { id: "two", name: "Bob", interface: "wg0", allowed_ips: [] },
+            {
+              id: "one",
+              name: "Alice",
+              interface: "wg0",
+              allowed_ips: ["10.7.0.2/32"],
+            },
+            {
+              id: "two",
+              name: "Bob",
+              interface: "wg1",
+              allowed_ips: ["10.8.0.2/32"],
+            },
+            {
+              id: "three",
+              name: "Carol",
+              interface: "wg0",
+              allowed_ips: ["10.9.0.2/32"],
+            },
           ],
         },
       },
@@ -194,34 +172,50 @@ test("read users toggle peer display exclusions without replacing inputs or invo
     icon: () => "",
     empty: () => "",
     api() {
-      throw new Error("No API mutation allowed");
+      throw new Error("Display filtering must not invoke any API");
     },
   };
-  try {
-    handleWireGuardFilter({ target: { id: "wg-peer-search" } }, ctx);
-    assert.equal(rows.one.hidden, false);
-    assert.equal(rows.two.hidden, true);
-    await handleWireGuardAction(
-      { dataset: { action: "wg-peer-negate", displayNegate: "query" } },
-      ctx,
-    );
-    assert.equal(rows.one.hidden, true);
-    assert.equal(rows.two.hidden, false);
-    assert.equal(controls["#wg-peer-search"].value, "Alice");
-    assert.equal(buttons.query["aria-pressed"], "true");
-    assert.equal(isReadAction("wg-peer-negate"), true);
-    assert.match(
-      renderWireGuard(ctx, true),
-      /data-display-negate="query" aria-pressed="true"/,
-    );
-    controls["#wg-peer-search"].value = "";
-    handleWireGuardFilter({ target: { id: "wg-peer-search" } }, ctx);
-    assert.equal(buttons.query.disabled, true);
-    assert.equal(buttons.query["aria-pressed"], "false");
-    assert.equal(rows.one.hidden, false);
-    assert.equal(rows.two.hidden, false);
-  } finally {
-    globalThis.document = originalDocument;
-    resetWireGuard();
-  }
+  const before = globalThis.structuredClone(ctx.state.config);
+  const markup = renderWireGuard(ctx, true);
+  assert.match(markup, /data-query-builder="wg-peers"/);
+  assert.doesNotMatch(
+    markup,
+    /wg-peer-search|wg-peer-interface|wg-peer-negate|data-display-negate/,
+  );
+  add("wg-peers");
+  edit("wg-peers", "0", "field", "interface");
+  edit("wg-peers", "0", "op", "eq");
+  edit("wg-peers", "0", "value", "wg0");
+  add("wg-peers", "", "group");
+  edit("wg-peers", "1", "join", "or");
+  add("wg-peers", "1");
+  edit("wg-peers", "1.0", "field", "allowed_ips");
+  edit("wg-peers", "1.0", "op", "in");
+  edit("wg-peers", "1.0", "value", "10.7.0.0/24");
+  add("wg-peers", "1");
+  edit("wg-peers", "1.1", "field", "name");
+  edit("wg-peers", "1.1", "op", "eq");
+  edit("wg-peers", "1.1", "value", "Bob");
+  const apply = () =>
+    handleWireGuardAction({ dataset: { action: "wg-query-apply" } }, ctx);
+  await apply();
+  assert.equal(rows.one.hidden, false);
+  assert.equal(rows.two.hidden, true);
+  assert.equal(rows.three.hidden, true);
+  assert.equal(count.textContent, "1 / 3");
+  assert.equal(empty.hidden, true);
+  handleQueryBuilderAction({
+    dataset: { action: "query-builder-clear", scope: "wg-peers" },
+  });
+  assert.equal(rows.two.hidden, true, "Clear remains a draft until Apply");
+  await apply();
+  assert.ok(Object.values(rows).every((row) => !row.hidden));
+  assert.equal(count.textContent, "3 / 3");
+  assert.equal(getAppliedQuery("wg-peers"), null);
+  assert.deepEqual(ctx.state.config, before);
+  assert.equal(isReadAction("wg-query-apply"), true);
+  await assert.rejects(
+    handleWireGuardAction({ dataset: { action: "wg-peer-new" } }, ctx),
+    /full|read/,
+  );
 });

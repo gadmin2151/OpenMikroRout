@@ -3,11 +3,6 @@ import { html, t, locale } from "./i18n.js";
 import { proofForm, proof, clearProof } from "./security-ui.js";
 import { ruleServiceSummary } from "./rule-security-ui.js?v=3";
 import {
-  displayFilterField,
-  displayNegationQuery,
-  syncDisplayFilterControl,
-} from "./display-filter-ui.js";
-import {
   renderQueryBuilder,
   applyQueryBuilder,
   getAppliedExpression,
@@ -51,23 +46,12 @@ let snapshots = {},
   request = null,
   controller = null,
   requestKind = null;
-let queries = { fail2ban: "", geoip: "", lists: "" };
-let queryDrafts = { fail2ban: "", geoip: "", lists: "" },
-  negatedQueries = new Set(),
-  appliedNegatedQueries = new Set();
 let offsets = { fail2ban: 0, geoip: 0, lists: 0 };
 let lookup = null;
 let editedProfile = null;
 let editorRevision = null;
 let pendingOperation = null;
-let inspectedList = {
-  name: "",
-  offset: 0,
-  query: "",
-  draftQuery: "",
-  negated: false,
-  draftNegated: false,
-};
+let inspectedList = { name: "", offset: 0 };
 const searchKinds = ["fail2ban", "geoip"];
 const pageSize = 50;
 const split = (text) =>
@@ -96,18 +80,8 @@ function pager(ctx, kind, total) {
   const offset = offsets[kind] || 0;
   return html`<div class="security-pagination"><span>${total ? html`${offset + 1}–${Math.min(offset + pageSize, total)} из ${total}` : t("0 записей")}</span><button data-action="protection-page" data-kind="${kind}" data-offset="${Math.max(0, offset - pageSize)}" ${offset ? "" : "disabled"}>Назад</button><button data-action="protection-page" data-kind="${kind}" data-offset="${offset + pageSize}" ${offset + pageSize < total ? "" : "disabled"}>Далее</button></div>`;
 }
-function searchForm(ctx, kind, hint) {
-  const search = displayFilterField(
-    html`<label class="field"><span>Поиск</span><input name="query" value="${ctx.e(queryDrafts[kind])}" placeholder="${ctx.e(t(hint))}" maxlength="100"></label>`,
-    "query",
-    {
-      value: queryDrafts[kind],
-      negated: negatedQueries.has(kind),
-      action: "protection-negate",
-      idPrefix: `protection-${kind}`,
-    },
-  );
-  return html`<form class="security-search" data-protection-search="${kind}">${search}<button type="submit" data-action="protection-search" data-kind="${kind}">${ctx.icon("search")}Найти</button><button type="button" data-action="protection-refresh">${ctx.icon("refresh")}Обновить</button></form>${renderQueryBuilder(`protection-${kind}`, kind === "geoip" ? countryQuerySchema : banQuerySchema, { applyAction: "protection-search", applyData: { kind } })}`;
+function filterBuilder(ctx, kind) {
+  return html`<div class="security-actions"><button type="button" data-action="protection-refresh">${ctx.icon("refresh")}Обновить</button></div>${renderQueryBuilder(`protection-${kind}`, kind === "geoip" ? countryQuerySchema : banQuerySchema, { applyAction: "protection-search", applyData: { kind } })}`;
 }
 export function resetProtection() {
   for (const scope of [
@@ -122,23 +96,12 @@ export function resetProtection() {
   request = null;
   controller = null;
   requestKind = null;
-  queries = { fail2ban: "", geoip: "", lists: "" };
-  queryDrafts = { fail2ban: "", geoip: "", lists: "" };
-  negatedQueries = new Set();
-  appliedNegatedQueries = new Set();
   offsets = { fail2ban: 0, geoip: 0, lists: 0 };
   lookup = null;
   editedProfile = null;
   editorRevision = null;
   pendingOperation = null;
-  inspectedList = {
-    name: "",
-    offset: 0,
-    query: "",
-    draftQuery: "",
-    negated: false,
-    draftNegated: false,
-  };
+  inspectedList = { name: "", offset: 0 };
 }
 function statusMarkup(ctx, kind) {
   if (errors[kind])
@@ -223,9 +186,9 @@ export function renderProtection(view, ctx) {
       )
       .join(
         "",
-      )}</select></label>${field(ctx, t("Доверенные proxy · IPv4 / CIDR"), "trusted_proxies", config.trusted_proxies.join(", "))}</div>${note(t("Для proxy укажите его адрес явно и настройте перезапись X-Forwarded-For. SSH-туннель скрывает исходный IP; loopback не блокируется. IPv6 этим модулем не защищается."), ctx)}<button class="primary" type="button" data-action="f2b-save">Сохранить в черновик</button></fieldset></form><div class="feature-heading"><h2>Ручные профили</h2><button data-action="f2b-edit" ${disabled}>${ctx.icon("plus")}Добавить вручную</button></div><div class="table-scroll"><table class="rules-table"><thead><tr><th>Профиль</th><th>Сервис</th><th>Порты</th><th>Порог</th><th>Окно / бан</th><th>Состояние</th><th></th></tr></thead><tbody>${config.profiles.map((item) => html`<tr><td>${ctx.e(item.name)}<small class="cell-note mono">f2b_${ctx.e(item.id)}</small></td><td>${ctx.e(item.service)} · ${ctx.e(item.chain)}</td><td>${ctx.e(item.ports.join(", "))}</td><td>${item.max_retry}</td><td>${item.find_time} / ${item.ban_time} с</td><td>${!config.enabled ? t("Ручные профили выключены") : item.enabled ? t("Включён в черновике") : t("Выключен")}</td><td><button data-action="f2b-edit" data-id="${ctx.e(item.id)}">${ctx.icon("edit")}Открыть</button></td></tr>`).join("")}</tbody></table></div>${note(t("Ручные профили — для отдельной защиты Web / SSH роутера. Их выключатель не отключает защиту, включённую в NAT / Filter Rules. Изменения начинают работать после применения общего черновика."), ctx)}<h2>Активные блокировки</h2>${searchForm(ctx, "fail2ban", t("IP или профиль"))}<div id="protection-results">${bansMarkup(ctx)}</div>${attribution()}</div>`;
+      )}</select></label>${field(ctx, t("Доверенные proxy · IPv4 / CIDR"), "trusted_proxies", config.trusted_proxies.join(", "))}</div>${note(t("Для proxy укажите его адрес явно и настройте перезапись X-Forwarded-For. SSH-туннель скрывает исходный IP; loopback не блокируется. IPv6 этим модулем не защищается."), ctx)}<button class="primary" type="button" data-action="f2b-save">Сохранить в черновик</button></fieldset></form><div class="feature-heading"><h2>Ручные профили</h2><button data-action="f2b-edit" ${disabled}>${ctx.icon("plus")}Добавить вручную</button></div><div class="table-scroll"><table class="rules-table"><thead><tr><th>Профиль</th><th>Сервис</th><th>Порты</th><th>Порог</th><th>Окно / бан</th><th>Состояние</th><th></th></tr></thead><tbody>${config.profiles.map((item) => html`<tr><td>${ctx.e(item.name)}<small class="cell-note mono">f2b_${ctx.e(item.id)}</small></td><td>${ctx.e(item.service)} · ${ctx.e(item.chain)}</td><td>${ctx.e(item.ports.join(", "))}</td><td>${item.max_retry}</td><td>${item.find_time} / ${item.ban_time} с</td><td>${!config.enabled ? t("Ручные профили выключены") : item.enabled ? t("Включён в черновике") : t("Выключен")}</td><td><button data-action="f2b-edit" data-id="${ctx.e(item.id)}">${ctx.icon("edit")}Открыть</button></td></tr>`).join("")}</tbody></table></div>${note(t("Ручные профили — для отдельной защиты Web / SSH роутера. Их выключатель не отключает защиту, включённую в NAT / Filter Rules. Изменения начинают работать после применения общего черновика."), ctx)}<h2>Активные блокировки</h2>${filterBuilder(ctx, "fail2ban")}<div id="protection-results">${bansMarkup(ctx)}</div>${attribution()}</div>`;
   }
-  return html`<div class="feature-page protection-page"><div id="protection-status">${statusMarkup(ctx, view)}</div><form id="geo-settings" class="security-settings" data-revision="${ctx.state.revision}"><fieldset ${disabled}><legend>Обновление базы</legend>${toggle(ctx, t("Проверять новые выпуски автоматически"), "auto_update", ctx.state.config.geoip.auto_update)}<div class="security-form-grid">${field(ctx, t("Интервал проверки · часы"), "check_hours", ctx.state.config.geoip.check_hours, "number", 'min="6" max="720"')}</div><div class="security-actions"><button class="primary" type="button" data-action="geo-save">Сохранить в черновик</button><button type="button" data-action="geo-update">${ctx.icon("download")}Загрузить / обновить базу</button></div></fieldset></form><form id="geo-lookup" class="security-search">${field(ctx, t("Определить страну IPv4"), "address", "", "text", 'placeholder="1.1.1.1" maxlength="15" required')}<button type="submit" data-action="geo-lookup">Проверить IP</button></form><div id="geo-lookup-result" aria-live="polite">${lookup ? note(`${lookup.address || lookup.ip}: ${lookup.country || t("не определена")} · ${lookup.reason || t("данные поставщика")}`, ctx) : ""}</div>${note(t("Страна определяется по IP, а не по местоположению человека. VPN и proxy влияют на результат. Страновое условие NAT выбирает трансляцию; само по себе оно не блокирует доступ."), ctx)}<h2>Страновые списки</h2>${searchForm(ctx, "geoip", t("Код страны: MD, RO, DE…"))}<div id="protection-results">${countryMarkup(ctx)}</div>${attribution()}</div>`;
+  return html`<div class="feature-page protection-page"><div id="protection-status">${statusMarkup(ctx, view)}</div><form id="geo-settings" class="security-settings" data-revision="${ctx.state.revision}"><fieldset ${disabled}><legend>Обновление базы</legend>${toggle(ctx, t("Проверять новые выпуски автоматически"), "auto_update", ctx.state.config.geoip.auto_update)}<div class="security-form-grid">${field(ctx, t("Интервал проверки · часы"), "check_hours", ctx.state.config.geoip.check_hours, "number", 'min="6" max="720"')}</div><div class="security-actions"><button class="primary" type="button" data-action="geo-save">Сохранить в черновик</button><button type="button" data-action="geo-update">${ctx.icon("download")}Загрузить / обновить базу</button></div></fieldset></form><form id="geo-lookup" class="security-search">${field(ctx, t("Определить страну IPv4"), "address", "", "text", 'placeholder="1.1.1.1" maxlength="15" required')}<button type="submit" data-action="geo-lookup">Проверить IP</button></form><div id="geo-lookup-result" aria-live="polite">${lookup ? note(`${lookup.address || lookup.ip}: ${lookup.country || t("не определена")} · ${lookup.reason || t("данные поставщика")}`, ctx) : ""}</div>${note(t("Страна определяется по IP, а не по местоположению человека. VPN и proxy влияют на результат. Страновое условие NAT выбирает трансляцию; само по себе оно не блокирует доступ."), ctx)}<h2>Страновые списки</h2>${filterBuilder(ctx, "geoip")}<div id="protection-results">${countryMarkup(ctx)}</div>${attribution()}</div>`;
 }
 export function renderSystemLists(ctx) {
   return html`<section class="system-lists"><div class="feature-heading"><div><h2>Системные списки</h2><p>Управляются GeoIP и Fail2ban. Пустые временные списки остаются доступными для правил.</p></div><button data-action="protection-refresh">${ctx.icon("refresh")}Обновить</button></div><div id="system-lists-results">${systemListsMarkup(ctx)}</div>${attribution()}</section>`;
@@ -247,12 +210,9 @@ export async function refreshProtection(ctx, { force = false } = {}) {
   controller = active;
   requestKind = kind;
   const query = new URLSearchParams({
-    query: queries[kind],
     offset: String(offsets[kind]),
     limit: String(pageSize),
   });
-  if (queries[kind] && appliedNegatedQueries.has(kind))
-    query.set("negate", "query");
   const expression = getAppliedExpression(`protection-${kind}`);
   if (expression) query.set("expression", expression);
   const generation = ctx.generation;
@@ -334,31 +294,6 @@ function openProfile(ctx, id) {
   );
 }
 export function handleProtectionInput(event) {
-  const search = event.target?.closest?.("[data-protection-search]");
-  const kind = search?.dataset.protectionSearch;
-  if (event.target?.name === "query" && searchKinds.includes(kind)) {
-    queryDrafts[kind] = String(event.target.value || "").trim();
-    if (!queryDrafts[kind]) negatedQueries.delete(kind);
-    syncDisplayFilterControl(
-      search,
-      "query",
-      queryDrafts[kind],
-      negatedQueries.has(kind),
-    );
-    return true;
-  }
-  const listForm = event.target?.closest?.("#system-list-search");
-  if (listForm && event.target?.name === "query") {
-    inspectedList.draftQuery = String(event.target.value || "").trim();
-    if (!inspectedList.draftQuery) inspectedList.draftNegated = false;
-    syncDisplayFilterControl(
-      listForm,
-      "query",
-      inspectedList.draftQuery,
-      inspectedList.draftNegated,
-    );
-    return true;
-  }
   const form = event.target?.closest?.("#f2b-settings,#geo-settings");
   if (!form) return false;
   form.dataset.dirty = "true";
@@ -368,39 +303,6 @@ export async function handleProtectionAction(button, ctx) {
   const action = button.dataset.action;
   const generation = ctx.generation;
   if (!/^(f2b-|geo-|protection-|system-list-)/.test(action || "")) return false;
-  if (action === "protection-negate") {
-    const form = button.closest("form"),
-      kind = form?.dataset.protectionSearch;
-    if (!searchKinds.includes(kind)) return true;
-    queryDrafts[kind] = String(new FormData(form).get("query") || "").trim();
-    if (queryDrafts[kind]) {
-      if (negatedQueries.has(kind)) negatedQueries.delete(kind);
-      else negatedQueries.add(kind);
-    } else negatedQueries.delete(kind);
-    syncDisplayFilterControl(
-      form,
-      "query",
-      queryDrafts[kind],
-      negatedQueries.has(kind),
-    );
-    return true;
-  }
-  if (action === "system-list-negate") {
-    const form = ctx.dialog.querySelector("#system-list-search");
-    if (!form) return true;
-    inspectedList.draftQuery = String(
-      new FormData(form).get("query") || "",
-    ).trim();
-    inspectedList.draftNegated =
-      !!inspectedList.draftQuery && !inspectedList.draftNegated;
-    syncDisplayFilterControl(
-      form,
-      "query",
-      inspectedList.draftQuery,
-      inspectedList.draftNegated,
-    );
-    return true;
-  }
   await ctx.run(async () => {
     if (action === "f2b-edit") {
       openProfile(ctx, button.dataset.id);
@@ -415,14 +317,6 @@ export async function handleProtectionAction(button, ctx) {
         const kind = button.dataset.kind;
         if (!searchKinds.includes(kind)) return;
         applyQueryBuilder(`protection-${kind}`);
-        const form =
-          button.closest?.("form") ||
-          document.querySelector(`[data-protection-search="${kind}"]`);
-        queries[kind] = String(new FormData(form).get("query") || "").trim();
-        queryDrafts[kind] = queries[kind];
-        if (queries[kind] && negatedQueries.has(kind))
-          appliedNegatedQueries.add(kind);
-        else appliedNegatedQueries.delete(kind);
         offsets[kind] = 0;
       }
       if (action === "protection-page")
@@ -455,40 +349,18 @@ export async function handleProtectionAction(button, ctx) {
     ) {
       if (action === "system-list-open") {
         resetQueryBuilder("system-list");
-        inspectedList = {
-          name: button.dataset.name,
-          offset: 0,
-          query: "",
-          draftQuery: "",
-          negated: false,
-          draftNegated: false,
-        };
+        inspectedList = { name: button.dataset.name, offset: 0 };
       }
       if (action === "system-list-page")
         inspectedList.offset = Number(button.dataset.offset);
       if (action === "system-list-search") {
         applyQueryBuilder("system-list");
-        inspectedList.query = String(
-          new FormData(ctx.dialog.querySelector("#system-list-search")).get(
-            "query",
-          ) || "",
-        ).trim();
-        inspectedList.draftQuery = inspectedList.query;
-        inspectedList.negated =
-          !!inspectedList.query && inspectedList.draftNegated;
         inspectedList.offset = 0;
       }
       const query = new URLSearchParams({
         offset: String(inspectedList.offset),
         limit: "50",
-        query: inspectedList.query,
       });
-      const exclusion = displayNegationQuery(
-        inspectedList.negated ? ["query"] : [],
-        { query: inspectedList.query },
-        ["query"],
-      );
-      if (exclusion) query.set("negate", exclusion);
       const expression = getAppliedExpression("system-list");
       if (expression) query.set("expression", expression);
       const data = await ctx.api(
@@ -500,7 +372,7 @@ export async function handleProtectionAction(button, ctx) {
       ctx.dialogFrame(
         inspectedList.name,
         `${data.source || "Fail2ban"} · ${data.version || t("Временные записи")}`,
-        html`<form id="system-list-search" class="security-search">${displayFilterField(field(ctx, t("Поиск IPv4 / CIDR"), "query", inspectedList.draftQuery), "query", { value: inspectedList.draftQuery, negated: inspectedList.draftNegated, action: "system-list-negate", idPrefix: "system-list" })}<button type="submit" data-action="system-list-search">Найти</button></form>${renderQueryBuilder("system-list", systemListQuerySchema(inspectedList.name), { applyAction: "system-list-search" })}<div class="table-scroll"><table class="rules-table"><thead><tr><th>Адрес / диапазон</th><th>Истекает</th></tr></thead><tbody>${data.items.map((row) => html`<tr><td class="mono">${ctx.e(typeof row === "string" ? row : row.address || row.network || `${row.first} – ${row.last}`)}</td><td>${ctx.e(when(row.expires_at))}</td></tr>`).join("") || html`<tr><td colspan="2">Список пуст.</td></tr>`}</tbody></table></div><div class="security-pagination"><span>Всего: ${data.total}</span><button data-action="system-list-page" data-offset="${Math.max(0, inspectedList.offset - 50)}" ${inspectedList.offset ? "" : "disabled"}>Назад</button><button data-action="system-list-page" data-offset="${inspectedList.offset + 50}" ${inspectedList.offset + 50 < data.total ? "" : "disabled"}>Далее</button></div>${attribution()}`,
+        html`${renderQueryBuilder("system-list", systemListQuerySchema(inspectedList.name), { applyAction: "system-list-search" })}<div class="table-scroll"><table class="rules-table"><thead><tr><th>Адрес / диапазон</th><th>Истекает</th></tr></thead><tbody>${data.items.map((row) => html`<tr><td class="mono">${ctx.e(typeof row === "string" ? row : row.address || row.network || `${row.first} – ${row.last}`)}</td><td>${ctx.e(when(row.expires_at))}</td></tr>`).join("") || html`<tr><td colspan="2">Список пуст.</td></tr>`}</tbody></table></div><div class="security-pagination"><span>Всего: ${data.total}</span><button data-action="system-list-page" data-offset="${Math.max(0, inspectedList.offset - 50)}" ${inspectedList.offset ? "" : "disabled"}>Назад</button><button data-action="system-list-page" data-offset="${inspectedList.offset + 50}" ${inspectedList.offset + 50 < data.total ? "" : "disabled"}>Далее</button></div>${attribution()}`,
       );
       return;
     }

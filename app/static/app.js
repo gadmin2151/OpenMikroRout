@@ -12,11 +12,6 @@ import {
 } from "./query-builder.js";
 import { natQuerySchema } from "./config-filter-schemas.js";
 import {
-  displayFilterToggle,
-  displayNegations,
-  syncDisplayFilterControl,
-} from "./display-filter-ui.js";
-import {
   withRuleNegation,
   collectRuleNegations,
   toggleRuleNegation,
@@ -76,8 +71,7 @@ import {
   clearWireGuardSecrets,
   handleWireGuardAction,
   handleWireGuardChange,
-  handleWireGuardFilter,
-} from "./wireguard-ui.js?v=1";
+} from "./wireguard-ui.js?v=2";
 import {
   appendTelemetryHistory,
   mergeTelemetrySnapshot,
@@ -89,7 +83,7 @@ import {
   hasWriteAccess,
   isReadAction,
   applyReadAccess,
-} from "./access-ui.js?v=8";
+} from "./access-ui.js?v=9";
 import { renderUsers, handleUsersAction } from "./users-ui.js?v=2";
 import { renderSecurity, handleSecurityAction } from "./security-ui.js?v=1";
 import {
@@ -104,8 +98,7 @@ import {
   refreshConnections,
   resetConnections,
   handleConnectionsAction,
-  handleConnectionsInput,
-} from "./connections-ui.js?v=5";
+} from "./connections-ui.js?v=6";
 import {
   routerViews,
   renderRouterView,
@@ -196,12 +189,7 @@ dialog.addEventListener("close", () => {
 });
 let state,
   view = "overview",
-  selected = new Set(),
-  search = "",
-  chainFilter = "",
-  protocolFilter = "";
-let natFilterNegations = new Set();
-const natFilterFields = ["search", "chain", "protocol"];
+  selected = new Set();
 let interfaces = [],
   forwarding = null,
   audit = [],
@@ -780,38 +768,11 @@ function render() {
 }
 
 function filteredRules() {
-  const q = search.toLowerCase();
-  const advanced = compileQueryExpression(
+  const matches = compileQueryExpression(
     getAppliedQuery("nat"),
     natQuerySchema(),
   );
-  const matches = (field, value, result) =>
-    !value || (natFilterNegations.has(field) ? !result : result);
-  return state.config.rules.filter(
-    (r) =>
-      matches("chain", chainFilter, r.chain === chainFilter) &&
-      matches("protocol", protocolFilter, r.protocol === protocolFilter) &&
-      matches(
-        "search",
-        q,
-        Object.values(r).join(" ").toLowerCase().includes(q),
-      ) &&
-      advanced(r),
-  );
-}
-function syncNatFilterControls() {
-  const values = { search, chain: chainFilter, protocol: protocolFilter };
-  natFilterNegations = new Set(
-    displayNegations(natFilterNegations, values, natFilterFields),
-  );
-  const container = document.querySelector("#nat-display-filters");
-  for (const field of natFilterFields)
-    syncDisplayFilterControl(
-      container,
-      field,
-      values[field],
-      natFilterNegations.has(field),
-    );
+  return state.config.rules.filter(matches);
 }
 function renderRules() {
   const rows = filteredRules(),
@@ -831,37 +792,9 @@ function renderRules() {
     )
     .join(
       "",
-    )}</div><div class="toolbar-end" id="nat-display-filters"><div class="display-filter-inline"><div class="search">${icon("search")}<input id="rule-search" aria-label="Поиск правил" placeholder="Найти правило…" value="${e(search)}"></div>${displayFilterToggle({ name: "search", label: t("Поиск правил"), value: search, negated: natFilterNegations.has("search"), action: "nat-filter-negate" })}</div><div class="display-filter-inline"><select id="chain-filter" aria-label="Фильтр цепочки">${[
-    ["", t("Все цепочки")],
-    ["srcnat", "srcnat"],
-    ["dstnat", "dstnat"],
-    ["output", "output"],
-  ]
-    .map(
-      ([v, l]) =>
-        html`<option value="${v}" ${chainFilter === v ? "selected" : ""}>${l}</option>`,
-    )
-    .join(
-      "",
-    )}</select>${displayFilterToggle({ name: "chain", label: t("Фильтр цепочки"), value: chainFilter, negated: natFilterNegations.has("chain"), action: "nat-filter-negate" })}</div><div class="display-filter-inline"><select id="protocol-filter" aria-label="Фильтр протокола">${[
-    ["", t("Протокол")],
-    ["tcp", "TCP"],
-    ["udp", "UDP"],
-    ["any", t("Any")],
-    ["icmp", "ICMP"],
-    ["gre", "GRE"],
-    ["esp", "ESP"],
-    ["ah", "AH"],
-  ]
-    .map(
-      ([v, l]) =>
-        html`<option value="${v}" ${protocolFilter === v ? "selected" : ""}>${l}</option>`,
-    )
-    .join(
-      "",
-    )}</select>${displayFilterToggle({ name: "protocol", label: t("Фильтр протокола"), value: protocolFilter, negated: natFilterNegations.has("protocol"), action: "nat-filter-negate" })}</div><button class="icon ghost" data-action="columns" title="Настроить колонки" aria-label="Настроить колонки">${icon("list")}</button><button class="icon ghost" data-action="refresh" title="Обновить" aria-label="Обновить">${icon("refresh")}</button></div></div>
+    )}</div><div class="toolbar-end"><button class="icon ghost" data-action="columns" title="Настроить колонки" aria-label="Настроить колонки">${icon("list")}</button><button class="icon ghost" data-action="refresh" title="Обновить" aria-label="Обновить">${icon("refresh")}</button></div></div>
     ${renderQueryBuilder("nat", natQuerySchema(), { applyAction: "nat-query-apply" })}
-    <div class="table-scroll"><table class="rules-table"><thead><tr><th><input type="checkbox" id="select-all" aria-label="Выбрать все показанные правила" ${rows.length && rows.every((r) => selected.has(r.id)) ? "checked" : ""}></th><th class="drag-column" aria-label="Перетаскивание"></th><th>#</th>${ruleColumns.map(([key, label]) => html`<th data-column="${key}" ${visibleColumns.has(key) ? "" : "hidden"}>${t(label)}</th>`).join("")}<th></th></tr></thead><tbody id="rules-body">${renderRuleRows(rows)}</tbody></table>${!rows.length ? empty("shield", search || chainFilter || protocolFilter || getAppliedQuery("nat") ? t("Ничего не найдено") : t("Пока нет правил NAT"), search || chainFilter || protocolFilter || getAppliedQuery("nat") ? t("Измените поисковый запрос или фильтры.") : t("Добавьте первое правило или выберите готовый шаблон в редакторе.")) : ""}</div>
+    <div class="table-scroll"><table class="rules-table"><thead><tr><th><input type="checkbox" id="select-all" aria-label="Выбрать все показанные правила" ${rows.length && rows.every((r) => selected.has(r.id)) ? "checked" : ""}></th><th class="drag-column" aria-label="Перетаскивание"></th><th>#</th>${ruleColumns.map(([key, label]) => html`<th data-column="${key}" ${visibleColumns.has(key) ? "" : "hidden"}>${t(label)}</th>`).join("")}<th></th></tr></thead><tbody id="rules-body">${renderRuleRows(rows)}</tbody></table>${!rows.length ? empty("shield", getAppliedQuery("nat") ? t("Ничего не найдено") : t("Пока нет правил NAT"), getAppliedQuery("nat") ? t("Измените поисковый запрос или фильтры.") : t("Добавьте первое правило или выберите готовый шаблон в редакторе.")) : ""}</div>
     ${selected.size === 1 ? renderDetail(state.config.rules.find((r) => selected.has(r.id))) : ""}
     <div class="panel-footer"><span>${rows.length} из ${state.config.rules.length} правил${selected.size ? html` · выбрано ${selected.size}` : ""}</span><div class="footer-legend"><span><i class="dot"></i>Включено</span><span><i class="dot off"></i>Отключено</span><span>${isDemo() ? t("Счётчики недоступны в демо") : t("Счётчики первых пакетов соединений")}</span></div></div>`;
 }
@@ -1455,16 +1388,6 @@ async function handleAction(button) {
   if (handleQueryBuilderAction(button)) return;
   if (action === "nat-query-apply") {
     applyQueryBuilder("nat");
-    updateRuleTable();
-    return;
-  }
-  if (action === "nat-filter-negate") {
-    const field = button.dataset.displayNegate;
-    const values = { search, chain: chainFilter, protocol: protocolFilter };
-    if (!natFilterFields.includes(field) || !values[field]) return;
-    if (natFilterNegations.has(field)) natFilterNegations.delete(field);
-    else natFilterNegations.add(field);
-    syncNatFilterControls();
     updateRuleTable();
     return;
   }
@@ -2163,7 +2086,13 @@ document.addEventListener("keydown", (event) => {
   if (dialog.open || !state || view !== "rules" || busy) return;
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
     event.preventDefault();
-    document.querySelector("#rule-search").focus();
+    const builder = document.querySelector('[data-query-builder="nat"]');
+    if (builder) builder.open = true;
+    builder
+      ?.querySelector(
+        '[data-query-part="value"], [data-action="query-builder-add"]',
+      )
+      ?.focus();
     return;
   }
   if (event.target.closest("input,textarea,select")) return;
@@ -2194,8 +2123,6 @@ document.addEventListener("input", (event) => {
   );
   if (event.target.matches("[data-checkbox-search]")) return;
   if (handleQueryBuilderInput(event)) return;
-  if (handleConnectionsInput(event)) return;
-  if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
   if (handleCaptureInput(event, routerContext())) return;
   if (handleProtectionInput(event, routerContext())) return;
@@ -2204,11 +2131,6 @@ document.addEventListener("input", (event) => {
     "#router-dns-form,#router-domain-form,#backup-import-form,#f2b-settings,#geo-settings,#discovery-settings,#scan-settings",
   );
   if (settingsForm && canWrite()) settingsForm.dataset.dirty = "true";
-  if (event.target.id === "rule-search") {
-    search = event.target.value;
-    syncNatFilterControls();
-    updateRuleTable();
-  }
 });
 document.addEventListener("change", (event) => {
   syncRuleNegationControls(
@@ -2216,7 +2138,6 @@ document.addEventListener("change", (event) => {
     canWrite(),
   );
   if (handleQueryBuilderInput(event)) return;
-  if (handleConnectionsInput(event)) return;
   if (event.target.id === "login-language") {
     const form =
       event.target.closest("form") || document.querySelector("#login-form");
@@ -2234,7 +2155,6 @@ document.addEventListener("change", (event) => {
   handleBackupInput(event);
   const backupForm = event.target.closest("#backup-import-form");
   if (backupForm && canWrite()) backupForm.dataset.dirty = "true";
-  if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
   if (handleCaptureInput(event, routerContext())) return;
   if (handleProtectionInput(event, routerContext())) return;
@@ -2278,16 +2198,6 @@ document.addEventListener("change", (event) => {
       ? new Set(filteredRules().map((r) => r.id))
       : new Set();
     updateSelection();
-  }
-  if (node.id === "chain-filter") {
-    chainFilter = node.value;
-    syncNatFilterControls();
-    updateRuleTable();
-  }
-  if (node.id === "protocol-filter") {
-    protocolFilter = node.value;
-    syncNatFilterControls();
-    updateRuleTable();
   }
   if (node.id === "rule-enabled" && draft && canWrite())
     draft.enabled = node.checked;
@@ -2386,7 +2296,7 @@ document.addEventListener("submit", (event) => {
   }
   if (
     event.target.matches(
-      "#f2b-settings,#geo-settings,#f2b-profile-form,#geo-lookup,#system-list-search,[data-protection-search],#protection-proof,#apply-security-proof,[data-discovery-form]",
+      "#f2b-settings,#geo-settings,#f2b-profile-form,#geo-lookup,#protection-proof,#apply-security-proof,[data-discovery-form]",
     )
   ) {
     const button =
@@ -2418,13 +2328,6 @@ document.addEventListener("submit", (event) => {
     );
     if (button)
       void handleAction(button).catch((error) => toast(error.message, true));
-    return;
-  }
-  if (event.target.id === "connections-filter") {
-    void handleAction({
-      dataset: { action: "connections-filter" },
-      disabled: false,
-    }).catch((error) => toast(error.message, true));
     return;
   }
   if (event.target.id === "user-proof") {

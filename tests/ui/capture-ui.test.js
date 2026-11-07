@@ -11,6 +11,7 @@ import { setLanguage } from "../../app/static/i18n.js";
 import {
   handleQueryBuilderAction,
   handleQueryBuilderInput,
+  getAppliedQuery,
 } from "../../app/static/query-builder.js";
 
 const originalDocument = globalThis.document;
@@ -58,10 +59,6 @@ function stream() {
 function fixture() {
   const fields = {
     interface: "any",
-    protocol: "tcp",
-    source: "",
-    destination: "",
-    port: "443",
   };
   const controls = Object.keys(fields).map((name) => ({
     name,
@@ -69,28 +66,20 @@ function fixture() {
     dataset: {},
   }));
   controls.push(
-    ...["capture-start", "capture-stop", "capture-refresh"].map((action) => ({
+    ...[
+      "capture-start",
+      "capture-stop",
+      "capture-refresh",
+      "capture-query-apply",
+    ].map((action) => ({
       dataset: { action },
       disabled: false,
     })),
   );
-  for (const name of ["protocol", "source", "destination", "port"])
-    controls.push({
-      dataset: { action: "capture-negate", displayNegate: name },
-      disabled: true,
-      setAttribute(name, value) {
-        this[name] = value;
-      },
-    });
   const form = {
     reportValidity: () => true,
     querySelectorAll: () => controls,
-    querySelector: (selector) => {
-      const name = /data-display-negate="([^"]+)"/.exec(selector)?.[1];
-      return name
-        ? controls.find((node) => node.dataset.displayNegate === name)
-        : { closest: () => form };
-    },
+    querySelector: () => ({ closest: () => form }),
   };
   let text = "",
     paints = 0;
@@ -164,23 +153,45 @@ const completed = (output) => ({
   type: "completed",
   result: { tool: "capture", success: true, output, demo: false },
 });
+function addQuery(path = "", kind = "condition") {
+  return handleQueryBuilderAction({
+    dataset: {
+      action: "query-builder-add",
+      scope: "packet-capture",
+      kind,
+      queryPath: path,
+    },
+  });
+}
+function editQuery(path, part, value) {
+  const region = {
+    dataset: { queryBuilder: "packet-capture" },
+    querySelector: () => null,
+  };
+  return handleQueryBuilderInput({
+    target: {
+      dataset: { queryPath: path, queryPart: part },
+      value,
+      closest: () => region,
+    },
+  });
+}
 
-test("capture is translated RU/EN and exposes only typed filters, Start and Stop", () => {
+test("capture is translated RU/EN and exposes only acquisition interface, builder and stream controls", () => {
   const f = fixture();
   globalThis.document = originalDocument;
   for (const language of ["ru", "en"]) {
     setLanguage(language);
     const markup = renderCapture(f.ctx);
-    for (const name of [
-      "interface",
-      "protocol",
-      "source",
-      "destination",
-      "port",
-    ])
-      assert.match(markup, new RegExp(`name="${name}"`));
+    assert.match(markup, /name="interface"/);
     assert.match(markup, /id="capture-interface" required/);
     assert.match(markup, /data-action="capture-stop"/);
+    assert.match(markup, /data-query-builder="packet-capture"/);
+    assert.match(markup, /data-action="capture-query-apply"/);
+    assert.doesNotMatch(
+      markup,
+      /name="(?:protocol|source|destination|port)"|data-display-negate|capture-negate/,
+    );
     assert.doesNotMatch(markup, /name="(?:filter|command|payload)"/);
     if (language === "en") assert.doesNotMatch(markup, /[А-Яа-яЁё]/);
     else assert.match(markup, /Перехват пакетов/);
@@ -229,9 +240,11 @@ test("normalized select markup is cached across status refresh and packet paints
     path.endsWith("status") ? status : wire.response;
   await refreshCapture(f.ctx);
   f.fields.interface = "eth0";
-  f.fields.source = "192.0.2.7/32";
-  const source = f.controls.find((control) => control.name === "source");
-  source.value = f.fields.source;
+  renderCapture(f.ctx);
+  addQuery();
+  editQuery("0", "field", "source");
+  editQuery("0", "op", "in");
+  editQuery("0", "value", "192.0.2.7/32");
   handleCaptureInput({ target: { closest: () => f.form } }, f.ctx);
   const before = writes;
   assert.equal(select.value, "eth0");
@@ -248,8 +261,11 @@ test("normalized select markup is cached across status refresh and packet paints
   }
   assert.equal(writes, before);
   assert.equal(select.value, "eth0");
-  assert.equal(source.value, "192.0.2.7/32");
-  assert.match(renderCapture(f.ctx), /name="source" value="192.0.2.7\/32"/);
+  assert.match(renderCapture(f.ctx), /value="192.0.2.7\/32"/);
+  assert.equal(
+    getAppliedQuery("packet-capture").children[0].value,
+    "192.0.2.7/32",
+  );
   await action("capture-stop", f.ctx);
   await pending;
   f.fields.interface = "any";
@@ -264,12 +280,17 @@ test("normalized select markup is cached across status refresh and packet paints
   );
 });
 
-test("capture streams safely before completion, paints at most once per 100ms and submits typed filters", async (t) => {
+test("capture streams safely before completion and posts only interface plus expression", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const f = fixture(),
     wire = stream();
-  f.fields.source = " 192.0.2.0/24 ";
-  f.fields.destination = " 198.51.100.20 ";
+  // Stale form entries must not resurrect the removed legacy filter mechanism.
+  Object.assign(f.fields, {
+    protocol: "tcp",
+    source: "192.0.2.0/24",
+    port: "443",
+    negate: "source",
+  });
   let posts = 0,
     signal;
   f.ctx.api = async (path, options) => {
@@ -278,11 +299,6 @@ test("capture streams safely before completion, paints at most once per 100ms an
     assert.equal(options.responseType, "stream");
     assert.deepEqual(JSON.parse(options.body), {
       interface: "any",
-      protocol: "tcp",
-      source: "192.0.2.0/24",
-      destination: "198.51.100.20",
-      port: 443,
-      negate: [],
       expression: null,
     });
     signal = options.signal;
@@ -371,21 +387,26 @@ test("capture keeps a rolling 32 KiB UTF-8 tail over more than 1 MiB of live out
   assert.equal(f.nodes["#capture-error"].hidden, true);
 });
 
-test("ICMP disables ports, read users cannot start, and packet errors use textContent", async () => {
+test("read users cannot acquire packets and stream errors remain escaped text", async () => {
   const f = fixture(),
     wire = stream();
+  let posts = 0;
   f.ctx.api = async (path, options) => {
     if (path.endsWith("status")) return status;
-    assert.equal(JSON.parse(options.body).port, null);
+    posts++;
+    assert.deepEqual(Object.keys(JSON.parse(options.body)).sort(), [
+      "expression",
+      "interface",
+    ]);
     return wire.response;
   };
-  await refreshCapture(f.ctx);
-  f.fields.protocol = "icmp";
-  handleCaptureInput({ target: { closest: () => f.form } }, f.ctx);
-  assert.equal(f.controls.find((node) => node.name === "port").disabled, true);
   f.ctx.canWrite = () => false;
+  await refreshCapture(f.ctx);
+  assert.equal(f.nodes["#capture-query-builder"].disabled, true);
   await assert.rejects(action("capture-start", f.ctx), /full/);
+  assert.equal(posts, 0);
   f.ctx.canWrite = () => true;
+  await refreshCapture(f.ctx);
   const pending = action("capture-start", f.ctx);
   wire.send({ type: "error", message: '<img src=x onerror="bad()"> denied' });
   wire.close();
@@ -394,92 +415,63 @@ test("ICMP disables ports, read users cannot start, and packet errors use textCo
   assert.doesNotMatch(renderCapture(f.ctx), /<img/);
 });
 
-test("capture ! controls preserve inputs and submit typed exclusions only for populated packet criteria", async () => {
+test("incomplete builder drafts block both Apply and acquisition without posting", async () => {
+  const f = fixture();
+  let posts = 0;
+  f.ctx.api = async (path) => {
+    if (path.endsWith("status")) return status;
+    posts++;
+    throw new Error("Invalid drafts must not reach the API");
+  };
+  await refreshCapture(f.ctx);
+  renderCapture(f.ctx);
+  addQuery();
+  editQuery("0", "field", "source");
+  editQuery("0", "op", "in");
+  await assert.rejects(action("capture-query-apply", f.ctx));
+  await assert.rejects(action("capture-start", f.ctx));
+  assert.equal(posts, 0);
+  assert.equal(f.nodes["#capture-query-builder"].disabled, false);
+  assert.equal(getAppliedQuery("packet-capture"), null);
+  assert.equal(await action("capture-negate", f.ctx), false);
+});
+
+test("applying an OR of protocol and ports only arms the builder; Start acquires separately", async () => {
   const f = fixture(),
     wire = stream();
-  let posted;
+  let posts = 0,
+    posted;
   f.ctx.api = async (path, options) => {
     if (path.endsWith("status")) return status;
+    posts++;
     posted = JSON.parse(options.body);
     return wire.response;
   };
   await refreshCapture(f.ctx);
-  f.fields.source = "192.0.2.0/24";
-  f.fields.destination = "198.51.100.10";
-  handleCaptureInput({ target: { closest: () => f.form } }, f.ctx);
-  for (const name of ["source", "destination", "port", "protocol"])
-    await handleCaptureAction(
-      { dataset: { action: "capture-negate", displayNegate: name } },
-      f.ctx,
-    );
-  assert.equal(f.fields.source, "192.0.2.0/24");
-  assert.equal(f.fields.port, "443");
-  assert.equal(
-    f.controls.find((node) => node.dataset.displayNegate === "source")[
-      "aria-pressed"
-    ],
-    "true",
-  );
+  renderCapture(f.ctx);
+  addQuery();
+  addQuery();
+  editQuery("", "join", "or");
+  editQuery("0", "field", "protocol");
+  editQuery("0", "op", "eq");
+  editQuery("0", "value", "icmp");
+  editQuery("1", "field", "port");
+  editQuery("1", "op", "in");
+  editQuery("1", "value", "443");
+  await action("capture-query-apply", f.ctx);
+  assert.equal(posts, 0);
+  assert.equal(getAppliedQuery("packet-capture").join, "or");
+  assert.match(f.nodes["#capture-meta"].textContent, /выключен/);
   const pending = action("capture-start", f.ctx);
-  wire.send(completed("packet"));
+  await flush();
+  assert.equal(posts, 1);
+  assert.deepEqual(Object.keys(posted).sort(), ["expression", "interface"]);
+  assert.deepEqual(posted.expression, getAppliedQuery("packet-capture"));
+  assert.equal(posted.expression.children[0].value, "icmp");
+  assert.equal(posted.expression.children[1].value, "443");
+  wire.send(completed("headers"));
   wire.close();
   await pending;
-  assert.deepEqual(posted.negate, [
-    "protocol",
-    "source",
-    "destination",
-    "port",
-  ]);
-  assert.equal(posted.interface, "any");
-  assert.equal(posted.port, 443);
-  f.fields.source = "";
-  handleCaptureInput({ target: { closest: () => f.form } }, f.ctx);
-  const toggle = f.controls.find(
-    (node) => node.dataset.displayNegate === "source",
-  );
-  assert.equal(toggle.disabled, true);
-  assert.equal(toggle["aria-pressed"], "false");
-  assert.doesNotMatch(renderCapture(f.ctx), /data-display-negate="interface"/);
-  f.ctx.canWrite = () => false;
-  await assert.rejects(
-    handleCaptureAction(
-      { dataset: { action: "capture-negate", displayNegate: "port" } },
-      f.ctx,
-    ),
-    /full/,
-  );
-});
-
-test("capture ports become usable for !ICMP and are safely cleared from negation for positive ICMP", async () => {
-  const f = fixture();
-  f.ctx.api = async () => status;
-  await refreshCapture(f.ctx);
-  f.fields.protocol = "icmp";
-  handleCaptureInput({ target: { closest: () => f.form } }, f.ctx);
-  const port = f.controls.find((node) => node.name === "port");
-  assert.equal(port.disabled, true);
-  const toggle = (name) =>
-    handleCaptureAction(
-      { dataset: { action: "capture-negate", displayNegate: name } },
-      f.ctx,
-    );
-  await toggle("protocol");
-  assert.equal(port.disabled, false);
-  await toggle("port");
-  assert.equal(
-    f.controls.find((node) => node.dataset.displayNegate === "port")[
-      "aria-pressed"
-    ],
-    "true",
-  );
-  await toggle("protocol");
-  assert.equal(port.disabled, true);
-  assert.equal(
-    f.controls.find((node) => node.dataset.displayNegate === "port")[
-      "aria-pressed"
-    ],
-    "false",
-  );
 });
 
 test("capture submits the applied Boolean tree and locks its builder until the stream stops", async () => {
@@ -535,8 +527,21 @@ test("capture submits the applied Boolean tree and locks its builder until the s
       { kind: "condition", field: "port", op: "in", value: "443,8000-8010" },
     ],
   });
-  assert.equal(body.protocol, "tcp");
-  assert.equal(body.port, 443);
+  assert.deepEqual(Object.keys(body).sort(), ["expression", "interface"]);
+  assert.equal(body.interface, "any");
+  const applied = getAppliedQuery("packet-capture");
+  // Even a queued draft edit cannot change the filter used by an active stream.
+  editQuery("0", "value", "203.0.113.0/24");
+  f.fields.interface = "eth0";
+  handleCaptureInput({ target: { closest: () => f.form } }, f.ctx);
+  await action("capture-query-apply", f.ctx);
+  assert.deepEqual(getAppliedQuery("packet-capture"), applied);
+  assert.equal(f.nodes["#capture-interface"].value, "any");
+  assert.equal(
+    f.controls.find((control) => control.dataset.action === "capture-stop")
+      .disabled,
+    false,
+  );
   wire.send(completed("packet"));
   wire.close();
   await pending;

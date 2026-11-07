@@ -40,14 +40,14 @@ function add(scope, path = "", kind = "condition") {
   });
 }
 
-test("NAT applies grouped advanced criteria together with existing quick filters", () => {
+test("NAT builder alone applies grouped criteria and clearing remains a draft until Apply", () => {
   const source = readFileSync(
     new URL("../../app/static/app.js", import.meta.url),
     "utf8",
   );
   const predicate = source.slice(
     source.indexOf("function filteredRules()"),
-    source.indexOf("function syncNatFilterControls()"),
+    source.indexOf("function renderRules()"),
   );
   const rules = [
     { id: "web", name: "Web", chain: "dstnat", protocol: "tcp" },
@@ -66,22 +66,31 @@ test("NAT applies grouped advanced criteria together with existing quick filters
   edit("nat", "1", "op", "contains");
   edit("nat", "1", "value", "dns");
   edit("nat", "", "join", "or");
-  applyQueryBuilder("nat");
   const context = vm.createContext({
     state: { config: { rules } },
-    search: "",
-    chainFilter: "dstnat",
-    protocolFilter: "tcp",
-    natFilterNegations: new Set(["protocol"]),
     getAppliedQuery,
     compileQueryExpression,
     natQuerySchema,
   });
   vm.runInContext(predicate, context);
+  const selected = () =>
+    Array.from(vm.runInContext("filteredRules().map(row=>row.id)", context));
+  assert.deepEqual(selected(), ["web", "dns", "other"]);
+  applyQueryBuilder("nat");
+  assert.deepEqual(selected(), ["web", "dns"]);
+  edit("nat", "1", "value", "");
+  assert.throws(() => applyQueryBuilder("nat"));
   assert.deepEqual(
-    Array.from(vm.runInContext("filteredRules().map(row=>row.id)", context)),
-    ["dns"],
+    selected(),
+    ["web", "dns"],
+    "Invalid edits preserve the last applied filter",
   );
+  handleQueryBuilderAction({
+    dataset: { action: "query-builder-clear", scope: "nat" },
+  });
+  assert.deepEqual(selected(), ["web", "dns"]);
+  applyQueryBuilder("nat");
+  assert.deepEqual(selected(), ["web", "dns", "other"]);
   assert.ok(rules.every((row) => !("expression" in row)));
   assert.equal(isReadAction("nat-query-apply"), true);
 });
@@ -137,7 +146,7 @@ test("configuration schemas filter IPv4 lists, booleans and port ranges without 
 test("capture query schema excludes acquisition interfaces and impossible empty-header operators", () => {
   const scope = "packet-capture";
   const markup = renderQueryBuilder(scope, captureQuerySchema(), {
-    applyAction: "capture-start",
+    applyAction: "capture-query-apply",
   });
   assert.doesNotMatch(markup, /data-action="(?:apply|confirm)"/);
   add(scope);

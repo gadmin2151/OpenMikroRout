@@ -27,11 +27,10 @@ WinBox-inspired tables, tabs, property editors and drag-and-drop rule ordering.
 NAT and Firewall support **!** match negation, such as all source addresses
 except a selected IPv4 host or address list. [Examples and limits](docs/MATCH-NEGATION.md).
 
-The same **!** control is available in Connections and other list filters,
-as well as Packet Sniffer criteria. [Display-filter guide](docs/DISPLAY-FILTERS.md).
-
-A shared visual builder combines typed conditions with **AND / OR** and nested
-groups. [Boolean filter guide](docs/QUERY-BUILDER.md).
+Connections, NAT, WireGuard Peers, other lists and Packet Sniffer use one visual
+filter builder: field, operator, value, nested **AND / OR** groups and exclusions
+for IPv4, ports, text and counters.
+[Boolean filter guide](docs/QUERY-BUILDER.md) · [Display-filter guide](docs/DISPLAY-FILTERS.md).
 
 Built for administrators of Linux gateways, office networks and labs, it keeps
 configuration on your own server and runs network operations locally using standard

@@ -5,7 +5,8 @@
 Lists now provide a shared visual builder with field, operator and value rows,
 AND/OR groups, explicit parentheses, and individual condition/group removal.
 Operators depend on field type: text, choices, IPv4/CIDR, ports and counters.
-The builder works alongside existing quick filters and their **!** exclusions.
+The builder is the single list-filter interface. Exclusions use the appropriate
+not-equal, does-not-contain and not-in operators within the condition rows.
 
 Available in Connections (both modes), NAT, WireGuard Peers, Neighbors, Fail2ban
 bans, GeoIP country lists, system-list contents and Packet Sniffer. Read accounts
@@ -14,7 +15,8 @@ are locked while a capture runs.
 
 Incomplete edits remain in the form until applied. Polling does not apply a
 partially entered expression or replace the active input. Each display scope has
-its own draft and applied expression. Reset/logout clears the relevant state.
+its own draft and applied expression. Applying an empty root group removes the
+active filter; logout clears editor state.
 
 ## Bounded evaluation
 
@@ -32,8 +34,8 @@ and the translated destination address.
 
 ## Compatibility
 
-No database migration or router-policy change is required. Existing quick
-filters remain compatible. Updating preserves NAT, Firewall, VPN, Fail2ban,
+No database migration or router-policy change is required. Existing API query
+parameters remain accepted for integrations. Updating preserves NAT, Firewall, VPN, Fail2ban,
 accounts, 2FA and keys. The classic interface remains in place.
 
 See [the builder guide](https://github.com/gadmin2151/OpenMikroRout/blob/main/docs/QUERY-BUILDER.md)
@@ -41,7 +43,7 @@ for examples and limits.
 
 ## Validation
 
-853 Python tests and 283 interface tests passed, with Ruff, mypy, ESLint,
+853 Python tests and 277 interface tests passed, with Ruff, mypy, ESLint,
 syntax, formatting and dependency checks. Shared browser/server fixtures cover
 typed values and exact matching; schema-contract checks cover all seven server
 display scopes. Real libpcap checks use synthetic captures. Browser validation

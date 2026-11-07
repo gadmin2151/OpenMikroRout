@@ -111,7 +111,7 @@ function bodyMarkup(state) {
     .filter(([key]) => /^[a-z][a-z0-9-]*$/.test(key))
     .map(([key, value]) => `data-${key}="${escape(value)}"`)
     .join(" ");
-  return html`${groupMarkup(state, state.draft)}<p class="query-builder-hint">Расширенный фильтр объединяется с быстрыми условиями через И. До 16 условий и 4 уровней.</p><div class="query-builder-error" role="alert" ${state.error ? "" : "hidden"}>${escape(state.error)}</div><div class="query-builder-actions"><button type="button" data-action="query-builder-clear" data-scope="${state.scope}">Очистить конструктор</button><button type="button" class="primary" data-action="${state.options.applyAction}" data-query-apply="${state.scope}" ${attrs}>Применить фильтр</button></div>`;
+  return html`${groupMarkup(state, state.draft)}<p class="query-builder-hint">Группы И/ИЛИ задают порядок условий. После изменения или очистки нажмите «Применить фильтр». До 16 условий и 4 уровней.</p><div class="query-builder-error" role="alert" ${state.error ? "" : "hidden"}>${escape(state.error)}</div><div class="query-builder-actions"><button type="button" data-action="query-builder-clear" data-scope="${state.scope}">Очистить фильтр</button><button type="button" class="primary" data-action="${state.options.applyAction}" data-query-apply="${state.scope}" ${attrs}>Применить фильтр</button></div>`;
 }
 function summaryMarkup(state) {
   const count = counts(state.draft).leaves;
@@ -144,7 +144,7 @@ function showError(state, message = "") {
   if (summary) summary.innerHTML = summaryMarkup(state);
 }
 
-export function renderQueryBuilder(scope, schema, options) {
+function registerQueryBuilder(scope, schema, options) {
   if (!identifier.test(scope) || !identifier.test(options?.applyAction || ""))
     throw new Error("Invalid query builder scope");
   let state = scopes.get(scope);
@@ -157,15 +157,38 @@ export function renderQueryBuilder(scope, schema, options) {
       applied: null,
       appliedDraft: JSON.stringify(emptyGroup()),
       error: "",
-      open: false,
+      open: true,
     };
     scopes.set(scope, state);
   }
   state.schema = schema;
   state.options = options;
+  return state;
+}
+export function renderQueryBuilder(scope, schema, options) {
+  const state = registerQueryBuilder(scope, schema, options);
   const previous = mounted(scope);
   if (typeof previous?.open === "boolean") state.open = previous.open;
   return html`<details class="query-builder" data-query-builder="${scope}" ${state.open ? "open" : ""}><summary>${summaryMarkup(state)}</summary><div class="query-builder-body">${bodyMarkup(state)}</div></details>`;
+}
+/** Programmatic navigation uses the visible builder, never a hidden legacy filter. */
+export function setQueryBuilderExpression(scope, schema, expression, options) {
+  let canonical = validateQueryExpression(expression, schema);
+  if (canonical?.kind === "condition")
+    canonical = validateQueryExpression(
+      { ...emptyGroup(), children: [canonical] },
+      schema,
+    );
+  const state = registerQueryBuilder(scope, schema, options);
+  state.draft = structuredClone(canonical || emptyGroup());
+  state.applied = canonical ? structuredClone(canonical) : null;
+  state.appliedDraft = JSON.stringify(state.draft);
+  state.error = "";
+  state.open = true;
+  const element = mounted(scope);
+  if (element) element.open = true;
+  updateWidget(state);
+  return getAppliedExpression(scope);
 }
 export function applyQueryBuilder(scope) {
   const state = scopes.get(scope);

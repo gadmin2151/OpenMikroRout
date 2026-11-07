@@ -10,6 +10,7 @@ import {
   applyQueryBuilder,
   getAppliedExpression,
   getAppliedQuery,
+  setQueryBuilderExpression,
   resetQueryBuilder,
   resetAllQueryBuilders,
   handleQueryBuilderInput,
@@ -256,4 +257,34 @@ test("safe configured accessors are read once per row and matching never resolve
     ),
   );
   assert.equal(casefold("Straße ΣΟΣ ﬃ"), "strasse σοσ ffi");
+});
+
+test("programmatic navigation seeds an opened visible draft and applied filter atomically", () => {
+  globalThis.document = { documentElement: {}, querySelector: () => null };
+  const ast = condition("address", "eq", "192.0.2.7/32");
+  const options = { applyAction: "connections-filter" };
+  const serialized = setQueryBuilderExpression(
+    "neighbors",
+    schema,
+    ast,
+    options,
+  );
+  assert.equal(JSON.parse(serialized).children[0].value, "192.0.2.7");
+  ast.value = "changed";
+  assert.equal(getAppliedQuery("neighbors").children[0].value, "192.0.2.7");
+  const markup = renderQueryBuilder("neighbors", schema, options);
+  assert.match(markup, /data-query-builder="neighbors" open/);
+  assert.match(markup, /value="192.0.2.7"/);
+  assert.doesNotMatch(markup, /быстрыми условиями|quick filters/);
+  assert.throws(() =>
+    setQueryBuilderExpression(
+      "neighbors",
+      schema,
+      condition("address", "eq", "invalid"),
+      options,
+    ),
+  );
+  assert.equal(getAppliedExpression("neighbors"), serialized);
+  setQueryBuilderExpression("neighbors", schema, null, options);
+  assert.equal(getAppliedExpression("neighbors"), "");
 });

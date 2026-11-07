@@ -1,14 +1,10 @@
 import { html, t, locale } from "./i18n.js";
 import {
-  displayFilterField,
-  displayNegationQuery,
-  syncDisplayFilterControl,
-} from "./display-filter-ui.js";
-import {
   renderQueryBuilder,
   applyQueryBuilder,
   getAppliedExpression,
   resetQueryBuilder,
+  setQueryBuilderExpression,
 } from "./query-builder.js";
 export const connectionQuerySchema = [
   {
@@ -55,22 +51,10 @@ export const connectionQuerySchema = [
 ];
 /** Filters affect the monitoring view only; they never create firewall rules. */
 let kind = "active",
-  filters = {},
   snapshot = null,
   error = "",
   request = null,
   controller = null;
-let draftFilters = {},
-  negated = new Set();
-const filterNames = [
-  "source",
-  "destination",
-  "port",
-  "protocol",
-  "state",
-  "interface",
-  "search",
-];
 let sorting = { column: null, direction: "ascending" };
 const sortColumns = new Set([
   "protocol",
@@ -176,9 +160,6 @@ export function resetConnections() {
   resetQueryBuilder("connections");
   controller?.abort();
   kind = "active";
-  filters = {};
-  draftFilters = {};
-  negated = new Set();
   snapshot = null;
   error = "";
   request = null;
@@ -254,57 +235,7 @@ function updateResults(ctx, focusColumn) {
 }
 
 export function renderConnections(ctx) {
-  const e = ctx.e;
-  const fields = [
-    html`<label class="field"><span>Источник IPv4 / сеть</span><input name="source" value="${e(draftFilters.source || "")}" placeholder="192.0.2.10/32" maxlength="32"></label>`,
-    html`<label class="field"><span>Назначение IPv4 / сеть</span><input name="destination" value="${e(draftFilters.destination || "")}" placeholder="203.0.113.10" maxlength="32"></label>`,
-    html`<label class="field"><span>Порт / диапазон</span><input name="port" value="${e(draftFilters.port || "")}" placeholder="3389,8000-8010" maxlength="200"></label>`,
-    html`<label class="field"><span>Протокол</span><select name="protocol">${["", "tcp", "udp", "icmp", "gre", "esp", "ah"].map((value) => html`<option value="${value}" ${draftFilters.protocol === value ? "selected" : ""}>${value.toUpperCase() || t("Все")}</option>`).join("")}</select></label>`,
-    html`<label class="field"><span>Состояние</span><select name="state">${["", "SYN", "DATAGRAM", "SYN_SENT", "SYN_RECV", "ESTABLISHED", "UNREPLIED", "ASSURED", "TIME_WAIT", "CLOSE"].map((value) => html`<option value="${value}" ${draftFilters.state === value ? "selected" : ""}>${value || t("Все")}</option>`).join("")}</select></label>`,
-    html`<label class="field"><span>Интерфейс</span><input name="interface" value="${e(draftFilters.interface || "")}" placeholder="vmbr0" maxlength="15"></label>`,
-    html`<label class="field"><span>Поиск</span><input name="search" value="${e(draftFilters.search || "")}" maxlength="100" placeholder="Адрес, состояние…"></label>`,
-  ]
-    .map((markup, index) =>
-      displayFilterField(markup, filterNames[index], {
-        value: draftFilters[filterNames[index]],
-        negated: negated.has(filterNames[index]),
-        action: "connections-negate",
-        idPrefix: "connections",
-      }),
-    )
-    .join("");
-  return html`<div class="feature-page"><div class="monitor-kind"><button data-action="connections-kind" data-kind="active" class="${kind === "active" ? "primary" : ""}">Активные соединения</button><button data-action="connections-kind" data-kind="attempts" class="${kind === "attempts" ? "primary" : ""}">Входящие попытки</button><button data-action="connections-refresh">${ctx.icon("refresh")}Обновить</button></div><form id="connections-filter" class="monitor-filters">${fields}<div class="monitor-filter-actions"><button class="primary" data-action="connections-filter" type="submit">Фильтровать</button><button data-action="connections-reset" type="button">Сбросить</button></div></form>${renderQueryBuilder("connections", connectionQuerySchema, { applyAction: "connections-filter" })}<p class="feature-note">Кнопка ! — всё, кроме указанного. Нажмите «Фильтровать», чтобы применить условия.</p><p class="feature-note">${kind === "active" ? t("Входящие IPv4-соединения conntrack: обращения к узлу и пробросы DNAT. Заблокированные до создания записи пакеты могут отсутствовать. Счётчики доступны, если их предоставляет ядро. Интерфейс определяется по локальному адресу назначения, а не по месту входа пакета.") : t("Входящие TCP SYN и UDP на интерфейсах default route, до проверки NAT/Firewall. Это наблюдение пакетов, а не решение «разрешено / заблокировано». Содержимое трафика не сохраняется. Повторные пакеты объединяются; история до 1000 записей за последний час.")} Фильтры меняют только отображение.</p><div id="connections-results">${rows(ctx)}</div></div>`;
-}
-
-function captureFilters(form = document.querySelector("#connections-filter")) {
-  if (form?.id !== "connections-filter") return false;
-  const values = new FormData(form);
-  draftFilters = Object.fromEntries(
-    filterNames.map((name) => [name, String(values.get(name) || "").trim()]),
-  );
-  for (const name of negated) if (!draftFilters[name]) negated.delete(name);
-  return true;
-}
-
-function applyFilters(applyAdvanced = false) {
-  if (applyAdvanced) applyQueryBuilder("connections");
-  filters = Object.fromEntries(
-    filterNames
-      .filter((name) => draftFilters[name])
-      .map((name) => [name, draftFilters[name]]),
-  );
-  const exclusion = displayNegationQuery(negated, draftFilters, filterNames);
-  if (exclusion) filters.negate = exclusion;
-}
-
-export function handleConnectionsInput(event) {
-  const form = event.target?.closest?.("#connections-filter");
-  const name = event.target?.name;
-  if (!form || !filterNames.includes(name)) return false;
-  draftFilters[name] = String(event.target.value || "").trim();
-  if (!draftFilters[name]) negated.delete(name);
-  syncDisplayFilterControl(form, name, draftFilters[name], negated.has(name));
-  return true;
+  return html`<div class="feature-page"><div class="monitor-kind"><button data-action="connections-kind" data-kind="active" class="${kind === "active" ? "primary" : ""}">Активные соединения</button><button data-action="connections-kind" data-kind="attempts" class="${kind === "attempts" ? "primary" : ""}">Входящие попытки</button><button data-action="connections-refresh">${ctx.icon("refresh")}Обновить</button></div>${renderQueryBuilder("connections", connectionQuerySchema, { applyAction: "connections-filter" })}<p class="feature-note">${kind === "active" ? t("Входящие IPv4-соединения conntrack: обращения к узлу и пробросы DNAT. Заблокированные до создания записи пакеты могут отсутствовать. Счётчики доступны, если их предоставляет ядро. Интерфейс определяется по локальному адресу назначения, а не по месту входа пакета.") : t("Входящие TCP SYN и UDP на интерфейсах default route, до проверки NAT/Firewall. Это наблюдение пакетов, а не решение «разрешено / заблокировано». Содержимое трафика не сохраняется. Повторные пакеты объединяются; история до 1000 записей за последний час.")} Фильтры меняют только отображение.</p><div id="connections-results">${rows(ctx)}</div></div>`;
 }
 
 export async function refreshConnections(ctx) {
@@ -314,7 +245,7 @@ export async function refreshConnections(ctx) {
   controller = activeController;
   const operation = (async () => {
     try {
-      const query = new URLSearchParams({ ...filters, kind, limit: "200" });
+      const query = new URLSearchParams({ kind, limit: "200" });
       const expression = getAppliedExpression("connections");
       if (expression) query.set("expression", expression);
       const result = await ctx.api(`connections?${query}`, {
@@ -353,28 +284,11 @@ export async function handleConnectionsAction(button, ctx) {
     ![
       "connections-kind",
       "connections-filter",
-      "connections-reset",
       "connections-refresh",
       "connections-sort",
-      "connections-negate",
     ].includes(action)
   )
     return false;
-  if (action === "connections-negate") {
-    const name = button.dataset.displayNegate;
-    if (!filterNames.includes(name) || !captureFilters()) return true;
-    if (draftFilters[name]) {
-      if (negated.has(name)) negated.delete(name);
-      else negated.add(name);
-    }
-    syncDisplayFilterControl(
-      document.querySelector("#connections-filter"),
-      name,
-      draftFilters[name],
-      negated.has(name),
-    );
-    return true;
-  }
   if (action === "connections-sort") {
     const column = button.dataset.sortColumn;
     if (!sortColumns.has(column)) return true;
@@ -388,29 +302,15 @@ export async function handleConnectionsAction(button, ctx) {
     updateResults(ctx, column);
     return true;
   }
+  if (action === "connections-filter") applyQueryBuilder("connections");
   await ctx.run(async () => {
     controller?.abort();
     request = null;
     if (action === "connections-kind") {
-      captureFilters();
-      applyFilters();
       kind = button.dataset.kind === "attempts" ? "attempts" : "active";
       snapshot = null;
       error = "";
       ctx.render();
-    }
-    if (action === "connections-reset") {
-      resetQueryBuilder("connections");
-      filters = {};
-      draftFilters = {};
-      negated = new Set();
-      snapshot = null;
-      error = "";
-      ctx.render();
-    }
-    if (action === "connections-filter") {
-      if (!captureFilters()) return;
-      applyFilters(true);
     }
     await refreshConnections(ctx);
   });
@@ -418,13 +318,20 @@ export async function handleConnectionsAction(button, ctx) {
 }
 
 export function setConnectionSource(address) {
-  resetQueryBuilder("connections");
+  setQueryBuilderExpression(
+    "connections",
+    connectionQuerySchema,
+    {
+      kind: "condition",
+      field: "source",
+      op: address.includes("/") ? "in" : "eq",
+      value: address,
+    },
+    { applyAction: "connections-filter" },
+  );
   controller?.abort();
   request = null;
   snapshot = null;
   error = "";
   kind = "active";
-  filters = { source: address };
-  draftFilters = { source: address };
-  negated = new Set();
 }

@@ -39,7 +39,7 @@ test("read accounts can manage their own factor but cannot reset others or start
     "security-confirm",
     "security-disable",
     "connections-filter",
-    "connections-reset",
+    "query-builder-clear",
   ])
     assert.equal(isReadAction(action), true, action);
   for (const action of [
