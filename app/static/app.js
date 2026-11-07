@@ -1,5 +1,11 @@
 import { assertDraftRevision } from "./draft-guards.js";
 import {
+  renderHeaderControls,
+  captureHeaderState,
+  restoreHeaderState,
+  closeHeaderPopovers,
+} from "./header-ui.js?v=1";
+import {
   navigationGroupIds,
   navigationItems,
   expandNavigationForView,
@@ -59,7 +65,7 @@ import {
   refreshUpdates,
   resetUpdates,
   handleUpdatesAction,
-} from "./updates-ui.js?v=1";
+} from "./updates-ui.js?v=2";
 import {
   renderConnections,
   setConnectionSource,
@@ -74,7 +80,7 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=15";
+} from "./router-pages.js?v=16";
 
 import {
   protectionViews,
@@ -499,18 +505,6 @@ function stat(title, number, meta) {
 function brandMarkup() {
   return `<div class="brand"><img src="/logo.png?v=5" alt="OpenMikroRout"><div class="brand-word"><strong>Open<span>Mikro</span>Rout</strong><small>OPEN NETWORK ROUTER</small></div></div>`;
 }
-function accountMarkup() {
-  const user = currentUser();
-  const authenticated = state.auth_enabled === true;
-  const name = user?.username || "Локальный администратор";
-  const role = canWrite() ? "full" : "read";
-  const initials = user?.username
-    ? user.username.slice(0, 2).toUpperCase()
-    : isDemo()
-      ? "DM"
-      : "AD";
-  return `<div class="account"><div class="avatar">${e(initials)}</div><div><strong>${e(name)}</strong><small>${authenticated ? `<span class="role-badge role-${role}">${role}</span> ${role === "full" ? "Полный доступ" : "Только просмотр"}` : "Авторизация отключена"}</small></div>${authenticated ? `<button class="icon ghost" title="Выйти" aria-label="Выйти" data-action="logout">${icon("logout")}</button>` : ""}</div>`;
-}
 function routerContext() {
   return {
     state,
@@ -566,6 +560,7 @@ function routerContext() {
 function render() {
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   if (!state) return;
+  const headerState = captureHeaderState(root);
   const previousNavigation = document.querySelector(".sidebar-navigation");
   if (previousNavigation) sidebarScroll = previousNavigation.scrollTop;
   const sidebarOpen = document
@@ -711,11 +706,10 @@ function render() {
                                 : "") + renderRouterView(view, routerContext());
   root.innerHTML = `<div class="app-shell">
     <aside class="sidebar ${sidebarOpen ? "open" : ""}" id="sidebar">${brandMarkup()}
-      <div class="workspace"><div class="workspace-icon">${icon("server")}</div><div><b>${isDemo() ? "Demo Router" : e(state.hostname)}</b><small>${isDemo() ? "DEMO WORKSPACE" : "LINUX GATEWAY"}</small></div></div>
       <nav class="sidebar-navigation" aria-label="Настройки роутера">${renderNavigation()}</nav>
-      <div class="sidebar-bottom"><button class="nav-item" data-action="help">${icon("help")}Справка</button><div class="engine-card"><span class="version">v${e(state.version || "0.3.0")}</span><b><span class="dot"></span>${isDemo() ? "Demo engine" : "Linux router"}</b><br>${isDemo() ? "Сеть хоста не изменяется" : "IPv4 · iptables · dnsmasq"}</div>${accountMarkup()}</div>
+      <div class="sidebar-bottom"><button class="nav-item" data-action="help">${icon("help")}Справка</button></div>
     </aside><button class="sidebar-scrim" data-action="menu" aria-label="Закрыть меню" tabindex="-1"></button>
-    <main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false" data-action="menu">${icon("menu")}</button>${icon("network")}<span>OpenMikroRout</span>${icon("chevron")}${renderNavigationBreadcrumbs(navigationContext(), title)}</div><div class="topbar-right"><span class="muted"><span class="dot"></span>${offline ? "Нет соединения" : "Сервер подключён"}</span><span class="divider"></span><span class="mode-chip ${isDemo() ? "" : "live"}">${isDemo() ? "DEMO MODE" : "LINUX · LIVE"}</span></div></header>
+    <main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false" data-action="menu">${icon("menu")}</button>${icon("network")}${renderNavigationBreadcrumbs(navigationContext(), title)}</div>${renderHeaderControls(routerContext())}</header>
     <div class="content">${state.runtime_error ? `<div class="connection-error" role="alert">${icon("info")} Восстановление конфигурации требует внимания: ${e(state.runtime_error)}</div>` : ""}${offline ? '<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>' : ""}
       ${!canWrite() ? `<div class="read-only-banner">${icon("lock")}Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}
       <div class="page-heading"><div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="preview" title="Предпросмотр конфигурации">${icon("terminal")}<span class="btn-label">Preview</span></button><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Export</span></button></div></div>
@@ -728,6 +722,7 @@ function render() {
   if (navigation) navigation.scrollTop = sidebarScroll;
   setNavigationOpen(sidebarOpen);
   applyAccessControls();
+  restoreHeaderState(root, headerState);
 }
 
 function filteredRules() {
@@ -1901,6 +1896,11 @@ document.addEventListener("drop", (event) => {
 });
 document.addEventListener("dragend", endDrag);
 document.addEventListener("click", (event) => {
+  const popover = event.target.closest("details[data-header-popover]");
+  if (!popover || event.target.closest("summary,button[data-action]"))
+    closeHeaderPopovers(root, {
+      except: event.target.closest("summary") ? popover : null,
+    });
   const button = event.target.closest("button[data-action]");
   if (button) {
     void handleAction(button).catch((error) => toast(error.message, true));
@@ -1918,6 +1918,14 @@ document.addEventListener("dblclick", (event) => {
     openEditor(row.dataset.rule);
 });
 document.addEventListener("keydown", (event) => {
+  if (
+    event.key === "Escape" &&
+    !dialog.open &&
+    closeHeaderPopovers(root, { restoreFocus: true })
+  ) {
+    event.preventDefault();
+    return;
+  }
   if (
     event.key === "Escape" &&
     !dialog.open &&

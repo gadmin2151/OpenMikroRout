@@ -24,7 +24,97 @@ const phases = {
   failed: "Обновление не установлено",
 };
 
+/** Wait for the worker's completed health check, not just a listening server. */
+export function createUpdateReloadWatcher({
+  fetchHealth = async () => {
+    const response = await fetch("/api/health", {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw new Error("Сервис перезапускается.");
+    return response.json();
+  },
+  reload = () => window.location.reload(),
+  schedule = (callback) => setTimeout(callback, 1000),
+  cancel = clearTimeout,
+  now = Date.now,
+  onStopped = () => {},
+} = {}) {
+  let pending = null,
+    timer = null,
+    reloadedVersion = "";
+  function stop() {
+    pending = null;
+    cancel(timer);
+    timer = null;
+  }
+  async function poll(installation) {
+    try {
+      const health = await fetchHealth();
+      if (pending !== installation) return;
+      if (health?.update?.version === installation.version) {
+        if (health.update.phase === "failed") {
+          stop();
+          onStopped(
+            "Обновление не установлено. Подробности — в разделе обновлений.",
+          );
+          return;
+        }
+        if (
+          health.update.phase === "succeeded" &&
+          health.status === "ok" &&
+          health.version === installation.version
+        ) {
+          stop();
+          reloadedVersion = installation.version;
+          reload();
+          return;
+        }
+      }
+    } catch {
+      // A restart temporarily interrupts requests; retry within a bounded window.
+    }
+    if (pending !== installation) return;
+    if (now() >= installation.deadline) {
+      stop();
+      onStopped(
+        "Не удалось дождаться обновления. Проверьте состояние сервиса и обновите страницу.",
+      );
+      return;
+    }
+    timer = schedule(() => poll(installation));
+  }
+  return {
+    watch(version) {
+      if (
+        !/^\d+\.\d+\.\d+$/.test(version || "") ||
+        version === pending?.version ||
+        version === reloadedVersion
+      )
+        return;
+      stop();
+      pending = { version, deadline: now() + 30 * 60 * 1000 };
+      void poll(pending);
+    },
+    stop,
+  };
+}
+
+let notifyUpdate = () => {};
+const updateReload = createUpdateReloadWatcher({
+  onStopped: (message) => notifyUpdate(message, true),
+});
+
+function watchUpdate(job, ctx) {
+  if (!activePhases.has(job?.phase)) return;
+  notifyUpdate = ctx.toast;
+  updateReload.watch(job.version);
+}
+
 export function resetUpdates() {
+  // The public-health watcher intentionally survives logout during a restart.
+  // It retains only the target version, not authenticated session data.
   status = null;
   error = "";
   request = null;
@@ -52,6 +142,7 @@ export async function refreshUpdates(ctx) {
         JSON.stringify(status) !== JSON.stringify(result) || error;
       status = result;
       error = "";
+      watchUpdate(result.job, ctx);
       if (changed && ctx.isCurrentView("updates") && !ctx.dialog.open)
         ctx.render();
     } catch (failure) {
@@ -111,8 +202,11 @@ export async function handleUpdatesAction(button, ctx) {
     clearProof(ctx);
     ctx.dialog.close();
     status.job = job;
+    watchUpdate(job, ctx);
     ctx.render();
-    ctx.toast("Обновление запущено. После перезапуска войдите снова.");
+    ctx.toast(
+      "Обновление запущено. После проверки запуска страница обновится автоматически.",
+    );
   });
   return true;
 }

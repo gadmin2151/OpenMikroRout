@@ -16,7 +16,6 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from app.auth import (
@@ -51,6 +50,7 @@ from app.telemetry_history import HistoryResponse, TelemetryHistory
 from app.totp import CredentialProof, TotpEnrollment, TotpRecovery, TotpStatus
 from app.updates import UpdateApply, UpdateError, UpdateJob, UpdateService, UpdateStatus
 from app.version import VERSION
+from app.web_assets import WebAssets
 from app.web_domain import PanelHostMiddleware
 from app.wireguard_api import wireguard_router
 from app.wireguard_vault import WireGuardVault
@@ -389,8 +389,15 @@ def create_app(
         return JSONResponse({"detail": errors}, status_code=422)
 
     @app.get("/api/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok", "mode": settings.mode, "version": VERSION}
+    def health() -> dict[str, Any]:
+        # The browser must follow a restart after its authenticated session expires.
+        # Expose only release progress, never job IDs, errors or configuration.
+        try:
+            job = updates.job()
+            update = {"version": job.version, "phase": job.phase} if job else None
+        except UpdateError:
+            update = {"version": "", "phase": "unavailable"}
+        return {"status": "ok", "mode": settings.mode, "version": VERSION, "update": update}
 
     @app.get("/api/session")
     def session(request: Request) -> SessionResponse:
@@ -653,5 +660,5 @@ def create_app(
         forwarding = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip() == "1"
         return {"interfaces": items, "forwarding": forwarding, "demo": False}
 
-    app.mount("/", StaticFiles(directory=STATIC, html=True), name="web")
+    app.mount("/", WebAssets(directory=STATIC, html=True), name="web")
     return app
