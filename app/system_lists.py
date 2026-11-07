@@ -324,8 +324,14 @@ class GeoIPLookupRequest(BaseModel):
 
 
 def resolved_system_lists(config: "Configuration") -> dict[str, SystemAddressList]:
-    """Profiles own temporary sets; users register country lists in configuration."""
+    """Resolve explicit lists plus countries and temporary sets used by rules/profiles."""
     result = {item.name: item for item in config.system_lists}
+    for rule in [*config.rules, *config.filter_rules]:
+        for code in (rule.src_country, rule.dst_country):
+            if code:
+                result[f"geo_{code}"] = SystemAddressList(
+                    name=f"geo_{code}", kind="country", country=code
+                )
     fail2ban = getattr(config, "fail2ban", None)
     profiles = {profile.id for profile in fail2ban.profiles} if fail2ban is not None else set()
     if any(
@@ -357,6 +363,18 @@ def required_system_lists(config: "Configuration") -> dict[str, SystemAddressLis
         for ref in (rule.src_list, rule.dst_list)
         if ref in definitions
     }
+    needed.update(
+        f"geo_{code}"
+        for rule in [*config.rules, *config.filter_rules]
+        if rule.enabled
+        for code in (rule.src_country, rule.dst_country)
+        if code
+    )
+    needed.update(
+        f"f2b_{rule.f2b_profile}"
+        for rule in [*config.rules, *config.filter_rules]
+        if rule.enabled and rule.f2b_profile
+    )
     f2b = getattr(config, "fail2ban", None)
     if f2b is not None and f2b.enabled:
         for profile in f2b.profiles:

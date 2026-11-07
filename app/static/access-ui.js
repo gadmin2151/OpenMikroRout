@@ -22,6 +22,7 @@ const readActions = new Set([
   "edit-list",
   "editor-tab",
   "router-edit",
+  "router-editor-tab",
   "router-port-edit",
   "router-reload-dns",
   "security-enroll",

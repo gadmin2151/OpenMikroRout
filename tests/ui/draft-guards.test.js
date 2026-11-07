@@ -64,6 +64,10 @@ function context(revision = 4) {
   const calls = [];
   const form = {
     reportValidity: () => true,
+    querySelector(selector) {
+      const name = /name="([^"]+)"/.exec(selector)?.[1];
+      return this.entries.some(([key]) => key === name) ? {} : null;
+    },
     dataset: {},
     entries: [
       ["interface", "eth0"],

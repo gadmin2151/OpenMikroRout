@@ -2275,6 +2275,25 @@ dialog::backdrop {
   padding: 9px 11px;
   line-height: 1.65;
 }
+.rule-security-fields > p,
+.rule-security-fields output,
+.rule-condition-help {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.rule-condition-help {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.rule-condition-help summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.rule-condition-help p {
+  margin: 8px 0 0;
+}
 .winbox-form .form-divider {
   margin: 5px 0;
 }

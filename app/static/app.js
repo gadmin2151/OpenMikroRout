@@ -1,4 +1,5 @@
 import { assertDraftRevision } from "./draft-guards.js";
+import { countryField, renderRuleFail2ban } from "./rule-security-ui.js?v=1";
 import {
   loginMarkup,
   bindLoginControls,
@@ -37,7 +38,7 @@ import {
   hasWriteAccess,
   isReadAction,
   applyReadAccess,
-} from "./access-ui.js?v=6";
+} from "./access-ui.js?v=7";
 import { renderUsers, handleUsersAction } from "./users-ui.js?v=2";
 import { renderSecurity, handleSecurityAction } from "./security-ui.js?v=1";
 import {
@@ -60,7 +61,7 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=13";
+} from "./router-pages.js?v=14";
 
 import {
   protectionViews,
@@ -72,7 +73,7 @@ import {
   renderSystemLists,
   addressListChoices,
   renderF2BRuleSummary,
-} from "./protection-ui.js?v=1";
+} from "./protection-ui.js?v=2";
 import {
   discoveryViews,
   renderDiscovery,
@@ -398,9 +399,22 @@ function listRef(name) {
   return `<span class="list-ref">${icon("list")}${e(name)}</span>`;
 }
 function addr(rule, side) {
-  return rule[`${side}_list`]
+  const address = rule[`${side}_list`]
     ? listRef(rule[`${side}_list`])
     : `<span class="mono ${rule[`${side}_address`] ? "" : "muted"}">${e(rule[`${side}_address`] || "any")}</span>`;
+  const country = rule[`${side}_country`];
+  const conditions = [
+    country ? `Country: ${country}` : "",
+    side === "src" && rule.f2b_profile
+      ? `${rule.f2b_match === "banned" ? "∈" : "∉"} f2b_${rule.f2b_profile}`
+      : "",
+  ].filter(Boolean);
+  return (
+    address +
+    (conditions.length
+      ? `<small class="cell-note">${e(conditions.join(" · "))}</small>`
+      : "")
+  );
 }
 function target(rule) {
   return rule.to_address
@@ -819,7 +833,7 @@ function renderRuleRows(rows) {
 }
 function renderDetail(r) {
   if (!r) return "";
-  return `<div class="detail"><div class="detail-title"><b>${e(r.name)} <span>· предпросмотр потока</span></b><button class="small ghost" data-action="edit" data-id="${e(r.id)}" ${state.pending ? "disabled" : ""}>${icon("edit")}Редактировать</button></div><div class="flow"><div class="flow-item"><div class="flow-label">Source</div><div class="flow-value">${e(r.src_list || r.src_address || "any")}${r.src_ports ? " : " + e(r.src_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">Match · ${e(r.chain)}</div><div class="flow-value">${e(r.protocol.toUpperCase())} → ${e(r.dst_list || r.dst_address || "any")}${r.dst_ports ? " : " + e(r.dst_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">${e(r.action)}</div><div class="flow-value">${e(target(r))}</div></div></div></div>`;
+  return `<div class="detail"><div class="detail-title"><b>${e(r.name)} <span>· предпросмотр потока</span></b><button class="small ghost" data-action="edit" data-id="${e(r.id)}" ${state.pending ? "disabled" : ""}>${icon("edit")}Редактировать</button></div><div class="flow"><div class="flow-item"><div class="flow-label">Source</div><div class="flow-value">${addr(r, "src")}${r.src_ports ? " : " + e(r.src_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">Match · ${e(r.chain)}</div><div class="flow-value">${e(r.protocol.toUpperCase())} → ${addr(r, "dst")}${r.dst_ports ? " : " + e(r.dst_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">${e(r.action)}</div><div class="flow-value">${e(target(r))}</div></div></div></div>`;
 }
 function empty(ico, title, description) {
   return `<div class="empty">${icon(ico)}<p>${e(title)}</p><small>${e(description)}</small></div>`;
@@ -881,6 +895,10 @@ const defaultRule = () => ({
   dst_address: "",
   src_list: "",
   dst_list: "",
+  src_country: "",
+  dst_country: "",
+  f2b_profile: "",
+  f2b_match: "not_banned",
   src_ports: "",
   dst_ports: "",
   in_interface: "",
@@ -979,8 +997,13 @@ function renderEditor() {
     content = `<div class="winbox-form">
     ${selectField("Src. Address List", "src_list", r.src_list, [["", "Не использовать"], ...addressListChoices(state.config)])}
     ${selectField("Dst. Address List", "dst_list", r.dst_list, [["", "Не использовать"], ...addressListChoices(state.config)])}
+    ${countryField(routerContext(), "src_country", r.src_country)}
+    ${countryField(routerContext(), "dst_country", r.dst_country)}
+    <div class="field-note">Страна дополняет адрес и список: должны совпасть все условия. Dst. Country в dstnat проверяется до подмены назначения. База стран и обновления — Security → GeoIP.</div>
     ${selectField("In. Interface List", "in_interface_list", r.in_interface_list || "", [["", "Не использовать"], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}${selectField("Out. Interface List", "out_interface_list", r.out_interface_list || "", [["", "Не использовать"], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}<div class="field-note">Для source и destination укажите адрес в General или список здесь. Если список ещё не создан, добавьте его в Address Lists.</div>
     <div class="form-divider"></div><div class="field"><span>Connection State</span><div class="states">${["NEW", "ESTABLISHED", "RELATED", "INVALID", "UNTRACKED"].map((value) => `<label class="checkbox-label"><input type="checkbox" name="state" value="${value}" ${r.connection_states.includes(value) ? "checked" : ""}>${value.toLowerCase()}</label>`).join("")}</div><small>Без отметок — любое состояние.</small></div></div>`;
+  if (editorTab === "fail2ban")
+    content = renderRuleFail2ban(routerContext(), r);
   if (editorTab === "action")
     content = `<div class="winbox-form">
     ${selectField("Action", "action", r.action, r.chain === "srcnat" ? ["masquerade", "src-nat", "accept"] : ["dst-nat", "redirect", "accept"])}
@@ -999,6 +1022,7 @@ function renderEditor() {
     `<div class="dialog-tabs">${[
       ["general", "General"],
       ["advanced", "Advanced"],
+      ["fail2ban", "Fail2ban"],
       ["action", "Action"],
       ["statistics", "Statistics"],
     ]
@@ -1011,6 +1035,7 @@ function renderEditor() {
   dialog.classList.add("winbox-editor");
 }
 function collectRule() {
+  if (!canWrite()) return;
   const form = dialog.querySelector("#rule-form");
   if (!form) return;
   for (const [key, val] of new FormData(form)) {
@@ -2001,6 +2026,10 @@ document.addEventListener("change", (event) => {
   }
   if (node.id === "rule-enabled" && draft && canWrite())
     draft.enabled = node.checked;
+  if (node.name === "f2b_profile" && dialog.querySelector("#rule-form")) {
+    collectRule();
+    renderEditor();
+  }
   if (node.name === "chain" && dialog.querySelector("#rule-form")) {
     collectRule();
     draft.action = draft.chain === "srcnat" ? "masquerade" : "dst-nat";

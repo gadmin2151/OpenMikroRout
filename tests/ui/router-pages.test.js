@@ -166,3 +166,170 @@ test("DNS forwarding defaults to preserve and opening settings never modifies co
   assert.ok(html.includes('value="preserve" selected'));
   assert.deepEqual(ctx.state.config, before);
 });
+
+function editorContext(item, writable = true) {
+  const ctx = context({
+    filter_rules: [item],
+    fail2ban: { enabled: false, profiles: [] },
+  });
+  ctx.state.revision = 7;
+  ctx.canWrite = () => writable;
+  ctx.currentForm = null;
+  ctx.dialog = {
+    classList: { add() {} },
+    close() {},
+    querySelector: () => ctx.currentForm,
+  };
+  ctx.dialogFrame = (_title, _description, body, _footer, tabs) => {
+    ctx.body = body;
+    ctx.tabs = tabs;
+  };
+  ctx.run = async (fn) => fn();
+  ctx.toast = () => {};
+  ctx.saveConfig = async (config, revision) => {
+    assert.equal(revision, 7);
+    ctx.saved = config;
+    return { config, revision: 8 };
+  };
+  return ctx;
+}
+function form(values) {
+  return {
+    values,
+    dataset: {},
+    reportValidity: () => true,
+    querySelector(selector) {
+      const key = /name="([^"]+)"/.exec(selector)?.[1];
+      return Object.hasOwn(values, key) ? {} : null;
+    },
+  };
+}
+class TestFormData {
+  constructor(form) {
+    this.values = form.values;
+  }
+  has(key) {
+    return this.values[key] !== null && Object.hasOwn(this.values, key);
+  }
+  get(key) {
+    return this.values[key] ?? null;
+  }
+  getAll(key) {
+    return this.values[key] == null ? [] : [this.values[key]].flat();
+  }
+}
+
+test("Filter tabs preserve hidden conditions, clear visible checks, and save all tabs atomically", async (t) => {
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = TestFormData;
+  t.after(() => {
+    globalThis.FormData = originalFormData;
+  });
+  const original = {
+    id: "filter-1",
+    name: "Initial",
+    chain: "forward",
+    action: "accept",
+    protocol: "tcp",
+    enabled: true,
+    src_address: "10.0.0.0/24",
+    dst_address: "",
+    src_list: "",
+    dst_list: "",
+    src_country: "MD",
+    dst_country: "RO",
+    f2b_profile: "web",
+    f2b_match: "not_banned",
+    connection_states: ["NEW"],
+    dst_ports: "443",
+    comment: "preserve",
+  };
+  const ctx = editorContext(original);
+  const action = (name, data = {}) =>
+    handleRouterAction({ dataset: { action: name, ...data } }, ctx);
+  await action("router-edit", { kind: "filter", id: original.id });
+  assert.match(ctx.tabs, /General.*Advanced.*Fail2ban.*Action/);
+  assert.ok(!ctx.body.includes('name="action"'));
+  ctx.currentForm = form({ name: "Edited", enabled: null, dst_ports: "8443" });
+  await action("router-editor-tab", { tab: "advanced" });
+  assert.match(ctx.body, /Src\. Country/);
+  assert.match(ctx.body, /value="RO" selected/);
+  ctx.currentForm = form({
+    src_country: "US",
+    dst_country: "",
+    connection_states: null,
+  });
+  await action("router-editor-tab", { tab: "fail2ban" });
+  assert.match(ctx.body, /value="web" selected/);
+  ctx.currentForm = form({ f2b_profile: "ssh", f2b_match: "banned" });
+  await action("router-editor-tab", { tab: "action" });
+  assert.match(ctx.body, /name="action"/);
+  ctx.currentForm = form({ action: "drop" });
+  await action("router-save");
+  assert.deepEqual(ctx.saved.filter_rules[0], {
+    ...original,
+    name: "Edited",
+    enabled: false,
+    dst_ports: "8443",
+    src_country: "US",
+    dst_country: "",
+    connection_states: [],
+    f2b_profile: "ssh",
+    f2b_match: "banned",
+    action: "drop",
+  });
+  assert.equal(original.name, "Initial");
+});
+
+test("read users can navigate all Filter tabs without disabled controls altering values", async (t) => {
+  t.mock.method(globalThis, "FormData", function () {
+    throw new Error("Read controls must not be collected");
+  });
+  const item = {
+    id: "readonly",
+    name: "Inspect",
+    chain: "forward",
+    action: "drop",
+    src_country: "MD",
+    f2b_profile: "web",
+    f2b_match: "banned",
+  };
+  const ctx = editorContext(item, false);
+  await handleRouterAction(
+    { dataset: { action: "router-edit", kind: "filter", id: item.id } },
+    ctx,
+  );
+  for (const tab of ["advanced", "fail2ban", "action", "general", "advanced"])
+    await handleRouterAction(
+      { dataset: { action: "router-editor-tab", tab } },
+      ctx,
+    );
+  assert.match(ctx.body, /value="MD" selected/);
+  assert.equal(ctx.saved, undefined);
+  assert.equal(item.f2b_match, "banned");
+});
+
+test("Filter table makes country and Fail2ban conditions visible without opening rules", () => {
+  const html = renderRouterView(
+    "filter",
+    context({
+      filter_rules: [
+        {
+          id: "rule",
+          name: "Country",
+          chain: "forward",
+          action: "drop",
+          protocol: "tcp",
+          enabled: true,
+          src_country: "MD",
+          dst_country: "RO",
+          f2b_profile: "ssh",
+          f2b_match: "banned",
+        },
+      ],
+    }),
+  );
+  assert.match(html, /Country: MD/);
+  assert.match(html, /Country: RO/);
+  assert.match(html, /∈ f2b_ssh/);
+});

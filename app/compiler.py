@@ -69,9 +69,26 @@ def match_tokens(
     for flag, value in (("--sports", rule.src_ports), ("--dports", rule.dst_ports)):
         if value:
             tokens += ["-m", "multiport", flag, value.replace("-", ":")]
-    for ref, direction in ((rule.src_list, "src"), (rule.dst_list, "dst")):
+    set_matches = [
+        (rule.src_list, "src", False),
+        (rule.dst_list, "dst", False),
+    ]
+    if rule.src_country:
+        set_matches.append((f"geo_{rule.src_country}", "src", False))
+    if rule.dst_country:
+        set_matches.append((f"geo_{rule.dst_country}", "dst", False))
+    if rule.f2b_profile:
+        set_matches.append((f"f2b_{rule.f2b_profile}", "src", rule.f2b_match == "not_banned"))
+    for ref, direction, invert in dict.fromkeys(set_matches):
         if is_system_list(ref):
-            tokens += ["-m", "set", "--match-set", kernel_set_name(ref), direction]
+            tokens += [
+                "-m",
+                "set",
+                *(["!"] if invert else []),
+                "--match-set",
+                kernel_set_name(ref),
+                direction,
+            ]
     if rule.connection_states:
         tokens += ["-m", "conntrack", "--ctstate", ",".join(rule.connection_states)]
     tokens += ["-m", "comment", "--comment", f"{marker}:{rule.id}"]

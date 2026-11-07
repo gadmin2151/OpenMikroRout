@@ -37,7 +37,7 @@ Linux tools. No cloud account is required.
 
 | Area                        | Included                                                                                                                                                    |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Security** | Fail2ban with expiring address lists, local GeoIP country matching in Firewall/NAT; disabled by default |
+| **Security** | Src./Dst. Country and a Fail2ban condition tab in NAT/Filter editors; shared profiles, expiring ban lists and the local GeoIP database remain in Security. Ban collection is disabled by default |
 | **Hosts & Scan** | ARP/DHCP/LLDP/CDP/MNDP inventory and bounded asynchronous network/port scans with cancellation |
 | **WireGuard VPN**           | Server, client and site-to-site; setup wizards, `.conf` import, peers, Allowed IPs, PSK, client profiles and QR codes                                       |
 | **VPN routing**             | Selected LAN source networks, dedicated routing tables, kill switch, peer status and DNS endpoint refresh                                                   |

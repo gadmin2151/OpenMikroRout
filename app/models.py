@@ -9,10 +9,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.config_migrations import migrate_legacy_address_lists
 from app.discovery_models import DiscoverySettings, ScanSettings
-from app.fail2ban_models import F2BConfiguration
+from app.fail2ban_models import F2BConfiguration, profile_id
 from app.ipv4 import domain_name
 from app.network_models import NetworkConfiguration
-from app.system_lists import GeoIPSettings, SystemAddressList, is_system_list, resolved_system_lists
+from app.system_lists import (
+    GeoIPSettings,
+    SystemAddressList,
+    country_code,
+    is_system_list,
+    resolved_system_lists,
+)
 
 MAX_COMPILED_RULES = 4096
 MAX_RULE_EXPANSION = 256
@@ -80,6 +86,10 @@ class RuleMatch(Model):
     dst_address: str = Field(default="", max_length=32)
     src_list: str = Field(default="", max_length=40)
     dst_list: str = Field(default="", max_length=40)
+    src_country: str = Field(default="", max_length=2)
+    dst_country: str = Field(default="", max_length=2)
+    f2b_profile: str = Field(default="", max_length=20)
+    f2b_match: Literal["banned", "not_banned"] = "not_banned"
     src_ports: str = Field(default="", max_length=200)
     dst_ports: str = Field(default="", max_length=200)
     in_interface: str = Field(default="", max_length=15)
@@ -95,6 +105,16 @@ class RuleMatch(Model):
     @classmethod
     def validate_network(cls, value: str) -> str:
         return network(value) if value else value
+
+    @field_validator("src_country", "dst_country")
+    @classmethod
+    def validate_country(cls, value: str) -> str:
+        return country_code(value) if value else ""
+
+    @field_validator("f2b_profile")
+    @classmethod
+    def validate_f2b_profile(cls, value: str) -> str:
+        return profile_id(value) if value else ""
 
     @field_validator("src_ports", "dst_ports")
     @classmethod
@@ -220,7 +240,10 @@ class Configuration(Model):
         if len(set(ids)) != len(ids):
             raise ValueError("Rule and address list identifiers must be unique")
         count = 0
+        profiles = {profile.id for profile in self.fail2ban.profiles}
         for rule in rules:
+            if rule.f2b_profile and rule.f2b_profile not in profiles:
+                raise ValueError(f"Unknown Fail2ban profile: {rule.f2b_profile}")
             expansion = 1
             for ref in (rule.src_list, rule.dst_list):
                 if ref and ref not in lists and ref not in systems:

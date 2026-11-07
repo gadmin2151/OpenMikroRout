@@ -1,7 +1,8 @@
-import { addressListChoices } from "./protection-ui.js?v=1";
+import { addressListChoices } from "./protection-ui.js?v=2";
 import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
 import { renderTelemetry } from "./telemetry-ui.js?v=7";
+import { countryField, renderRuleFail2ban } from "./rule-security-ui.js?v=1";
 
 /** Router configuration views. All writes use the existing revisioned draft API. */
 
@@ -270,6 +271,10 @@ const itemSchemas = {
       ["dst_address", "Dst. Address", "text", ""],
       ["src_list", "Src. Address List", "address-list", ""],
       ["dst_list", "Dst. Address List", "address-list", ""],
+      ["src_country", "Src. Country", "country", ""],
+      ["dst_country", "Dst. Country", "country", ""],
+      ["f2b_profile", "Ban list · профиль", "text", ""],
+      ["f2b_match", "Source IP", "f2b-match", "not_banned"],
       ["src_ports", "Src. Port", "text", ""],
       ["dst_ports", "Dst. Port", "text", ""],
       ["in_interface", "In. Interface", "interface", ""],
@@ -395,6 +400,7 @@ function renderField(ctx, definition, item) {
   const [key, label, type, fallback, required] = definition;
   const e = ctx.e;
   const value = item[key] ?? fallback;
+  if (type === "country") return countryField(ctx, key, value);
   if (type === "bool")
     return `<div class="field router-checkbox"><span>${e(label)}</span><label class="checkbox-label"><input type="checkbox" name="${key}" ${value ? "checked" : ""}>${key === "stp" ? "Защита от петель" : "Включено"}</label></div>`;
   if (type === "lines")
@@ -421,8 +427,18 @@ function valueCell(ctx, key, item) {
     return `<span class="status-tag ${value ? "on" : "off"}"><i class="dot ${value ? "" : "off"}"></i>${value ? "enabled" : "disabled"}</span>`;
   if (key === "stp") return value ? "on" : "off";
   if (key === "action") return ctx.actionBadge(value);
-  if (key === "src_address") return ctx.e(item.src_list || value || "any");
-  if (key === "dst_address") return ctx.e(item.dst_list || value || "any");
+  if (key === "src_address" || key === "dst_address") {
+    const source = key === "src_address";
+    const country = item[source ? "src_country" : "dst_country"];
+    const list = item[source ? "src_list" : "dst_list"];
+    const details = [];
+    if (country) details.push(`Country: ${country}`);
+    if (source && item.f2b_profile)
+      details.push(
+        `${item.f2b_match === "banned" ? "∈" : "∉"} f2b_${item.f2b_profile}`,
+      );
+    return `${ctx.e(list || value || "any")}${details.length ? `<small class="cell-note">${ctx.e(details.join(" · "))}</small>` : ""}`;
+  }
   return ctx.e(Array.isArray(value) ? value.join(", ") || "—" : (value ?? "—"));
 }
 
@@ -606,13 +622,48 @@ function showEntityEditor(
   item,
   existing,
   revision = ctx.state.revision,
+  tab = "general",
 ) {
-  editing = { kind, id: item.id, item, revision };
+  editing = { kind, id: item.id, item, revision, tab, existing };
+  const tabs = [
+    ["general", "General"],
+    ["advanced", "Advanced"],
+    ["fail2ban", "Fail2ban"],
+    ["action", "Action"],
+  ];
+  const advanced = new Set([
+    "src_list",
+    "dst_list",
+    "src_country",
+    "dst_country",
+    "in_interface_list",
+    "out_interface_list",
+    "connection_states",
+  ]);
+  const security = new Set(["f2b_profile", "f2b_match"]);
+  const fields = itemSchemas[kind].fields.filter(([key]) => {
+    if (kind !== "filter") return true;
+    if (tab === "advanced") return advanced.has(key);
+    if (tab === "action") return key === "action";
+    if (tab === "fail2ban") return false;
+    return !advanced.has(key) && !security.has(key) && key !== "action";
+  });
+  const content =
+    kind === "filter" && tab === "fail2ban"
+      ? renderRuleFail2ban(ctx, item)
+      : fields.map((field) => renderField(ctx, field, item)).join("");
+  const note =
+    kind === "filter" && tab === "advanced"
+      ? "Страна проверяется вместе с адресом или Address List (AND). GeoIP-список создаётся автоматически при применении. Требуется база GeoIP в Security → GeoIP. Для private IP страна неизвестна."
+      : itemSchemas[kind].note;
   ctx.dialogFrame(
     `${existing ? "Edit" : "New"} ${itemSchemas[kind].title}`,
     "OK / Apply сохраняют настройки в общий черновик роутера.",
-    `<div class="rule-editor-layout"><form id="router-form" class="winbox-form" data-kind="${kind}" data-revision="${revision}">${itemSchemas[kind].fields.map((field) => renderField(ctx, field, item)).join("")}<div class="field-note">${ctx.e(itemSchemas[kind].note)}</div></form><aside class="rule-actions"><button class="primary" data-action="router-save">OK</button><button data-action="close">Cancel</button><button data-action="router-apply">Apply</button><div class="form-divider"></div><button data-action="router-editor-copy">${ctx.icon("copy")}Copy</button></aside></div>`,
+    `<div class="rule-editor-layout"><form id="router-form" class="winbox-form" data-kind="${kind}" data-revision="${revision}">${content}${kind === "filter" && tab === "fail2ban" ? "" : `<div class="field-note">${ctx.e(note)}</div>`}</form><aside class="rule-actions"><button class="primary" data-action="router-save">OK</button><button data-action="close">Cancel</button><button data-action="router-apply">Apply</button><div class="form-divider"></div><button data-action="router-editor-copy">${ctx.icon("copy")}Copy</button></aside></div>`,
     '<span class="muted">Черновик · применение к сети отдельно</span>',
+    kind === "filter"
+      ? `<div class="dialog-tabs">${tabs.map(([key, label]) => `<button class="dialog-tab ${tab === key ? "active" : ""}" data-action="router-editor-tab" data-tab="${key}">${label}</button>`).join("")}</div>`
+      : "",
   );
   ctx.dialog.classList.add("winbox-editor", "router-editor");
 }
@@ -638,6 +689,8 @@ function readForm(schema, form, original) {
   const values = new FormData(form);
   const result = structuredClone(original);
   for (const [key, , type] of schema.fields) {
+    // Filter tabs mount only their own fields. Hidden conditions stay in the draft.
+    if (!form.querySelector(`[name="${key}"]`)) continue;
     if (type === "bool") result[key] = values.has(key);
     else if (["interfaces", "states"].includes(type))
       result[key] = values.getAll(key).map(String);
@@ -690,6 +743,31 @@ function updateNameReferences(config, kind, oldName, newName) {
 export async function handleRouterAction(button, ctx) {
   const { action, kind, id } = button.dataset;
   if (!action.startsWith("router-")) return false;
+  if (action === "router-editor-tab") {
+    if (
+      editing?.kind !== "filter" ||
+      !["general", "advanced", "fail2ban", "action"].includes(
+        button.dataset.tab,
+      )
+    )
+      return true;
+    const item = ctx.canWrite()
+      ? readForm(
+          itemSchemas.filter,
+          ctx.dialog.querySelector("#router-form"),
+          editing.item,
+        )
+      : editing.item;
+    showEntityEditor(
+      ctx,
+      "filter",
+      item,
+      editing.existing,
+      editing.revision,
+      button.dataset.tab,
+    );
+    return true;
+  }
   if (action === "router-save-domain") {
     if (!ctx.canWrite()) throw new Error("Нужна учётная запись full.");
     const form = document.querySelector("#router-domain-form");
@@ -777,7 +855,14 @@ export async function handleRouterAction(button, ctx) {
             ? 10
             : 30,
         ) + "-copy";
-    showEntityEditor(ctx, editing.kind, item, false, editing.revision);
+    showEntityEditor(
+      ctx,
+      editing.kind,
+      item,
+      false,
+      editing.revision,
+      editing.tab,
+    );
     return true;
   }
   if (action === "router-remove") {
@@ -903,6 +988,22 @@ export function handleRouterChange(event, ctx) {
     return;
   }
   const form = event.target.closest("#router-form");
+  if (
+    form?.dataset.kind === "filter" &&
+    event.target.name === "f2b_profile" &&
+    ctx.canWrite()
+  ) {
+    const item = readForm(itemSchemas.filter, form, editing.item);
+    showEntityEditor(
+      ctx,
+      "filter",
+      item,
+      editing.existing,
+      editing.revision,
+      editing.tab,
+    );
+    return;
+  }
   if (
     !form ||
     form.dataset.kind !== "dhcp_servers" ||

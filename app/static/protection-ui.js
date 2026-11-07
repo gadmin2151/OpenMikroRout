@@ -435,6 +435,13 @@ export async function handleProtectionAction(button, ctx) {
 export function addressListChoices(config) {
   const names = new Set((config.address_lists || []).map((item) => item.name));
   for (const item of config.system_lists || []) names.add(item.name);
+  for (const rule of [
+    ...(config.rules || []),
+    ...(config.filter_rules || []),
+  ]) {
+    for (const code of [rule.src_country, rule.dst_country])
+      if (code) names.add(`geo_${code}`);
+  }
   for (const profile of config.fail2ban?.profiles || []) {
     names.add(`f2b_${profile.id}`);
     for (const code of [
