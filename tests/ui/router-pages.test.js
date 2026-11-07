@@ -240,6 +240,13 @@ test("Filter tabs preserve hidden conditions, clear visible checks, and save all
     dst_country: "RO",
     f2b_profile: "web",
     f2b_match: "not_banned",
+    protection: {
+      enabled: false,
+      event_source: "connections",
+      max_retry: 8,
+      find_time: 300,
+      ban_time: 1800,
+    },
     connection_states: ["NEW"],
     dst_ports: "443",
     comment: "preserve",
@@ -254,14 +261,29 @@ test("Filter tabs preserve hidden conditions, clear visible checks, and save all
   await action("router-editor-tab", { tab: "advanced" });
   assert.match(ctx.body, /Src\. Country/);
   assert.match(ctx.body, /value="RO" selected/);
+  assert.match(ctx.body, /Дополнительное условие по списку Fail2ban/);
+  assert.match(ctx.body, /name="f2b_profile"/);
+  assert.match(ctx.body, /value="web" selected/);
+  assert.ok(!ctx.body.includes('name="protection_enabled"'));
   ctx.currentForm = form({
     src_country: "US",
     dst_country: "",
     connection_states: null,
+    f2b_profile: "ssh",
+    f2b_match: "banned",
   });
   await action("router-editor-tab", { tab: "fail2ban" });
-  assert.match(ctx.body, /value="web" selected/);
-  ctx.currentForm = form({ f2b_profile: "ssh", f2b_match: "banned" });
+  assert.match(ctx.body, /name="protection_enabled"/);
+  assert.match(ctx.body, /name="protection_max_retry"[^>]*value="8"/);
+  assert.match(ctx.body, /Любой адрес : 8443 · TCP/);
+  assert.ok(!ctx.body.includes('name="f2b_profile"'));
+  ctx.currentForm = form({
+    protection_enabled: "on",
+    protection_event_source: "connections",
+    protection_max_retry: "12",
+    protection_find_time: "120",
+    protection_ban_time: "7200",
+  });
   await action("router-editor-tab", { tab: "action" });
   assert.match(ctx.body, /name="action"/);
   ctx.currentForm = form({ action: "drop" });
@@ -276,9 +298,84 @@ test("Filter tabs preserve hidden conditions, clear visible checks, and save all
     connection_states: [],
     f2b_profile: "ssh",
     f2b_match: "banned",
+    protection: {
+      enabled: true,
+      event_source: "connections",
+      max_retry: 12,
+      find_time: 120,
+      ban_time: 7200,
+    },
     action: "drop",
   });
   assert.equal(original.name, "Initial");
+  assert.equal(original.protection.enabled, false);
+});
+
+test("copying a Filter rule carries inline protection and legacy conditions into a separate draft", async (t) => {
+  t.mock.method(globalThis, "FormData", function (form) {
+    return new TestFormData(form);
+  });
+  const original = {
+    id: "filter-source",
+    name: "Protected service",
+    chain: "forward",
+    action: "accept",
+    protocol: "tcp",
+    dst_address: "10.0.0.7",
+    dst_ports: "443",
+    enabled: true,
+    src_country: "MD",
+    dst_country: "RO",
+    f2b_profile: "old-service",
+    f2b_match: "not_banned",
+    protection: {
+      enabled: true,
+      event_source: "connections",
+      max_retry: 8,
+      find_time: 300,
+      ban_time: 1800,
+    },
+  };
+  const before = globalThis.structuredClone(original);
+  const ctx = editorContext(original);
+  const action = (name, data = {}) =>
+    handleRouterAction({ dataset: { action: name, ...data } }, ctx);
+  await action("router-edit", { kind: "filter", id: original.id });
+  ctx.currentForm = form({});
+  await action("router-editor-tab", { tab: "fail2ban" });
+  ctx.currentForm = form({
+    protection_enabled: null,
+    protection_event_source: "connections",
+    protection_max_retry: "10",
+    protection_find_time: "600",
+    protection_ban_time: "3600",
+  });
+  await action("router-editor-copy");
+  assert.match(ctx.body, /name="protection_max_retry"[^>]*value="10"/);
+  assert.ok(!ctx.body.includes('name="protection_enabled" checked'));
+  ctx.currentForm = form({});
+  await action("router-editor-tab", { tab: "advanced" });
+  assert.match(ctx.body, /value="old-service" selected/);
+  assert.match(ctx.body, /value="MD" selected/);
+  assert.match(ctx.body, /value="RO" selected/);
+  await action("router-save");
+  assert.equal(ctx.saved.filter_rules.length, 2);
+  const copy = ctx.saved.filter_rules[1];
+  assert.notEqual(copy.id, original.id);
+  assert.deepEqual(copy, {
+    ...original,
+    id: copy.id,
+    name: "Protected service-copy",
+    protection: {
+      enabled: false,
+      event_source: "connections",
+      max_retry: 10,
+      find_time: 600,
+      ban_time: 3600,
+    },
+  });
+  assert.deepEqual(original, before);
+  assert.deepEqual(ctx.saved.filter_rules[0], before);
 });
 
 test("read users can navigate all Filter tabs without disabled controls altering values", async (t) => {
@@ -293,20 +390,35 @@ test("read users can navigate all Filter tabs without disabled controls altering
     src_country: "MD",
     f2b_profile: "web",
     f2b_match: "banned",
+    protocol: "tcp",
+    protection: {
+      enabled: true,
+      event_source: "connections",
+      max_retry: 5,
+      find_time: 600,
+      ban_time: 900,
+    },
   };
+  const before = globalThis.structuredClone(item);
   const ctx = editorContext(item, false);
   await handleRouterAction(
     { dataset: { action: "router-edit", kind: "filter", id: item.id } },
     ctx,
   );
-  for (const tab of ["advanced", "fail2ban", "action", "general", "advanced"])
+  for (const tab of ["advanced", "fail2ban", "action", "general", "advanced"]) {
     await handleRouterAction(
       { dataset: { action: "router-editor-tab", tab } },
       ctx,
     );
+    if (tab === "fail2ban") {
+      assert.match(ctx.body, /name="protection_enabled" checked/);
+      assert.ok(!ctx.body.includes('name="f2b_profile"'));
+    }
+  }
   assert.match(ctx.body, /value="MD" selected/);
   assert.equal(ctx.saved, undefined);
   assert.equal(item.f2b_match, "banned");
+  assert.deepEqual(item, before);
 });
 
 test("Filter table makes country and Fail2ban conditions visible without opening rules", () => {

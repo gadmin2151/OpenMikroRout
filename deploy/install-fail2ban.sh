@@ -16,7 +16,7 @@ if systemctl is-active --quiet openmikrorout-update.service; then
   exit 1
 fi
 # Additive kernel support only; never flush sets/rules or unload networking modules.
-modprobe -a ip_set ip_set_hash_ip ip_set_hash_net xt_set
+modprobe -a ip_set ip_set_hash_ip ip_set_hash_net xt_set nfnetlink_log nf_conntrack_netlink xt_NFLOG
 install -d -m 0755 /etc/modules-load.d
 install -m 0644 /opt/openmikrorout/deploy/openmikrorout-security-modules.conf \
   /etc/modules-load.d/openmikrorout-security.conf

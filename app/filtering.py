@@ -6,8 +6,9 @@ import shutil
 from typing import Protocol
 
 from app.compiler import FirewallError, expanded_matches, match_tokens
-from app.fail2ban_rules import F2B_CHAINS, f2b_anchor, f2b_rules
+from app.fail2ban_rules import F2B_CHAINS, f2b_anchor, f2b_rules, profile_chains
 from app.models import Configuration
+from app.rule_protection import effective_fail2ban
 
 CHAINS = {"input": "OMR_INPUT", "forward": "OMR_FORWARD", "output": "OMR_OUTPUT"}
 HOOKS = {key.upper(): value for key, value in CHAINS.items()}
@@ -85,7 +86,7 @@ def _f2b_declarations(snapshot: str, enabled: bool) -> list[str]:
 
 def filter_patch(snapshot: str, config: Configuration) -> str:
     _, hooks = inspect(snapshot)
-    protection = config.fail2ban
+    protection = effective_fail2ban(config)
     lines = ["*filter", *(f":{chain} - [0:0]" for chain in CHAINS.values())]
     lines += _f2b_declarations(snapshot, protection.enabled)
     lines += compiled_filters(config)
@@ -96,7 +97,7 @@ def filter_patch(snapshot: str, config: Configuration) -> str:
         if f"f2b:{hook}" in hooks:
             lines.append(" ".join(["-D", *tokens[1:]]))
         if protection.enabled and any(
-            p.enabled and p.chain == hook.lower() for p in protection.profiles
+            p.enabled and hook.lower() in profile_chains(p) for p in protection.profiles
         ):
             # Move ONLY our jump to the front so even earlier foreign ACCEPT rules cannot bypass it.
             lines.append(" ".join(["-I", hook, "1", *tokens[2:]]))

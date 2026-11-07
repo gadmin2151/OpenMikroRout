@@ -11,12 +11,13 @@ from pydantic import ValidationError
 from app.compiler import FirewallError
 from app.fail2ban_action import process_event
 from app.fail2ban_events import AuthenticationJournal, BanStore
-from app.fail2ban_models import F2BConfiguration, F2BProfile, client_ipv4
+from app.fail2ban_models import F2BConfiguration, F2BProfile, RuleProtection, client_ipv4
 from app.fail2ban_rules import f2b_rules
 from app.fail2ban_runtime import Fail2banService, _safe_path
 from app.filtering import EMPTY_FILTER, DemoFilterDriver, filter_patch, filter_rollback
-from app.ipsets import DemoIPSetDriver
-from app.models import Configuration
+from app.ipsets import DemoIPSetDriver, LinuxIPSetDriver
+from app.models import Configuration, NatRule
+from app.rule_protection import effective_fail2ban
 
 
 def settings() -> F2BConfiguration:
@@ -235,5 +236,100 @@ def test_unban_disabled_profile_retains_no_resurrection_tombstone(tmp_path: Path
         assert client.call_count == 1 and client.call_args.args[0] == ["status"]
         assert service.bans.page()["total"] == 0
         assert not service.bans.ban(profile, "8.8.8.8", started, 300)
+    finally:
+        service.journal.close()
+
+
+@pytest.mark.parametrize("missing_set", [False, True])
+def test_unban_deleted_rule_ticket_survives_reenable_without_resurrection(
+    tmp_path: Path, missing_set: bool
+) -> None:
+    driver = DemoIPSetDriver()
+    service = Fail2banService(tmp_path, False, driver)
+    protected = effective_fail2ban(
+        Configuration(
+            rules=[
+                NatRule(
+                    name="RDP",
+                    dst_ports="13389",
+                    to_address="10.0.0.5",
+                    to_ports="3389",
+                    protection=RuleProtection(enabled=True),
+                )
+            ]
+        )
+    )
+    profile = next(profile for profile in protected.profiles if profile.rule_id)
+    started = time.time()
+    try:
+        service.restore(protected)
+        assert service.bans.ban(profile, "8.8.8.8", started, 300)
+        service.restore(effective_fail2ban(Configuration()))
+        if missing_set:
+            driver.temporary.pop(f"f2b_{profile.id}")
+        with patch.object(service, "_client") as client:
+            service.unban(profile.id, "8.8.8.8")
+            service.unban(profile.id, "8.8.8.8")
+        client.assert_not_called()
+        assert service.bans.page()["total"] == 0
+        assert driver.temporary_entries(f"f2b_{profile.id}") == []
+        if missing_set:
+            assert not driver.exists(f"f2b_{profile.id}")
+        service.restore(protected)
+        assert driver.temporary_entries(f"f2b_{profile.id}") == []
+        assert not service.bans.ban(profile, "8.8.8.8", started, 300)
+        assert service.bans.ban(profile, "8.8.8.8", started + 1, 300)
+    finally:
+        service.journal.close()
+
+
+def test_orphan_unban_requires_an_exact_retained_ticket_before_kernel_access(
+    tmp_path: Path,
+) -> None:
+    driver = DemoIPSetDriver()
+    service = Fail2banService(tmp_path, False, driver)
+    try:
+        profile = settings().profiles[0]
+        service.bans.ban(profile, "8.8.8.8", time.time(), 300)
+        service.restore(F2BConfiguration(profiles=[]))
+        with (
+            patch.object(service, "_client") as client,
+            patch.object(driver, "delete_temporary") as delete,
+        ):
+            for profile_id, address in (("other", "8.8.8.8"), ("web", "9.9.9.9")):
+                with pytest.raises(ValueError, match="Unknown Fail2ban ban ticket"):
+                    service.unban(profile_id, address)
+        client.assert_not_called()
+        delete.assert_not_called()
+        assert service.bans.page()["total"] == 1
+    finally:
+        service.journal.close()
+
+
+@pytest.mark.parametrize("foreign_set", [False, True])
+def test_orphan_unban_skips_absent_kernel_set_and_refuses_foreign_set(
+    tmp_path: Path, foreign_set: bool
+) -> None:
+    service = Fail2banService(tmp_path, True, DemoIPSetDriver())
+    try:
+        profile = settings().profiles[0]
+        started = time.time()
+        service.bans.ban(profile, "8.8.8.8", started, 300)
+        service.restore(F2BConfiguration(profiles=[]))
+        driver = LinuxIPSetDriver(tmp_path)
+        service.bans.driver = driver
+        with patch.object(
+            driver, "_run", return_value="omr_f2b_web\n" if foreign_set else ""
+        ) as run:
+            if foreign_set:
+                with pytest.raises(FirewallError, match="not owned"):
+                    service.unban("web", "8.8.8.8")
+            else:
+                service.unban("web", "8.8.8.8")
+            run.assert_called_once_with(["list", "-name"])
+        # A rejected foreign-set deletion must not commit a false-success tombstone.
+        with service.bans.connection() as db:
+            expiry = db.execute("SELECT expires_at FROM bans").fetchone()[0]
+        assert expiry == (started + 300 if foreign_set else 0)
     finally:
         service.journal.close()

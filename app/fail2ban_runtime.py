@@ -216,7 +216,7 @@ class Fail2banService:
             ]
             if profile.service == "web":
                 lines += ["filter = omr-web", f"logpath = {auth_log}", "backend = polling"]
-            else:
+            elif profile.service == "ssh":
                 # The distro-maintained sshd filter is read-only input, never editable via HTTP.
                 for filename in ("sshd.conf", "common.conf"):
                     source = Path("/etc/fail2ban/filter.d") / filename
@@ -229,6 +229,23 @@ class Fail2banService:
                     "filter = sshd",
                     "backend = systemd",
                     "journalmatch = _SYSTEMD_UNIT=sshd.service + _SYSTEMD_UNIT=ssh.service",
+                ]
+            else:
+                attempts = self.directory / "attempts.log"
+                # Preserve existing events across previews/reloads; the collector rotates this file.
+                with attempts.open("a", encoding="utf-8"):
+                    os.chmod(attempts, 0o600)
+                filter_name = f"omr-connections-{profile.id}"
+                _write_private(
+                    destination / "filter.d" / (filter_name + ".conf"),
+                    "[Definition]\n"
+                    f"failregex = ^\\s*openmikrorout connection_attempt profile={profile.id} "
+                    "src=<ADDR>\\s*$\nignoreregex =\ndatepattern = ^%%Y-%%m-%%dT%%H:%%M:%%SZ\n",
+                )
+                lines += [
+                    f"filter = {filter_name}",
+                    f"logpath = {_safe_path(attempts)}",
+                    "backend = polling",
                 ]
             lines += [
                 f'action = omr.py[python="{python}", helper="{helper}", '
@@ -307,9 +324,12 @@ class Fail2banService:
 
         profile_id(profile)
         address = str(ipaddress.IPv4Address(address))
-        if profile not in {item.id for item in self.settings.profiles}:
-            raise ValueError("Unknown Fail2ban profile")
         with self.process_lock():
+            if profile not in {item.id for item in self.settings.profiles}:
+                # Removing a rule removes its jail, but retained tickets remain visible.
+                # Authorize only an exact stored ticket, atomically with its tombstone.
+                self.bans.unban(profile, address, require_ticket=True)
+                return
             # A disabled profile has no active jail. Keep a projection tombstone so
             # an old retained native ticket cannot resurrect its kernel ban later.
             if not self.demo and f"omr-{profile}" in self._running_jails():
@@ -318,22 +338,35 @@ class Fail2banService:
             self.bans.unban(profile, address)
 
     def _enforced(self) -> bool:
-        from app.fail2ban_rules import f2b_anchor
+        from app.fail2ban_rules import F2B_CHAINS, f2b_anchor, profile_chains
         from app.filtering import LinuxFilterDriver, inspect
 
         snapshot = LinuxFilterDriver().snapshot()
         _, hooks = inspect(snapshot)
+        rows = [shlex.split(line) for line in snapshot.splitlines() if line.startswith("-A ")]
         for profile in self.settings.profiles:
             if not profile.enabled:
                 continue
-            hook = profile.chain.upper()
-            first = next(
-                (line for line in snapshot.splitlines() if line.startswith(f"-A {hook} ")), ""
-            )
-            if f"f2b:{hook}" not in hooks or shlex.split(first) != f2b_anchor(hook):
-                return False
-            if f"openmikrorout:f2b:{profile.id}" not in snapshot:
-                return False
+            for chain in profile_chains(profile):
+                hook = chain.upper()
+                first = next(
+                    (line for line in snapshot.splitlines() if line.startswith(f"-A {hook} ")), ""
+                )
+                if f"f2b:{hook}" not in hooks or shlex.split(first) != f2b_anchor(hook):
+                    return False
+                expected = [(f"openmikrorout:f2b:{profile.id}", "DROP")]
+                if profile.service == "connections":
+                    expected.append((f"openmikrorout:f2b-attempt:{profile.id}", "NFLOG"))
+                for marker, target in expected:
+                    if not any(
+                        row[1] == F2B_CHAINS[chain]
+                        and "--comment" in row
+                        and row[row.index("--comment") + 1] == marker
+                        and "-j" in row
+                        and row[row.index("-j") + 1] == target
+                        for row in rows
+                    ):
+                        return False
         return any(profile.enabled for profile in self.settings.profiles)
 
     def status(self) -> dict[str, Any]:
@@ -365,6 +398,8 @@ class Fail2banService:
             warnings.append("Принимается только один X-Forwarded-For от явно доверенного proxy.")
         if any(item.shared_listener and item.enabled for item in self.settings.profiles):
             warnings.append("Бан на общем порту затрагивает все сайты этого listener.")
+        if any(item.service == "connections" and item.enabled for item in self.settings.profiles):
+            warnings.append("Правила TCP считают новые подключения, а не ошибки пароля сервиса.")
         if self.demo:
             warnings.append("Деморежим: реальные попытки не считаются, сеть не блокируется.")
         profiles = []
@@ -378,6 +413,10 @@ class Fail2banService:
                     "list_name": f"f2b_{item.id}",
                     "jail": f"omr-{item.id}",
                     "active_bans": count,
+                    "rule_id": str(item.rule_id) if item.rule_id else None,
+                    "rule_table": item.rule_table,
+                    "service": item.service,
+                    "scope": item.scope.model_dump(mode="json") if item.scope else None,
                 }
             )
         return {

@@ -332,7 +332,9 @@ def resolved_system_lists(config: "Configuration") -> dict[str, SystemAddressLis
                 result[f"geo_{code}"] = SystemAddressList(
                     name=f"geo_{code}", kind="country", country=code
                 )
-    fail2ban = getattr(config, "fail2ban", None)
+    from app.rule_protection import effective_fail2ban
+
+    fail2ban = effective_fail2ban(config)
     profiles = {profile.id for profile in fail2ban.profiles} if fail2ban is not None else set()
     if any(
         item.kind == "temporary" and item.profile not in profiles for item in config.system_lists
@@ -375,7 +377,9 @@ def required_system_lists(config: "Configuration") -> dict[str, SystemAddressLis
         for rule in [*config.rules, *config.filter_rules]
         if rule.enabled and rule.f2b_profile
     )
-    f2b = getattr(config, "fail2ban", None)
+    from app.rule_protection import effective_fail2ban
+
+    f2b = effective_fail2ban(config)
     if f2b is not None and f2b.enabled:
         for profile in f2b.profiles:
             if profile.enabled:
@@ -384,4 +388,6 @@ def required_system_lists(config: "Configuration") -> dict[str, SystemAddressLis
                     f"geo_{code}"
                     for code in [*profile.include_countries, *profile.exclude_countries]
                 )
+                if profile.scope:
+                    needed.update(profile.scope.destination_sets)
     return {name: definitions[name] for name in sorted(needed)}

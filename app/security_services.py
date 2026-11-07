@@ -11,11 +11,13 @@ from typing import Any
 from app.compiler import FirewallError
 from app.discovery import DiscoveryService
 from app.discovery_models import DiscoverySettings, ScanSettings
+from app.fail2ban_attempts import ConnectionAttemptCollector
 from app.fail2ban_runtime import Fail2banService
 from app.firewall import Conflict, FirewallService
 from app.geoip import GeoIPService
 from app.ipsets import DemoIPSetDriver, LinuxIPSetDriver
 from app.models import Configuration
+from app.rule_protection import effective_fail2ban
 from app.scans import ScanService
 from app.system_list_runtime import SystemListRuntime
 from app.updates import UpdateService
@@ -38,6 +40,7 @@ class SecurityServices:
             driver,
             lambda address: str(self.geoip.lookup(address).get("country") or ""),
         )
+        self.attempts = ConnectionAttemptCollector(data_dir, demo=demo)
         self.discovery = DiscoveryService(
             data_dir, demo, self.discovery_settings, data_dir / "network" / "dhcp.leases"
         )
@@ -54,7 +57,7 @@ class SecurityServices:
         self.lock = threading.Lock()
         self.update_error = ""
         self.last_attempt = 0.0
-        self.fail2ban.settings = self.applied().fail2ban
+        self.fail2ban.settings = effective_fail2ban(self.applied())
         if demo and not self.geoip.active_version:
             # Isolated demo fixtures only. Never a substitute for the live DB-IP dataset.
             self.geoip.import_csv(
@@ -86,6 +89,7 @@ class SecurityServices:
             self.worker.join(timeout=20)
         self.discovery.close()
         self.fail2ban.journal.close()
+        self.attempts.close()
         if self.update_thread:
             self.update_thread.join(timeout=20)
 

@@ -1813,16 +1813,16 @@ dialog::backdrop {
 }
 @media (max-width: 1250px) {
   .sidebar {
-    width: 190px;
+    width: 224px;
     padding-left: 10px;
     padding-right: 10px;
   }
   .main {
-    margin-left: 190px;
-    width: calc(100% - 190px);
+    margin-left: 224px;
+    width: calc(100% - 224px);
   }
   .bottom-status {
-    left: 190px;
+    left: 224px;
   }
   .content {
     padding: 27px 23px 110px;
@@ -3355,6 +3355,71 @@ svg.telemetry-chart {
 .sidebar-navigation .nav-group-toggle[aria-expanded="true"] {
   background: var(--surface-alt);
   color: var(--text);
+}
+.sidebar-navigation .nav-group-toggle.active-branch {
+  color: var(--text);
+}
+.sidebar-navigation .nav-group-toggle.active-branch > svg {
+  color: var(--accent);
+}
+.sidebar-navigation .nav-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+}
+.sidebar-navigation .nav-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-navigation .nav-hint {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-navigation .nav-item > svg,
+.sidebar-navigation .nav-group-toggle > svg {
+  flex-shrink: 0;
+}
+.sidebar-navigation .nav-group-toggle > svg {
+  width: 16px;
+  height: 16px;
+}
+.sidebar-navigation .nav-group-children .nav-group-toggle {
+  margin-top: 2px;
+  padding: 7px 9px;
+  gap: 8px;
+}
+.sidebar-navigation .nav-group-children .nav-group-children {
+  margin-left: 8px;
+  padding-left: 5px;
+}
+.sidebar-navigation .nav-group-children .nav-group-children .nav-item {
+  padding-left: 5px;
+  padding-right: 5px;
+  gap: 5px;
+}
+.sidebar-navigation .navigation-legend {
+  color: var(--muted);
+  margin: 12px 9px 4px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.breadcrumbs .breadcrumb-parent {
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .breadcrumbs .breadcrumb-parent,
+  .breadcrumbs .breadcrumb-parent + svg {
+    display: none;
+  }
 }
 .nav-group-toggle .nav-group-arrow {
   display: inline-flex;

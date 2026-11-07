@@ -1,8 +1,14 @@
-import { addressListChoices } from "./protection-ui.js?v=2";
+import { addressListChoices } from "./protection-ui.js?v=3";
 import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
 import { renderTelemetry } from "./telemetry-ui.js?v=7";
-import { countryField, renderRuleFail2ban } from "./rule-security-ui.js?v=1";
+import {
+  countryField,
+  renderRuleFail2ban,
+  renderLegacyBanMatch,
+  collectRuleProtection,
+  defaultRuleProtection,
+} from "./rule-security-ui.js?v=3";
 
 /** Router configuration views. All writes use the existing revisioned draft API. */
 
@@ -433,6 +439,7 @@ function valueCell(ctx, key, item) {
     const list = item[source ? "src_list" : "dst_list"];
     const details = [];
     if (country) details.push(`Country: ${country}`);
+    if (source && item.protection?.enabled) details.push("Fail2ban · авто");
     if (source && item.f2b_profile)
       details.push(
         `${item.f2b_match === "banned" ? "∈" : "∉"} f2b_${item.f2b_profile}`,
@@ -595,6 +602,7 @@ export function renderRouterView(view, ctx) {
 function newItem(ctx, kind) {
   const schema = itemSchemas[kind];
   const item = { id: crypto.randomUUID() };
+  if (kind === "filter") item.protection = defaultRuleProtection();
   for (const [key, , type, value] of schema.fields)
     item[key] = type === "text" && key !== "kind" ? "" : structuredClone(value);
   if (kind === "routes") item.destination = "0.0.0.0/0";
@@ -648,10 +656,12 @@ function showEntityEditor(
     if (tab === "fail2ban") return false;
     return !advanced.has(key) && !security.has(key) && key !== "action";
   });
-  const content =
+  let content =
     kind === "filter" && tab === "fail2ban"
       ? renderRuleFail2ban(ctx, item)
       : fields.map((field) => renderField(ctx, field, item)).join("");
+  if (kind === "filter" && tab === "advanced")
+    content += `<details class="rule-condition-help" ${item.f2b_profile ? "open" : ""}><summary>Дополнительное условие по списку Fail2ban</summary>${renderLegacyBanMatch(ctx, item)}</details>`;
   const note =
     kind === "filter" && tab === "advanced"
       ? "Страна проверяется вместе с адресом или Address List (AND). GeoIP-список создаётся автоматически при применении. Требуется база GeoIP в Security → GeoIP. Для private IP страна неизвестна."
@@ -697,6 +707,10 @@ function readForm(schema, form, original) {
     else if (type === "number") result[key] = Number(values.get(key));
     else if (type === "lines") result[key] = splitValues(values.get(key));
     else result[key] = String(values.get(key) || "").trim();
+  }
+  if (schema === itemSchemas.filter) {
+    const protection = collectRuleProtection(form, original.protection);
+    if (protection) result.protection = protection;
   }
   return result;
 }

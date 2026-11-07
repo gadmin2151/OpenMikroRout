@@ -4,10 +4,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from app.compiler import FirewallError
+from app.fail2ban_attempts import ConnectionAttemptCollector
+from app.fail2ban_models import F2BConfiguration
 from app.fail2ban_runtime import Fail2banService
 from app.filtering import FilterDriver, filter_counters, filter_patch, filter_rollback
 from app.models import Configuration
 from app.network_models import NetworkConfiguration
+from app.rule_protection import effective_fail2ban
 from app.system_list_runtime import SystemListRuntime
 
 if TYPE_CHECKING:
@@ -44,6 +47,7 @@ class RouterRuntime:
         vpn_routes: NetworkComponent | None = None,
         system_lists: SystemListRuntime | None = None,
         fail2ban: Fail2banService | None = None,
+        attempts: ConnectionAttemptCollector | None = None,
     ) -> None:
         self.network = network
         self.links = links
@@ -52,6 +56,7 @@ class RouterRuntime:
         self.vpn_routes = vpn_routes
         self.system_lists = system_lists
         self.fail2ban = fail2ban
+        self.attempts = attempts
 
     def prepare(self, target: Configuration, *, create: bool = True) -> None:
         if self.system_lists:
@@ -61,7 +66,9 @@ class RouterRuntime:
         if self.system_lists:
             self.system_lists.recover(applied)
         if self.fail2ban:
-            self.fail2ban.restore(applied.fail2ban)
+            self.fail2ban.restore(effective_fail2ban(applied))
+        if self.attempts:
+            self.attempts.configure(effective_fail2ban(applied))
 
     def snapshot(self, previous: Configuration) -> dict[str, Any]:
         snapshot = {
@@ -76,15 +83,19 @@ class RouterRuntime:
         if self.system_lists:
             snapshot["system_lists"] = self.system_lists.snapshot(previous)
         if self.fail2ban:
-            snapshot["fail2ban"] = self.fail2ban.snapshot(previous.fail2ban)
+            snapshot["fail2ban"] = self.fail2ban.snapshot(effective_fail2ban(previous))
+        if self.attempts:
+            snapshot["connection_attempts"] = effective_fail2ban(previous).model_dump(mode="json")
         return snapshot
 
     def check(
         self, previous: Configuration, target: Configuration, *, allow_prepare: bool = True
     ) -> None:
+        if self.attempts:
+            self.attempts.check(effective_fail2ban(target))
         self.prepare(target, create=allow_prepare)
         if self.fail2ban:
-            self.fail2ban.check(previous.fail2ban, target.fail2ban)
+            self.fail2ban.check(effective_fail2ban(previous), effective_fail2ban(target))
         self.links.check(previous.network, target.network)
         if self.wireguard:
             self.wireguard.check(previous.network, target.network)
@@ -106,10 +117,16 @@ class RouterRuntime:
         if self.system_lists:
             preview["system_lists"] = self.system_lists.preview(target)
         if self.fail2ban:
-            preview["fail2ban"] = self.fail2ban.preview(previous.fail2ban, target.fail2ban)
+            preview["fail2ban"] = self.fail2ban.preview(
+                effective_fail2ban(previous), effective_fail2ban(target)
+            )
         return preview
 
     def apply(self, previous: Configuration, target: Configuration) -> None:
+        # Bind the private NFLOG group before installing rules that publish to it.
+        # The durable router snapshot restores the previous subscription on failure.
+        if self.attempts:
+            self.attempts.configure(effective_fail2ban(target))
         if self.system_lists:
             self.system_lists.apply(target)
         self.links.apply(previous.network, target.network)
@@ -121,7 +138,7 @@ class RouterRuntime:
         self.links.finalize(previous.network, target.network)
         self.filters.restore(filter_patch(self.filters.snapshot(), target))
         if self.fail2ban:
-            self.fail2ban.apply(previous.fail2ban, target.fail2ban)
+            self.fail2ban.apply(effective_fail2ban(previous), effective_fail2ban(target))
 
     def rollback(self, snapshot: dict[str, Any]) -> None:
         errors: list[str] = []
@@ -130,6 +147,13 @@ class RouterRuntime:
                 self.system_lists.rollback(snapshot["system_lists"])
             except (FirewallError, OSError) as exc:
                 errors.append(f"System list recovery: {exc}")
+        if self.attempts and "connection_attempts" in snapshot:
+            try:
+                self.attempts.configure(
+                    F2BConfiguration.model_validate(snapshot["connection_attempts"])
+                )
+            except (FirewallError, OSError, ValueError) as exc:
+                errors.append(f"Connection event recovery: {exc}")
         # Old link shells must exist before old addresses and services can be restored.
         if "links" in snapshot:
             try:

@@ -37,7 +37,7 @@ jobs:
           .venv/bin/pytest -q
           .venv/bin/python -m pip check
       - name: Isolated Linux network tests
-        run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py tests/test_wireguard_kernel.py tests/test_system_lists_kernel.py tests/test_rule_security_kernel.py tests/test_fail2ban_kernel.py tests/test_discovery_kernel.py -q
+        run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py tests/test_wireguard_kernel.py tests/test_system_lists_kernel.py tests/test_rule_security_kernel.py tests/test_fail2ban_kernel.py tests/test_fail2ban_attempts_kernel.py tests/test_discovery_kernel.py -q
       - name: Interface checks
         run: pnpm check
       - name: Build container and check isolated demo startup

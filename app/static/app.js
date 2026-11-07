@@ -1,5 +1,18 @@
 import { assertDraftRevision } from "./draft-guards.js";
-import { countryField, renderRuleFail2ban } from "./rule-security-ui.js?v=1";
+import {
+  navigationGroupIds,
+  navigationItems,
+  expandNavigationForView,
+  renderSidebarNavigation,
+  renderNavigationBreadcrumbs,
+} from "./navigation-ui.js?v=1";
+import {
+  countryField,
+  renderRuleFail2ban,
+  renderLegacyBanMatch,
+  collectRuleProtection,
+  defaultRuleProtection,
+} from "./rule-security-ui.js?v=3";
 import {
   loginMarkup,
   bindLoginControls,
@@ -38,7 +51,7 @@ import {
   hasWriteAccess,
   isReadAction,
   applyReadAccess,
-} from "./access-ui.js?v=7";
+} from "./access-ui.js?v=8";
 import { renderUsers, handleUsersAction } from "./users-ui.js?v=2";
 import { renderSecurity, handleSecurityAction } from "./security-ui.js?v=1";
 import {
@@ -61,7 +74,7 @@ import {
   handleRouterChange,
   interfaceNames,
   installRouterEvents,
-} from "./router-pages.js?v=14";
+} from "./router-pages.js?v=15";
 
 import {
   protectionViews,
@@ -73,7 +86,7 @@ import {
   renderSystemLists,
   addressListChoices,
   renderF2BRuleSummary,
-} from "./protection-ui.js?v=2";
+} from "./protection-ui.js?v=3";
 import {
   discoveryViews,
   renderDiscovery,
@@ -167,7 +180,7 @@ let users = [],
   authGeneration = 0,
   sidebarScroll = 0;
 let securityStatus = null;
-const expandedGroups = new Set(["ip", "system"]);
+const expandedGroups = new Set(["ip", "firewall"]);
 let telemetry = null,
   telemetryHistory = [],
   telemetryError = "",
@@ -408,6 +421,7 @@ function addr(rule, side) {
     side === "src" && rule.f2b_profile
       ? `${rule.f2b_match === "banned" ? "∈" : "∉"} f2b_${rule.f2b_profile}`
       : "",
+    side === "src" && rule.protection?.enabled ? "Fail2ban · авто" : "",
   ].filter(Boolean);
   return (
     address +
@@ -425,9 +439,6 @@ function target(rule) {
         ? rule.out_interface || "interface IP"
         : "—";
 }
-function navButton(id, label, ico, count = "", activeViews = [id]) {
-  return `<button class="nav-item ${activeViews.includes(view) ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${label}${count !== "" ? `<span class="count">${count}</span>` : ""}</button>`;
-}
 function setNavigationOpen(open, focus = false) {
   const sidebar = document.querySelector("#sidebar");
   const mobile = window.matchMedia("(max-width: 680px)").matches;
@@ -437,45 +448,22 @@ function setNavigationOpen(open, focus = false) {
   if (main) main.inert = open && mobile;
   const button = document.querySelector('[data-action="menu"].mobile-menu');
   button?.setAttribute("aria-expanded", String(open && mobile));
-  if (focus)
-    (open ? sidebar?.querySelector(".nav-item.active") : button)?.focus({
-      preventScroll: true,
-    });
+  if (focus) {
+    const active = sidebar?.querySelector(".nav-item.active");
+    const destination = open
+      ? active?.getClientRects().length
+        ? active
+        : sidebar?.querySelector(".nav-group-toggle.active-branch") ||
+          sidebar?.querySelector(".nav-item")
+      : button;
+    destination?.focus({ preventScroll: true });
+  }
 }
-function navGroup(id, label, ico, content) {
-  const expanded = expandedGroups.has(id);
-  return `<button class="nav-group-toggle" data-action="nav-group" data-group="${id}" aria-expanded="${expanded}" aria-controls="nav-group-${id}">${icon(ico)}${label}<span class="nav-group-arrow">${icon("chevron")}</span></button><div class="nav-group-children" id="nav-group-${id}" ${expanded ? "" : "hidden"}>${content}</div>`;
+function navigationContext() {
+  return { state, interfaces, canWrite, view, expandedGroups, e, icon };
 }
-function renderNavigation(count) {
-  return `${navButton("overview", "Обзор", "grid")}${navButton("interfaces", "Interfaces", "network", interfaces.length, ["interfaces", "vlans", "virtual_interfaces", "interface_lists"])}${navButton("bridges", "Bridge", "network", count("bridges"), ["bridges", "bridge_ports"])}${navButton("wireguard", "WireGuard", "lock", count("wireguard_interfaces"), ["wireguard", "wireguard_peers"])}${navGroup(
-    "ip",
-    "IP",
-    "network",
-    [
-      navButton("addresses", "Addresses", "network", count("addresses")),
-      navButton("routes", "Routes", "arrow", count("routes")),
-      navButton(
-        "dhcp_servers",
-        "DHCP Server",
-        "server",
-        count("dhcp_servers"),
-        ["dhcp_servers", "dhcp_networks", "leases"],
-      ),
-      navButton("pools", "Pool", "list", count("pools")),
-      navButton("hosts", "Hosts / Neighbors", "network"),
-      navButton("dns", "DNS & Forwarding", "activity", "", [
-        "dns",
-        "dns_static",
-      ]),
-      navButton(
-        "filter",
-        "Firewall",
-        "shield",
-        state.config.rules.length + (state.config.filter_rules || []).length,
-        ["filter", "rules", "lists", "connections"],
-      ),
-    ].join(""),
-  )}${navGroup("protection", "Security", "shield", `${navButton("fail2ban", "Fail2ban", "shield")}${navButton("geoip", "GeoIP", "network")}`)}${navGroup("tools-group", "Tools", "terminal", `${navButton("tools", "Diagnostics", "terminal")}${navButton("network_scan", "Network Scan", "search")}${navButton("port_scan", "Port Scan", "activity")}`)}${navGroup("system", "System", "server", `${navButton("web_settings", "Web Interface", "network")}${navButton("backups", "Backup / Restore", "file")}${state.auth_enabled ? navButton("security", "My account · 2FA", "lock") : ""}${canWrite() ? navButton("users", "Users", "user") + navButton("updates", "Updates", "download") : ""}${navButton("audit", "Log", "activity")}<button class="nav-item" data-action="preview">${icon("terminal")}Предпросмотр</button>`)}`;
+function renderNavigation() {
+  return renderSidebarNavigation(navigationContext());
 }
 async function refreshSecurity() {
   if (state?.current_user) securityStatus = await api("me/totp");
@@ -608,7 +596,7 @@ function render() {
       ],
       users: ["Users", "Учётные записи и группы доступа read / full."],
       security: [
-        "Security",
+        "My Account · 2FA",
         "Личная двухфакторная аутентификация и резервные коды.",
       ],
       connections: [
@@ -724,13 +712,13 @@ function render() {
   root.innerHTML = `<div class="app-shell">
     <aside class="sidebar ${sidebarOpen ? "open" : ""}" id="sidebar">${brandMarkup()}
       <div class="workspace"><div class="workspace-icon">${icon("server")}</div><div><b>${isDemo() ? "Demo Router" : e(state.hostname)}</b><small>${isDemo() ? "DEMO WORKSPACE" : "LINUX GATEWAY"}</small></div></div>
-      <nav class="sidebar-navigation" aria-label="Настройки роутера">${renderNavigation(count)}</nav>
+      <nav class="sidebar-navigation" aria-label="Настройки роутера">${renderNavigation()}</nav>
       <div class="sidebar-bottom"><button class="nav-item" data-action="help">${icon("help")}Справка</button><div class="engine-card"><span class="version">v${e(state.version || "0.3.0")}</span><b><span class="dot"></span>${isDemo() ? "Demo engine" : "Linux router"}</b><br>${isDemo() ? "Сеть хоста не изменяется" : "IPv4 · iptables · dnsmasq"}</div>${accountMarkup()}</div>
     </aside><button class="sidebar-scrim" data-action="menu" aria-label="Закрыть меню" tabindex="-1"></button>
-    <main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false" data-action="menu">${icon("menu")}</button>${icon("network")}<span>OpenMikroRout</span>${icon("chevron")}<b>${e(title)}</b></div><div class="topbar-right"><span class="muted"><span class="dot"></span>${offline ? "Нет соединения" : "Сервер подключён"}</span><span class="divider"></span><span class="mode-chip ${isDemo() ? "" : "live"}">${isDemo() ? "DEMO MODE" : "LINUX · LIVE"}</span></div></header>
+    <main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false" data-action="menu">${icon("menu")}</button>${icon("network")}<span>OpenMikroRout</span>${icon("chevron")}${renderNavigationBreadcrumbs(navigationContext(), title)}</div><div class="topbar-right"><span class="muted"><span class="dot"></span>${offline ? "Нет соединения" : "Сервер подключён"}</span><span class="divider"></span><span class="mode-chip ${isDemo() ? "" : "live"}">${isDemo() ? "DEMO MODE" : "LINUX · LIVE"}</span></div></header>
     <div class="content">${state.runtime_error ? `<div class="connection-error" role="alert">${icon("info")} Восстановление конфигурации требует внимания: ${e(state.runtime_error)}</div>` : ""}${offline ? '<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>' : ""}
       ${!canWrite() ? `<div class="read-only-banner">${icon("lock")}Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}
-      <div class="page-heading"><div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Export</span></button></div></div>
+      <div class="page-heading"><div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="preview" title="Предпросмотр конфигурации">${icon("terminal")}<span class="btn-label">Preview</span></button><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Export</span></button></div></div>
       ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : `<div class="configuration-summary" aria-label="Сводка конфигурации">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
       <section class="panel ${view === "overview" ? "overview-panel" : ""}">${tabs.length ? `<div class="panel-tabs">${tabs.map(([id, label, ico, total]) => `<button class="panel-tab ${view === id ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${label}<span class="tab-count">${total}</span></button>`).join("")}</div>` : ""}${body}</section>
       ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : `<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div></details>`}
@@ -899,6 +887,7 @@ const defaultRule = () => ({
   dst_country: "",
   f2b_profile: "",
   f2b_match: "not_banned",
+  protection: defaultRuleProtection(),
   src_ports: "",
   dst_ports: "",
   in_interface: "",
@@ -1004,6 +993,8 @@ function renderEditor() {
     <div class="form-divider"></div><div class="field"><span>Connection State</span><div class="states">${["NEW", "ESTABLISHED", "RELATED", "INVALID", "UNTRACKED"].map((value) => `<label class="checkbox-label"><input type="checkbox" name="state" value="${value}" ${r.connection_states.includes(value) ? "checked" : ""}>${value.toLowerCase()}</label>`).join("")}</div><small>Без отметок — любое состояние.</small></div></div>`;
   if (editorTab === "fail2ban")
     content = renderRuleFail2ban(routerContext(), r);
+  if (editorTab === "advanced")
+    content += `<details class="rule-condition-help" ${r.f2b_profile ? "open" : ""}><summary>Дополнительное условие по списку Fail2ban</summary>${renderLegacyBanMatch(routerContext(), r)}</details>`;
   if (editorTab === "action")
     content = `<div class="winbox-form">
     ${selectField("Action", "action", r.action, r.chain === "srcnat" ? ["masquerade", "src-nat", "accept"] : ["dst-nat", "redirect", "accept"])}
@@ -1039,13 +1030,16 @@ function collectRule() {
   const form = dialog.querySelector("#rule-form");
   if (!form) return;
   for (const [key, val] of new FormData(form)) {
-    if (key !== "state") draft[key] = String(val).trim();
+    if (key !== "state" && !key.startsWith("protection_"))
+      draft[key] = String(val).trim();
   }
   if (editorTab === "advanced")
     draft.connection_states = [
       ...form.querySelectorAll('[name="state"]:checked'),
     ].map((x) => x.value);
   draft.enabled = dialog.querySelector("#rule-enabled").checked;
+  const protection = collectRuleProtection(form, draft.protection);
+  if (protection) draft.protection = protection;
 }
 function openList(id) {
   if (!canWrite() && !id) {
@@ -1329,6 +1323,32 @@ async function handleAction(button) {
     toast("Группа read: доступен только просмотр.", true);
     return;
   }
+  if (action === "rule-protection-open") {
+    if (
+      button.dataset.table === "nat" &&
+      state.config.rules.some((rule) => rule.id === id)
+    ) {
+      openEditor(id);
+      if (dialog.querySelector("#rule-form")) {
+        editorTab = "fail2ban";
+        renderEditor();
+      }
+    } else if (
+      button.dataset.table === "filter" &&
+      state.config.filter_rules.some((rule) => rule.id === id)
+    ) {
+      await handleRouterAction(
+        { dataset: { action: "router-edit", kind: "filter", id } },
+        routerContext(),
+      );
+      if (dialog.querySelector("#router-form"))
+        await handleRouterAction(
+          { dataset: { action: "router-editor-tab", tab: "fail2ban" } },
+          routerContext(),
+        );
+    }
+    return;
+  }
   if (await handleProtectionAction(button, routerContext())) return;
   if (await handleDiscoveryAction(button, routerContext())) return;
   if (await handleUsersAction(button, routerContext())) return;
@@ -1352,7 +1372,7 @@ async function handleAction(button) {
   }
   if (action === "nav-group") {
     const group = button.dataset.group;
-    if (!["ip", "system", "protection", "tools-group"].includes(group)) return;
+    if (!navigationGroupIds.has(group)) return;
     if (expandedGroups.has(group)) expandedGroups.delete(group);
     else expandedGroups.add(group);
     render();
@@ -1425,6 +1445,11 @@ async function handleAction(button) {
     closeTelemetryChart();
     historyController?.abort();
     view = nextView;
+    expandNavigationForView(
+      navigationItems(navigationContext()),
+      view,
+      expandedGroups,
+    );
     if (view === "security") await refreshSecurity();
     if (window.matchMedia("(max-width: 680px)").matches)
       setNavigationOpen(false);
@@ -1526,6 +1551,11 @@ async function handleAction(button) {
   }
   if (action === "export" || action === "import") {
     view = "backups";
+    expandNavigationForView(
+      navigationItems(navigationContext()),
+      view,
+      expandedGroups,
+    );
     render();
     return;
   }
@@ -1605,6 +1635,7 @@ async function handleAction(button) {
       return;
     }
     if (action === "save-rule" || action === "save-rule-open") {
+      if (!dialog.querySelector("#rule-form").reportValidity()) return;
       collectRule();
       if (!draft.name) throw new Error("Укажите имя правила.");
       const cfg = configCopy(),

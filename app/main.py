@@ -41,6 +41,7 @@ from app.diagnostics import DiagnosticRequest, NetworkDiagnostics
 from app.fail2ban_container import ContainerFail2ban
 from app.firewall import Conflict, DemoDriver, Driver, FirewallService, LinuxDriver
 from app.models import Configuration, ConfirmRequest, LoginRequest, RevisionRequest, SaveRequest
+from app.rule_protection import effective_fail2ban
 from app.runtime import RouterRuntime, create_runtime
 from app.security_api import ProtectedApply, reauthenticate, security_router
 from app.security_services import SecurityServices
@@ -176,6 +177,7 @@ def create_app(
     )
     runtime.system_lists = security_services.lists
     runtime.fail2ban = security_services.fail2ban
+    runtime.attempts = security_services.attempts
     companion = ContainerFail2ban(security_services.fail2ban)
 
     def watchdog() -> None:
@@ -200,12 +202,13 @@ def create_app(
                     "Another OpenMikroRout process already owns this data directory"
                 ) from exc
             try:
-                companion.start(applied.fail2ban)
+                companion.start(effective_fail2ban(applied))
                 runtime.recover_security(applied)
                 service.recover(startup=True)
                 if settings.mode == "linux" and not injected_driver:
                     service.restore_confirmed()
             except (FirewallError, OSError) as exc:
+                security_services.attempts.close()
                 companion.stop()
                 store.write({"runtime_error": str(exc)}, "startup_failed", str(exc))
                 log.exception(
@@ -223,16 +226,14 @@ def create_app(
                 yield
             finally:
                 stop.set()
-                security_services.close()
                 telemetry_history.stop()
                 connections.stop()
                 thread.join(timeout=20)
-                if store.read("pending"):
-                    try:
+                try:
+                    if store.read("pending"):
                         service.rollback("Service stopped before confirmation")
-                    finally:
-                        companion.stop()
-                else:
+                finally:
+                    security_services.close()
                     companion.stop()
 
     app = FastAPI(

@@ -172,7 +172,14 @@ class BanStore:
                 self._event(db, profile.id, address, "ban")
         return True
 
-    def unban(self, profile: str, address: str, started: float | None = None) -> bool:
+    def unban(
+        self,
+        profile: str,
+        address: str,
+        started: float | None = None,
+        *,
+        require_ticket: bool = False,
+    ) -> bool:
         profile_id(profile)
         address = str(ipaddress.IPv4Address(address))
         with self.connection() as db:
@@ -180,6 +187,8 @@ class BanStore:
             previous = db.execute(
                 "SELECT added_at FROM bans WHERE profile=? AND address=?", (profile, address)
             ).fetchone()
+            if previous is None and require_ticket:
+                raise ValueError("Unknown Fail2ban ban ticket")
             if previous is not None and started is not None and previous["added_at"] > started:
                 return False
             self.driver.delete_temporary(f"f2b_{profile}", address)

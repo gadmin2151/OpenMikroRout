@@ -1,5 +1,6 @@
 /** Security configuration shares the router draft; operational data stays on the server. */
 import { proofForm, proof, clearProof } from "./security-ui.js";
+import { ruleServiceSummary } from "./rule-security-ui.js?v=3";
 
 export const protectionViews = {
   fail2ban: [
@@ -81,10 +82,16 @@ function statusMarkup(ctx, kind) {
 function bansMarkup(ctx) {
   const data = snapshots.fail2ban?.bans;
   if (!data) return '<div class="empty">Загружаем блокировки…</div>';
+  const profiles = new Map(
+    (snapshots.fail2ban?.status?.profiles || []).map((profile) => [
+      profile.id,
+      profile.name,
+    ]),
+  );
   const rows = data.items
     .map(
       (row) =>
-        `<tr><td class="mono">${ctx.e(row.address)}</td><td>${ctx.e(row.profile)}</td><td>${ctx.e(row.country || "—")}</td><td>${ctx.e(row.source)}</td><td>${ctx.e(when(row.added_at))}</td><td>${ctx.e(when(row.expires_at))}<small class="cell-note">${Math.max(0, Math.ceil(row.remaining_seconds))} с осталось</small></td><td>${row.kernel_present ? "В ядре" : "Ожидает синхронизации"}</td><td><button data-action="f2b-unban" data-profile="${ctx.e(row.profile)}" data-address="${ctx.e(row.address)}" ${readonly(ctx) ? "disabled" : ""}>Разблокировать</button></td></tr>`,
+        `<tr><td class="mono">${ctx.e(row.address)}</td><td>${ctx.e(profiles.get(row.profile) || row.profile)}<small class="cell-note mono">f2b_${ctx.e(row.profile)}</small></td><td>${ctx.e(row.country || "—")}</td><td>${ctx.e(row.source)}</td><td>${ctx.e(when(row.added_at))}</td><td>${ctx.e(when(row.expires_at))}<small class="cell-note">${Math.max(0, Math.ceil(row.remaining_seconds))} с осталось</small></td><td>${row.kernel_present ? "В ядре" : "Ожидает синхронизации"}</td><td><button data-action="f2b-unban" data-profile="${ctx.e(row.profile)}" data-address="${ctx.e(row.address)}" ${readonly(ctx) ? "disabled" : ""}>Разблокировать</button></td></tr>`,
     )
     .join("");
   return `<div class="table-scroll"><table class="rules-table"><thead><tr><th>IPv4</th><th>Профиль</th><th>Страна</th><th>Источник</th><th>Добавлен</th><th>Истекает</th><th>Исполнение</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="users-empty">Активных блокировок нет.</td></tr>'}</tbody></table></div>${pager(ctx, "fail2ban", data.total)}`;
@@ -105,11 +112,36 @@ function countryMarkup(ctx) {
     '<tr><td colspan="4" class="users-empty">Загрузите базу или измените поиск.</td></tr>'
   }</tbody></table></div>${pager(ctx, "geoip", data.total)}`;
 }
+function inlineProfiles(ctx) {
+  return [
+    ...(ctx.state.config.rules || []).map((rule) => ({ rule, table: "nat" })),
+    ...(ctx.state.config.filter_rules || []).map((rule) => ({
+      rule,
+      table: "filter",
+    })),
+  ].filter(({ rule }) => rule.protection?.enabled);
+}
+export function renderInlineProtection(ctx) {
+  const rows = inlineProfiles(ctx)
+    .map(({ rule, table }) => {
+      const service = ruleServiceSummary(rule);
+      const policy = rule.protection;
+      const source =
+        {
+          connections: "TCP-подключения",
+          web: "Ошибки входа Web",
+          ssh: "Ошибки SSH",
+        }[policy.event_source] || policy.event_source;
+      return `<tr><td>${ctx.e(rule.name)}<small class="cell-note">${table === "nat" ? "NAT" : "Filter Rules"} · ${ctx.e(service.chain)}</small></td><td>${ctx.e(service.destination)}<small class="cell-note">TCP ${ctx.e(service.ports)} · ${ctx.e(service.incoming)}</small></td><td>${ctx.e(source)}</td><td>${ctx.e(policy.max_retry)} за ${ctx.e(policy.find_time)} с</td><td>${ctx.e(policy.ban_time)} с</td><td>${rule.enabled === false ? "Правило выключено" : "Включено в черновике"}</td><td><button data-action="rule-protection-open" data-table="${table}" data-id="${ctx.e(rule.id)}" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("edit")}Открыть правило</button></td></tr>`;
+    })
+    .join("");
+  return `<div class="feature-heading"><h2>Защита из NAT / Filter Rules</h2><span class="status-tag">Правил: ${inlineProfiles(ctx).length}</span></div>${note("Включается на вкладке Fail2ban самого правила. Сервис и профиль синхронизируются автоматически; здесь показан общий черновик.", ctx)}<div class="table-scroll"><table class="rules-table"><thead><tr><th>Правило</th><th>Защищаемый сервис</th><th>Источник попыток</th><th>Порог</th><th>Бан</th><th>Состояние</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="users-empty">Откройте NAT или Filter Rule → Fail2ban и включите автоматическую блокировку.</td></tr>'}</tbody></table></div>`;
+}
 export function renderProtection(view, ctx) {
   const disabled = readonly(ctx) ? "disabled" : "";
   if (view === "fail2ban") {
     const config = ctx.state.config.fail2ban;
-    return `<div class="feature-page protection-page"><div id="protection-status">${statusMarkup(ctx, view)}</div><form id="f2b-settings" class="security-settings" data-revision="${ctx.state.revision}"><fieldset ${disabled}><legend>Доступ к защищаемому сервису</legend>${toggle(ctx, "Включить Fail2ban", "enabled", config.enabled)}<div class="security-form-grid"><label class="field"><span>Способ подключения</span><select name="access_mode">${[
+    return `<div class="feature-page protection-page"><div id="protection-status">${statusMarkup(ctx, view)}</div>${renderInlineProtection(ctx)}<form id="f2b-settings" class="security-settings" data-revision="${ctx.state.revision}"><fieldset ${disabled}><legend>Ручные профили и доступ к Web</legend>${toggle(ctx, "Включить ручные профили", "enabled", config.enabled)}<div class="security-form-grid"><label class="field"><span>Способ подключения</span><select name="access_mode">${[
       ["direct", "Прямое подключение"],
       ["local_proxy", "Локальный доверенный proxy"],
       ["external_proxy", "Внешний proxy · нужен внешний action"],
@@ -120,7 +152,7 @@ export function renderProtection(view, ctx) {
       )
       .join(
         "",
-      )}</select></label>${field(ctx, "Доверенные proxy · IPv4 / CIDR", "trusted_proxies", config.trusted_proxies.join(", "))}</div>${note("Для proxy укажите его адрес явно и настройте перезапись X-Forwarded-For. SSH-туннель скрывает исходный IP; loopback не блокируется. IPv6 этим модулем не защищается.", ctx)}<button class="primary" type="button" data-action="f2b-save">Сохранить в черновик</button></fieldset></form><div class="feature-heading"><h2>Профили защиты</h2><button data-action="f2b-edit" ${disabled}>${ctx.icon("plus")}Добавить профиль</button></div><div class="table-scroll"><table class="rules-table"><thead><tr><th>Профиль</th><th>Сервис</th><th>Порты</th><th>Порог</th><th>Окно / бан</th><th>Состояние</th><th></th></tr></thead><tbody>${config.profiles.map((item) => `<tr><td>${ctx.e(item.name)}<small class="cell-note mono">f2b_${ctx.e(item.id)}</small></td><td>${ctx.e(item.service)} · ${ctx.e(item.chain)}</td><td>${ctx.e(item.ports.join(", "))}</td><td>${item.max_retry}</td><td>${item.find_time} / ${item.ban_time} с</td><td>${item.enabled ? "Включён" : "Выключен"}</td><td><button data-action="f2b-edit" data-id="${ctx.e(item.id)}">${ctx.icon("edit")}Открыть</button></td></tr>`).join("")}</tbody></table></div>${note("Профили начинают работать после применения общего черновика. Бан относится только к выбранным адресам, интерфейсам и TCP-портам.", ctx)}<h2>Активные блокировки</h2>${searchForm(ctx, "fail2ban", "IP или профиль")}<div id="protection-results">${bansMarkup(ctx)}</div>${attribution}</div>`;
+      )}</select></label>${field(ctx, "Доверенные proxy · IPv4 / CIDR", "trusted_proxies", config.trusted_proxies.join(", "))}</div>${note("Для proxy укажите его адрес явно и настройте перезапись X-Forwarded-For. SSH-туннель скрывает исходный IP; loopback не блокируется. IPv6 этим модулем не защищается.", ctx)}<button class="primary" type="button" data-action="f2b-save">Сохранить в черновик</button></fieldset></form><div class="feature-heading"><h2>Ручные профили</h2><button data-action="f2b-edit" ${disabled}>${ctx.icon("plus")}Добавить вручную</button></div><div class="table-scroll"><table class="rules-table"><thead><tr><th>Профиль</th><th>Сервис</th><th>Порты</th><th>Порог</th><th>Окно / бан</th><th>Состояние</th><th></th></tr></thead><tbody>${config.profiles.map((item) => `<tr><td>${ctx.e(item.name)}<small class="cell-note mono">f2b_${ctx.e(item.id)}</small></td><td>${ctx.e(item.service)} · ${ctx.e(item.chain)}</td><td>${ctx.e(item.ports.join(", "))}</td><td>${item.max_retry}</td><td>${item.find_time} / ${item.ban_time} с</td><td>${!config.enabled ? "Ручные профили выключены" : item.enabled ? "Включён в черновике" : "Выключен"}</td><td><button data-action="f2b-edit" data-id="${ctx.e(item.id)}">${ctx.icon("edit")}Открыть</button></td></tr>`).join("")}</tbody></table></div>${note("Ручные профили — для отдельной защиты Web / SSH роутера. Их выключатель не отключает защиту, включённую в NAT / Filter Rules. Изменения начинают работать после применения общего черновика.", ctx)}<h2>Активные блокировки</h2>${searchForm(ctx, "fail2ban", "IP или профиль")}<div id="protection-results">${bansMarkup(ctx)}</div>${attribution}</div>`;
   }
   return `<div class="feature-page protection-page"><div id="protection-status">${statusMarkup(ctx, view)}</div><form id="geo-settings" class="security-settings" data-revision="${ctx.state.revision}"><fieldset ${disabled}><legend>Обновление базы</legend>${toggle(ctx, "Проверять новые выпуски автоматически", "auto_update", ctx.state.config.geoip.auto_update)}<div class="security-form-grid">${field(ctx, "Интервал проверки · часы", "check_hours", ctx.state.config.geoip.check_hours, "number", 'min="6" max="720"')}</div><div class="security-actions"><button class="primary" type="button" data-action="geo-save">Сохранить в черновик</button><button type="button" data-action="geo-update">${ctx.icon("download")}Загрузить / обновить базу</button></div></fieldset></form><form id="geo-lookup" class="security-search">${field(ctx, "Определить страну IPv4", "address", "", "text", 'placeholder="1.1.1.1" maxlength="15" required')}<button type="submit" data-action="geo-lookup">Проверить IP</button></form><div id="geo-lookup-result" aria-live="polite">${lookup ? note(`${lookup.address || lookup.ip}: ${lookup.country || "не определена"} · ${lookup.reason || "данные поставщика"}`, ctx) : ""}</div>${note("Страна определяется по IP, а не по местоположению человека. VPN и proxy влияют на результат. Страновое условие NAT выбирает трансляцию; само по себе оно не блокирует доступ.", ctx)}<h2>Страновые списки</h2>${searchForm(ctx, "geoip", "Код страны: MD, RO, DE…")}<div id="protection-results">${countryMarkup(ctx)}</div>${attribution}</div>`;
 }
@@ -454,12 +486,18 @@ export function addressListChoices(config) {
 }
 export function renderF2BRuleSummary(ctx) {
   const config = ctx.state.config.fail2ban;
-  if (!config?.enabled) return "";
-  return `<div class="system-firewall"><div class="feature-heading"><h3>OMR_F2B <span class="status-tag">Управляется Fail2ban</span></h3><button data-action="view" data-view="fail2ban">Настроить</button></div>${note("Системная цепочка проверяется перед обычными правилами. Неподходящий трафик возвращается к обычной обработке.", ctx)}<div class="table-scroll"><table class="rules-table"><thead><tr><th>Профиль</th><th>Направление</th><th>Источник</th><th>Интерфейс / назначение</th><th>TCP-порты</th><th>Действие</th><th>Пакеты / байты</th></tr></thead><tbody>${config.profiles
-    .filter((p) => p.enabled)
-    .map(
-      (p) =>
-        `<tr><td>${ctx.e(p.name)}</td><td>${ctx.e(p.chain)}</td><td class="mono">f2b_${ctx.e(p.id)}</td><td>${ctx.e(p.in_interface || "any")} / ${ctx.e(p.destination || "any")}</td><td>${ctx.e(p.ports.join(", "))}</td><td>DROP</td><td>${ctx.e(ctx.statistics?.[`f2b:${p.id}`]?.packets ?? "—")} / ${ctx.e(ctx.statistics?.[`f2b:${p.id}`]?.bytes ?? "—")}</td></tr>`,
-    )
-    .join("")}</tbody></table></div></div>`;
+  const inline = inlineProfiles(ctx).length
+    ? `<div class="system-firewall">${renderInlineProtection(ctx)}</div>`
+    : "";
+  if (!config?.enabled) return inline;
+  return (
+    inline +
+    `<div class="system-firewall"><div class="feature-heading"><h3>OMR_F2B <span class="status-tag">Управляется Fail2ban</span></h3><button data-action="view" data-view="fail2ban">Настроить</button></div>${note("Системная цепочка проверяется перед обычными правилами. Неподходящий трафик возвращается к обычной обработке.", ctx)}<div class="table-scroll"><table class="rules-table"><thead><tr><th>Профиль</th><th>Направление</th><th>Источник</th><th>Интерфейс / назначение</th><th>TCP-порты</th><th>Действие</th><th>Пакеты / байты</th></tr></thead><tbody>${config.profiles
+      .filter((p) => p.enabled)
+      .map(
+        (p) =>
+          `<tr><td>${ctx.e(p.name)}</td><td>${ctx.e(p.chain)}</td><td class="mono">f2b_${ctx.e(p.id)}</td><td>${ctx.e(p.in_interface || "any")} / ${ctx.e(p.destination || "any")}</td><td>${ctx.e(p.ports.join(", "))}</td><td>DROP</td><td>${ctx.e(ctx.statistics?.[`f2b:${p.id}`]?.packets ?? "—")} / ${ctx.e(ctx.statistics?.[`f2b:${p.id}`]?.bytes ?? "—")}</td></tr>`,
+      )
+      .join("")}</tbody></table></div></div>`
+  );
 }

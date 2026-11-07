@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.config_migrations import migrate_legacy_address_lists
 from app.discovery_models import DiscoverySettings, ScanSettings
-from app.fail2ban_models import F2BConfiguration, profile_id
+from app.fail2ban_models import F2BConfiguration, RuleProtection, profile_id
 from app.ipv4 import domain_name
 from app.network_models import NetworkConfiguration
 from app.system_lists import (
@@ -90,6 +90,7 @@ class RuleMatch(Model):
     dst_country: str = Field(default="", max_length=2)
     f2b_profile: str = Field(default="", max_length=20)
     f2b_match: Literal["banned", "not_banned"] = "not_banned"
+    protection: RuleProtection = Field(default_factory=RuleProtection)
     src_ports: str = Field(default="", max_length=200)
     dst_ports: str = Field(default="", max_length=200)
     in_interface: str = Field(default="", max_length=15)
@@ -228,6 +229,15 @@ class Configuration(Model):
 
     @model_validator(mode="after")
     def validate_references(self) -> Self:
+        if len(self.fail2ban.profiles) > 16:
+            raise ValueError("At most 16 manual Fail2ban profiles are allowed")
+        if any(
+            profile.rule_id or profile.rule_table or profile.scope
+            for profile in self.fail2ban.profiles
+        ):
+            raise ValueError(
+                "Rule-managed Fail2ban profiles must be configured in their parent rule"
+            )
         lists = {item.name: item for item in self.address_lists}
         systems = resolved_system_lists(self)
         if len({item.name for item in self.system_lists}) != len(self.system_lists):
@@ -240,7 +250,9 @@ class Configuration(Model):
         if len(set(ids)) != len(ids):
             raise ValueError("Rule and address list identifiers must be unique")
         count = 0
-        profiles = {profile.id for profile in self.fail2ban.profiles}
+        from app.rule_protection import effective_fail2ban
+
+        profiles = {profile.id for profile in effective_fail2ban(self).profiles}
         for rule in rules:
             if rule.f2b_profile and rule.f2b_profile not in profiles:
                 raise ValueError(f"Unknown Fail2ban profile: {rule.f2b_profile}")

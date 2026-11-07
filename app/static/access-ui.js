@@ -40,6 +40,7 @@ const readActions = new Set([
   "protection-page",
   "geo-lookup",
   "f2b-edit",
+  "rule-protection-open",
   "system-list-open",
   "system-list-page",
   "system-list-search",

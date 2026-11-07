@@ -14,6 +14,7 @@ from app.discovery_protocols import MAX_NEIGHBORS
 from app.firewall import Conflict, FirewallService
 from app.link_models import LinkModel
 from app.models import RevisionRequest
+from app.rule_protection import effective_fail2ban
 from app.security_services import SecurityServices
 from app.system_lists import resolved_system_lists
 from app.totp import CredentialProof
@@ -69,7 +70,29 @@ def security_router(
 
     @router.get("/security/fail2ban")
     def fail2ban_status() -> dict[str, Any]:
-        return services.fail2ban.status()
+        config = firewall.config()
+        effective = effective_fail2ban(config)
+        status = services.fail2ban.status()
+        collector = services.attempts.status()
+        if collector["enabled"] and not collector["healthy"]:
+            status["effective"] = False
+            status["error"] = (
+                status["error"]
+                or collector["last_error"]
+                or ("Сбор событий TCP не работает; автоматические баны не подтверждены")
+            )
+            status["warnings"].append(
+                "Сбор событий TCP не подтверждён: проверьте состояние защиты."
+            )
+        return {
+            **status,
+            "connection_collector": collector,
+            "draft_profiles": [profile.model_dump(mode="json") for profile in effective.profiles],
+            "manual_enabled": config.fail2ban.enabled,
+            "inline_enabled_count": sum(
+                profile.rule_id is not None and profile.enabled for profile in effective.profiles
+            ),
+        }
 
     @router.get("/security/fail2ban/bans")
     def bans(

@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from app.compiler import FirewallError, counters, patch, rollback_patch
 from app.models import Configuration
+from app.rule_protection import managed_profiles
 from app.runtime import RouterRuntime
 from app.storage import Store
 from app.transitions import validate_link_removals
@@ -367,16 +368,18 @@ class FirewallService:
     def state(self) -> dict[str, Any]:
         with self.lock:
             config = self.store.read("config")
+            applied = self.store.read("applied")
             pending = self.store.read("pending")
             return {
                 "config": config,
                 "revision": self.store.read("revision"),
-                "dirty": config != self.store.read("applied")
-                or bool(self.store.read("restore_plan")),
+                "dirty": config != applied or bool(self.store.read("restore_plan")),
                 "security_dirty": any(
-                    config.get(key) != self.store.read("applied").get(key)
+                    config.get(key) != applied.get(key)
                     for key in ("fail2ban", "geoip", "system_lists", "discovery", "scanning")
-                ),
+                )
+                or managed_profiles(Configuration.model_validate(config))
+                != managed_profiles(Configuration.model_validate(applied)),
                 "runtime_error": self.store.read("runtime_error"),
                 "restore_accounts": bool((self.store.read("restore_plan") or {}).get("accounts")),
                 "pending": {key: pending[key] for key in ("deadline", "token", "error")}

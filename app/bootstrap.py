@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from app.compiler import FirewallError
 from app.filtering import FilterDriver, LinuxFilterDriver, filter_patch
 from app.models import Configuration
+from app.rule_protection import effective_fail2ban
 
 
 class BootstrapError(RuntimeError):
@@ -60,7 +61,7 @@ def restore_confirmed_filters(data_dir: Path, driver: FilterDriver | None = None
                 lambda address: str(geoip.lookup(address).get("country") or ""),
             )
             try:
-                protection.restore(config.fail2ban)
+                protection.restore(effective_fail2ban(config))
             finally:
                 protection.journal.close()
         filters = driver if driver is not None else LinuxFilterDriver()
