@@ -8,6 +8,9 @@ import {
   syncScanForm,
   handleDiscoveryAction,
   renderDiscovery,
+  refreshDiscovery,
+  getScanActivity,
+  cancelActiveScan,
 } from "../../app/static/discovery-ui.js";
 
 const originalDocument = globalThis.document;
@@ -348,4 +351,161 @@ test("hidden or inactive scan views do not start a background progress timer", a
   t.mock.timers.tick(10000);
   await flush();
   assert.equal(calls, 1);
+});
+
+test("minimized scan windows keep activity while skipping polling and resume persisted results on restore", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const ctx = context();
+  let visible = true,
+    calls = 0,
+    writes = 0;
+  ctx.isWindowVisible = () => visible;
+  const detail = {
+    set innerHTML(_value) {
+      writes++;
+    },
+  };
+  globalThis.document = {
+    hidden: false,
+    querySelector: (selector) => (selector === "#scan-detail" ? detail : null),
+  };
+  ctx.api = async (path) => {
+    calls++;
+    if (path === "scans/status") return status();
+    if (path.startsWith("scans/jobs?")) return { items: [job()], total: 1 };
+    return job(2);
+  };
+  await handleDiscoveryAction(
+    { dataset: { action: "scan-job", id: "scan-1" } },
+    ctx,
+  );
+  assert.deepEqual(getScanActivity(), {
+    active: true,
+    jobId: "scan-1",
+    kind: "scan",
+  });
+  visible = false;
+  const before = calls,
+    painted = writes;
+  t.mock.timers.tick(5000);
+  await flush();
+  await refreshDiscovery(ctx);
+  assert.equal(calls, before);
+  assert.equal(writes, painted);
+  assert.equal(getScanActivity().active, true);
+  visible = true;
+  await refreshDiscovery(ctx);
+  const restored = calls;
+  assert.equal(restored, before + 3);
+  t.mock.timers.tick(500);
+  await flush();
+  assert.equal(calls, restored + 1);
+  assert.equal(writes, painted + 1);
+});
+
+test("a scan response already in flight updates activity while minimized without painting stale DOM", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const ctx = context();
+  let visible = true,
+    calls = 0,
+    writes = 0,
+    resolve;
+  ctx.isWindowVisible = () => visible;
+  globalThis.document = {
+    hidden: false,
+    querySelector: () => ({
+      set innerHTML(_value) {
+        writes++;
+      },
+    }),
+  };
+  ctx.api = async () => {
+    calls++;
+    if (calls === 1) return job();
+    return new Promise((done) => {
+      resolve = done;
+    });
+  };
+  await handleDiscoveryAction(
+    { dataset: { action: "scan-job", id: "scan-1" } },
+    ctx,
+  );
+  t.mock.timers.tick(500);
+  await flush();
+  assert.equal(calls, 2);
+  visible = false;
+  const painted = writes;
+  resolve(job(2, { state: "completed", progress: 100 }));
+  await flush();
+  assert.equal(writes, painted);
+  assert.deepEqual(getScanActivity(), {
+    active: false,
+    jobId: null,
+    kind: "scan",
+  });
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(calls, 2);
+});
+
+test("scan activity belongs to its window kind and reset never cancels a persisted job", async () => {
+  const ctx = context();
+  let view = "network_scan";
+  const calls = [];
+  ctx.isCurrentView = (name) => name === view;
+  globalThis.document = { querySelector: () => null };
+  ctx.api = async (path) => {
+    calls.push(path);
+    if (path === "scans/status") return status();
+    if (path.startsWith("scans/jobs?")) return { items: [job()], total: 1 };
+    return job();
+  };
+  await refreshDiscovery(ctx);
+  assert.deepEqual(getScanActivity(), {
+    active: false,
+    jobId: null,
+    kind: "scan",
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(await cancelActiveScan(ctx), false);
+  view = "port_scan";
+  await refreshDiscovery(ctx);
+  assert.deepEqual(getScanActivity(), {
+    active: true,
+    jobId: "scan-1",
+    kind: "scan",
+  });
+  assert.deepEqual(Object.keys(getScanActivity()), ["active", "jobId", "kind"]);
+  const before = calls.length;
+  resetDiscovery();
+  assert.equal(calls.length, before);
+  assert.deepEqual(getScanActivity(), {
+    active: false,
+    jobId: null,
+    kind: "scan",
+  });
+});
+
+test("closing an active scan cancels only by explicit helper and preserves full-role checks", async () => {
+  const ctx = context();
+  const calls = [];
+  ctx.run = async (task) => task();
+  globalThis.document = { querySelector: () => null };
+  ctx.api = async (path, options) => {
+    calls.push([path, options?.method]);
+    return job();
+  };
+  await handleDiscoveryAction(
+    { dataset: { action: "scan-job", id: "scan-1" } },
+    ctx,
+  );
+  ctx.isWindowVisible = () => false;
+  ctx.canWrite = () => false;
+  await assert.rejects(cancelActiveScan(ctx), /full/);
+  assert.equal(calls.length, 1);
+  ctx.canWrite = () => true;
+  assert.equal(await cancelActiveScan(ctx), true);
+  assert.deepEqual(calls[1], ["scans/jobs/scan-1/cancel", "POST"]);
+  resetDiscovery();
+  assert.equal(calls.length, 2);
 });

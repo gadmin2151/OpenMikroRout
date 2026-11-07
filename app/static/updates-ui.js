@@ -13,6 +13,8 @@ const activePhases = new Set([
   "restarting",
   "recovering",
 ]);
+const validVersion = (version) =>
+  typeof version === "string" && /^\d+\.\d+\.\d+$/.test(version);
 const phases = {
   queued: t("В очереди"),
   downloading: t("Загрузка"),
@@ -91,7 +93,7 @@ export function createUpdateReloadWatcher({
   return {
     watch(version) {
       if (
-        !/^\d+\.\d+\.\d+$/.test(version || "") ||
+        !validVersion(version) ||
         version === pending?.version ||
         version === reloadedVersion
       )
@@ -110,7 +112,11 @@ const updateReload = createUpdateReloadWatcher({
 });
 
 function watchUpdate(job, ctx) {
-  if (!activePhases.has(job?.phase)) return;
+  if (!activePhases.has(job?.phase) || !validVersion(job.version)) return;
+  if (typeof ctx.watchUpdate === "function") {
+    ctx.watchUpdate(job.version);
+    return;
+  }
   notifyUpdate = ctx.toast;
   updateReload.watch(job.version);
 }

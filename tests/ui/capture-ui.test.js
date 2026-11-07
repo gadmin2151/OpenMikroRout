@@ -6,6 +6,7 @@ import {
   refreshCapture,
   handleCaptureAction,
   handleCaptureInput,
+  getCaptureActivity,
 } from "../../app/static/capture-ui.js";
 import { setLanguage } from "../../app/static/i18n.js";
 
@@ -145,6 +146,62 @@ const action = (name, ctx) =>
 const completed = (output) => ({
   type: "completed",
   result: { tool: "capture", success: true, output, demo: false },
+});
+
+test("minimized capture keeps consuming and restores recent output without hidden DOM paints", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture(),
+    wire = stream();
+  let visible = true,
+    requests = 0;
+  f.ctx.isWindowVisible = () => visible;
+  f.ctx.api = async (path) => {
+    requests++;
+    return path.endsWith("status") ? status : wire.response;
+  };
+  await refreshCapture(f.ctx);
+  const pending = action("capture-start", f.ctx);
+  await flush();
+  assert.deepEqual(getCaptureActivity(), { active: true, kind: "capture" });
+  const painted = f.paints();
+  visible = false;
+  wire.send({ type: "started", tool: "capture", continuous: true });
+  wire.send({ type: "output", text: "packet while minimized\n" });
+  await flush();
+  t.mock.timers.tick(1000);
+  assert.equal(f.paints(), painted);
+  assert.equal(wire.cancelled(), false);
+  const before = requests;
+  await refreshCapture(f.ctx);
+  assert.equal(requests, before);
+  const snapshot = getCaptureActivity();
+  snapshot.active = false;
+  assert.equal(getCaptureActivity().active, true);
+  wire.send(completed("last packet while minimized\n"));
+  wire.close();
+  await pending;
+  assert.equal(f.paints(), painted);
+  assert.deepEqual(getCaptureActivity(), { active: false, kind: "capture" });
+  visible = true;
+  await refreshCapture(f.ctx);
+  assert.equal(f.output.textContent, "last packet while minimized\n");
+});
+
+test("closing a minimized capture window aborts its stream without exposing output in activity", async () => {
+  const f = fixture(),
+    wire = stream();
+  f.ctx.api = async (path) =>
+    path.endsWith("status") ? status : wire.response;
+  await refreshCapture(f.ctx);
+  const pending = action("capture-start", f.ctx);
+  wire.send({ type: "started", tool: "capture", continuous: true });
+  await flush();
+  f.ctx.isWindowVisible = () => false;
+  assert.deepEqual(Object.keys(getCaptureActivity()), ["active", "kind"]);
+  resetCapture();
+  await pending;
+  assert.equal(wire.cancelled(), true);
+  assert.equal(getCaptureActivity().active, false);
 });
 
 test("capture is translated RU/EN and exposes only typed filters, Start and Stop", () => {

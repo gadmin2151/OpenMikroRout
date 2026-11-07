@@ -5,6 +5,7 @@ const readActions = new Set([
   "close",
   "menu",
   "nav-group",
+  "workspace-windows",
   "help",
   "view",
   "refresh",

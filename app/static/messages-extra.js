@@ -443,4 +443,113 @@ export const messagesExtra = {
   "Захват завершён": ["Захват завершён", "Capture completed"],
   "Захват завершён с ошибкой": ["Захват завершён с ошибкой", "Capture failed"],
   "Захват остановлен": ["Захват остановлен", "Capture stopped"],
+  "Рабочий стол": ["Рабочий стол", "Desktop"],
+  "Рабочий стол роутера": ["Рабочий стол роутера", "Router desktop"],
+  "Перейти в другой раздел?": [
+    "Перейти в другой раздел?",
+    "Switch to another section?",
+  ],
+  "Продолжить без сохранения": [
+    "Продолжить без сохранения",
+    "Continue without saving",
+  ],
+  "Закрыть окно «{name}»?": [
+    "Закрыть окно «{name}»?",
+    "Close the “{name}” window?",
+  ],
+  "Несохранённые изменения в форме будут потеряны.": [
+    "Несохранённые изменения в форме будут потеряны.",
+    "Unsaved changes in the form will be lost.",
+  ],
+  "Сканирование выполняется на сервере. Продолжить его в фоне или остановить?":
+    [
+      "Сканирование выполняется на сервере. Продолжить его в фоне или остановить?",
+      "The scan is running on the server. Keep it running in the background or stop it?",
+    ],
+  "Продолжить в фоне": ["Продолжить в фоне", "Continue in background"],
+  "Остановить и закрыть": ["Остановить и закрыть", "Stop and close"],
+  "Дождитесь завершения текущей операции.": [
+    "Дождитесь завершения текущей операции.",
+    "Wait for the current operation to finish.",
+  ],
+  "Не удалось подключить окно. Закройте его и откройте снова.": [
+    "Не удалось подключить окно. Закройте его и откройте снова.",
+    "Could not connect the window. Close it and open it again.",
+  ],
+  "Открытые окна": ["Открытые окна", "Open windows"],
+  "Выберите окно, чтобы перейти к нему.": [
+    "Выберите окно, чтобы перейти к нему.",
+    "Select a window to switch to it.",
+  ],
+  Свёрнуто: ["Свёрнуто", "Minimized"],
+  "Активное окно": ["Активное окно", "Active window"],
+  Открыто: ["Открыто", "Open"],
+  "Открытых окон нет. Выберите раздел в меню слева.": [
+    "Открытых окон нет. Выберите раздел в меню слева.",
+    "No windows are open. Select a section from the left menu.",
+  ],
+  "Закрыть список": ["Закрыть список", "Close list"],
+  "Нет открытых окон": ["Нет открытых окон", "No open windows"],
+  "Откройте раздел в меню слева. Окна можно перемещать и менять их размер.": [
+    "Откройте раздел в меню слева. Окна можно перемещать и менять их размер.",
+    "Open a section from the left menu. You can move and resize windows.",
+  ],
+  Каскадом: ["Каскадом", "Cascade"],
+  Плиткой: ["Плиткой", "Tile"],
+  "Собрать окна": ["Собрать окна", "Gather windows"],
+  "Сбросить раскладку": ["Сбросить раскладку", "Reset layout"],
+  "Масштаб окна": ["Масштаб окна", "Window zoom"],
+  "Уменьшить масштаб": ["Уменьшить масштаб", "Zoom out"],
+  "Увеличить масштаб": ["Увеличить масштаб", "Zoom in"],
+  "Сбросить масштаб": ["Сбросить масштаб", "Reset zoom"],
+  "Прикрепить слева": ["Прикрепить слева", "Snap left"],
+  "Прикрепить справа": ["Прикрепить справа", "Snap right"],
+  Свернуть: ["Свернуть", "Minimize"],
+  "Развернуть окно": ["Развернуть окно", "Maximize window"],
+  Восстановить: ["Восстановить", "Restore"],
+  "Закрыть окно": ["Закрыть окно", "Close window"],
+  "Изменить размер окна": ["Изменить размер окна", "Resize window"],
+  "Переместить окно: Alt + стрелки. Изменить размер: Alt + Shift + стрелки.": [
+    "Переместить окно: Alt + стрелки. Изменить размер: Alt + Shift + стрелки.",
+    "Move window: Alt + arrows. Resize: Alt + Shift + arrows.",
+  ],
+  "Загрузка окна…": ["Загрузка окна…", "Loading window…"],
+  "Нельзя открыть больше 32 окон.": [
+    "Нельзя открыть больше 32 окон.",
+    "You cannot open more than 32 windows.",
+  ],
+  "Окно перемещено": ["Окно перемещено", "Window moved"],
+  "Размер окна изменён": ["Размер окна изменён", "Window resized"],
+  "Cannot enumerate local capture interfaces": [
+    "Не удалось получить список локальных интерфейсов захвата",
+    "Cannot enumerate local capture interfaces",
+  ],
+  "Another packet capture is running; stop it first": [
+    "Другой захват пакетов уже выполняется. Сначала остановите его",
+    "Another packet capture is running; stop it first",
+  ],
+  "The selected capture interface is not available on this host": [
+    "Выбранный интерфейс захвата недоступен на этом узле",
+    "The selected capture interface is not available on this host",
+  ],
+  "Install tcpdump to capture packet headers": [
+    "Установите tcpdump для захвата заголовков пакетов",
+    "Install tcpdump to capture packet headers",
+  ],
+  "Packet captures are limited to 12 starts per minute": [
+    "Захват пакетов можно запускать не более 12 раз в минуту",
+    "Packet captures are limited to 12 starts per minute",
+  ],
+  "A service update is starting; the live tool was stopped": [
+    "Начинается обновление сервиса. Работающий инструмент остановлен",
+    "A service update is starting; the live tool was stopped",
+  ],
+  "ICMP does not have TCP/UDP ports": [
+    "У ICMP нет портов TCP/UDP",
+    "ICMP does not have TCP/UDP ports",
+  ],
+  "Continuous diagnostics are available only for Ping": [
+    "Непрерывная диагностика доступна только для Ping",
+    "Continuous diagnostics are available only for Ping",
+  ],
 };

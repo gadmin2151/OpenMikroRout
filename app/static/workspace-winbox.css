@@ -1,0 +1,752 @@
+/* Interior of same-origin tool windows; the desktop and login keep their theme. */
+.workspace-tool {
+  --canvas: #f3f5f7;
+  --surface: #ffffff;
+  --surface-alt: #f0f3f6;
+  --surface-hover: #eaf0f6;
+  --field: #ffffff;
+  --line: #d4dce5;
+  --control-line: #a6b5c4;
+  --text: #243746;
+  --text-secondary: #40576a;
+  --text-muted: #5e7181;
+  --muted: #5e7181;
+  --accent: #315a7e;
+  --accent-fill: #315a7e;
+  --accent-hover: #244766;
+  --accent-soft: #e6eef7;
+  --focus: #315a7e;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.workspace-tool button {
+  min-height: 30px;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workspace-tool button.icon {
+  width: 30px;
+  height: 30px;
+  padding: 5px;
+}
+
+.workspace-tool button.small {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.workspace-tool button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.workspace-tool input:not([type="checkbox"]):not([type="radio"]),
+.workspace-tool select,
+.workspace-tool textarea {
+  min-width: 0;
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.workspace-tool input:focus,
+.workspace-tool select:focus,
+.workspace-tool textarea:focus {
+  outline-color: #315a7e33;
+}
+
+.workspace-tool input[type="checkbox"],
+.workspace-tool input[type="radio"] {
+  width: 15px;
+  height: 15px;
+  min-height: 15px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+/* Tabs and commands stay above the list, with filters at the right edge. */
+.workspace-tool .panel-tabs,
+.workspace-tool .dialog-tabs {
+  min-height: 35px;
+  gap: 3px;
+  padding: 4px 8px 0;
+  overflow-x: auto;
+  background: var(--surface-alt);
+  scrollbar-width: thin;
+}
+
+.workspace-tool .panel-tab,
+.workspace-tool .dialog-tab {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.workspace-tool .panel-tab.active,
+.workspace-tool .dialog-tab.active {
+  border-color: var(--control-line);
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px var(--surface);
+  font-weight: 600;
+}
+
+.workspace-tool .tab-count {
+  padding: 0 4px;
+  border-radius: 2px;
+  line-height: 18px;
+}
+
+.workspace-tool .toolbar {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-height: 43px;
+  padding: 6px 8px;
+  background: var(--surface-alt);
+}
+
+.workspace-tool .toolbar-start,
+.workspace-tool .toolbar-end {
+  gap: 4px;
+}
+
+.workspace-tool .toolbar-end {
+  margin-left: auto;
+}
+
+.workspace-tool .toolbar > .muted {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.workspace-tool .toolbar > .muted:first-child {
+  margin-right: auto;
+  margin-left: 0;
+}
+
+.workspace-tool .toolbar-start .separator {
+  height: 22px;
+  margin: 0 3px;
+}
+
+.workspace-tool .toolbar .add {
+  min-height: 30px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.workspace-tool .search {
+  flex: 1 1 170px;
+  min-width: 130px;
+}
+
+.workspace-tool .search input {
+  width: 190px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 4px 8px 4px 29px;
+  font-size: 12px;
+}
+
+.workspace-tool .toolbar select {
+  min-height: 30px;
+  padding: 4px 22px 4px 7px;
+  font-size: 12px;
+}
+
+/* Lists remain scrollable tables, including every configured column. */
+.workspace-tool .table-scroll {
+  min-height: 0;
+  scrollbar-width: thin;
+}
+
+.workspace-tool .rules-table th,
+.workspace-tool .rules-table td,
+.workspace-tool .discovery-page table th,
+.workspace-tool .discovery-page table td {
+  height: 32px;
+  padding: 5px 8px;
+  font-size: 12px;
+  line-height: 20px;
+  vertical-align: middle;
+}
+
+.workspace-tool .rules-table th {
+  height: 30px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  background: var(--surface-alt);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.workspace-tool .rules-table th:first-child,
+.workspace-tool .rules-table td:first-child {
+  padding-left: 9px;
+}
+
+.workspace-tool .rules-table tbody tr {
+  background: var(--surface);
+}
+
+.workspace-tool .rules-table tbody tr:nth-child(even) {
+  background: #f7f9fb;
+}
+
+.workspace-tool .rules-table tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.workspace-tool .rules-table tbody tr.selected {
+  background: var(--accent-soft);
+}
+
+.workspace-tool .rule-comment,
+.workspace-tool .cell-note {
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.workspace-tool .action-badge,
+.workspace-tool .protocol-badge {
+  padding: 1px 5px;
+  border-radius: 2px;
+  line-height: 18px;
+}
+
+.workspace-tool .row-actions {
+  gap: 2px;
+}
+
+.workspace-tool .row-actions .icon,
+.workspace-tool .drag-handle {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 4px;
+}
+
+.workspace-tool .panel-footer {
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  padding: 5px 9px;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+/* Editors share aligned property rows and a dedicated action rail. */
+.workspace-tool dialog {
+  border-radius: 4px;
+  box-shadow: 0 8px 24px #19354d26;
+}
+
+.workspace-tool dialog::backdrop {
+  background: #19354d59;
+  backdrop-filter: none;
+}
+
+.workspace-tool .dialog-head,
+.workspace-tool .winbox-editor .dialog-head {
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface-alt);
+}
+
+.workspace-tool .dialog-head h2,
+.workspace-tool .winbox-editor .dialog-head h2 {
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-tool .dialog-head p {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workspace-tool .dialog-content,
+.workspace-tool .winbox-editor .dialog-content {
+  padding: 12px;
+  max-height: calc(100dvh - 180px);
+}
+
+.workspace-tool .rule-editor-layout {
+  grid-template-columns: minmax(0, 1fr) 108px;
+  gap: 12px;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.workspace-tool .rule-editor-layout > :first-child {
+  min-width: 0;
+}
+
+.workspace-tool .winbox-form {
+  gap: 8px;
+}
+
+.workspace-tool .winbox-form .field {
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 4px 10px;
+}
+
+.workspace-tool .winbox-form .field > span {
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workspace-tool .winbox-form .field input:not([type="checkbox"]),
+.workspace-tool .winbox-form .field select,
+.workspace-tool .winbox-form .field textarea {
+  min-height: 32px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.workspace-tool .winbox-form .field:has(.checkbox-select) {
+  align-items: start;
+}
+
+.workspace-tool .winbox-form .field:has(.checkbox-select) > span {
+  padding-top: 7px;
+}
+
+.workspace-tool .rule-actions {
+  gap: 6px;
+  padding-left: 10px;
+}
+
+.workspace-tool .rule-actions button {
+  min-height: 30px;
+  padding: 5px 6px;
+  font-size: 12px;
+}
+
+.workspace-tool .dialog-footer,
+.workspace-tool .winbox-editor .dialog-footer {
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+
+/* Page forms use the same controls without masquerading as nested dialogs. */
+.workspace-tool .feature-page,
+.workspace-tool .view-panel,
+.workspace-tool .router-settings,
+.workspace-tool .system-lists,
+.workspace-tool .system-firewall {
+  padding: 12px;
+}
+
+.workspace-tool .feature-heading {
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.workspace-tool .feature-heading h2 {
+  margin: 0 0 3px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.workspace-tool .feature-heading h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.workspace-tool .feature-heading > svg,
+.workspace-tool .security-card > div > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.workspace-tool .feature-heading p,
+.workspace-tool .feature-note,
+.workspace-tool .security-card p,
+.workspace-tool .field > small {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workspace-tool .form-grid,
+.workspace-tool .security-form-grid {
+  gap: 12px 16px;
+}
+
+.workspace-tool .form-grid > .wide {
+  grid-column: 1 / -1;
+}
+
+.workspace-tool .field {
+  gap: 4px;
+}
+
+.workspace-tool .field > span {
+  font-size: 12px;
+}
+
+.workspace-tool .field-note {
+  padding: 8px 10px;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workspace-tool .settings-actions,
+.workspace-tool .backup-import-actions,
+.workspace-tool .security-actions,
+.workspace-tool .update-buttons {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workspace-tool .security-card,
+.workspace-tool .backup-preview {
+  gap: 12px;
+  padding: 12px;
+  border-radius: 3px;
+  border-color: var(--line);
+  background: var(--surface-alt);
+}
+
+.workspace-tool .security-card h3 {
+  margin: 3px 0 6px;
+  font-size: 13px;
+}
+
+.workspace-tool .backup-page,
+.workspace-tool .discovery-page {
+  gap: 12px;
+}
+
+.workspace-tool .security-settings fieldset,
+.workspace-tool .discovery-settings-form > fieldset,
+.workspace-tool .scan-start-form > fieldset {
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.workspace-tool .monitor-filters {
+  gap: 10px;
+  padding: 10px;
+  border-radius: 3px;
+  background: var(--surface-alt);
+}
+
+.workspace-tool .security-search,
+.workspace-tool .security-pagination,
+.workspace-tool .monitor-summary,
+.workspace-tool .wg-summary,
+.workspace-tool .wg-peer-filters {
+  gap: 8px 12px;
+  padding: 8px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.workspace-tool .security-search button,
+.workspace-tool .security-actions button,
+.workspace-tool .security-pagination button {
+  min-height: 30px;
+}
+
+.workspace-tool .router-subheading,
+.workspace-tool .router-section-note,
+.workspace-tool .users-role-help,
+.workspace-tool .users-access-note {
+  padding: 9px 12px;
+  font-size: 12px;
+}
+
+.workspace-tool .list-grid,
+.workspace-tool .interface-grid {
+  gap: 10px;
+}
+
+.workspace-tool .empty {
+  min-height: 160px;
+  padding: 20px;
+  gap: 8px;
+}
+
+.workspace-tool .address-card,
+.workspace-tool .interface-card {
+  border-radius: 3px;
+}
+
+.workspace-tool .address-card-head {
+  padding: 9px 10px;
+}
+
+/* Multi-selection remains a native checkbox list, including hidden search rows. */
+.workspace-tool .checkbox-select {
+  border-radius: 3px;
+}
+
+.workspace-tool .checkbox-select-toolbar {
+  gap: 4px;
+  padding: 4px 6px;
+}
+
+.workspace-tool .checkbox-select-toolbar button {
+  min-height: 25px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.workspace-tool .checkbox-select-search {
+  border-radius: 0;
+}
+
+.workspace-tool .checkbox-select-options {
+  max-height: 180px;
+  padding: 3px;
+}
+
+.workspace-tool .checkbox-select-option {
+  gap: 8px;
+  min-height: 29px;
+  padding: 4px 6px;
+  border-radius: 2px;
+}
+
+.workspace-tool .checkbox-select-option span {
+  font-size: 12px;
+  line-height: 20px;
+}
+
+/* Diagnostic consoles retain a steady, readable output area. */
+.workspace-tool .tools-form,
+.workspace-tool .tools-form.is-tcp,
+.workspace-tool .scan-fields {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 165px), 1fr));
+  gap: 12px;
+}
+
+.workspace-tool .tools-form,
+.workspace-tool .capture-form {
+  margin: 12px 0;
+}
+
+.workspace-tool .tools-live-actions {
+  align-self: start;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 22px;
+}
+
+.workspace-tool .scan-actions {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.workspace-tool .scan-actions button {
+  min-height: 32px;
+  margin-left: 0;
+}
+
+.workspace-tool .scan-actions .wg-check {
+  flex: 0 1 auto;
+}
+
+.workspace-tool .scan-readiness {
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.workspace-tool .tools-result {
+  border-radius: 3px;
+}
+
+.workspace-tool .tools-result-heading {
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.workspace-tool .tools-result pre {
+  height: clamp(200px, 45dvh, 360px);
+  min-height: 180px;
+  padding: 10px;
+  background: #fbfcfd;
+  color: #243746;
+  font-size: 12px;
+  line-height: 18px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* Compact the overview chrome without changing the stable live chart frames. */
+.workspace-tool .telemetry-dashboard,
+.workspace-tool #telemetry-content {
+  gap: 12px;
+}
+
+.workspace-tool .telemetry-dashboard,
+.workspace-tool .overview-grid {
+  padding: 12px;
+}
+
+.workspace-tool .telemetry-heading h2 {
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0;
+}
+
+.workspace-tool .telemetry-heading p {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workspace-tool .telemetry-chart-grid,
+.workspace-tool .telemetry-detail-grid {
+  gap: 12px;
+}
+
+.workspace-tool .telemetry-panel,
+.workspace-tool .overview-card {
+  border-radius: 3px;
+}
+
+.workspace-tool .telemetry-panel-heading {
+  padding: 8px 10px;
+}
+
+.workspace-tool .telemetry-panel-heading h3 {
+  font-size: 13px;
+}
+
+.workspace-tool .telemetry-table th,
+.workspace-tool .telemetry-table td {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.workspace-tool .overview-card {
+  min-height: 0;
+  padding: 12px;
+}
+
+@media (max-width: 760px) {
+  .workspace-tool .toolbar-end {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .workspace-tool .search input {
+    width: 100%;
+  }
+
+  .workspace-tool .rule-editor-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .workspace-tool .rule-actions {
+    position: sticky;
+    bottom: -12px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 9px 0 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+    background: var(--surface);
+  }
+
+  .workspace-tool .rule-actions button {
+    flex: 1 1 88px;
+  }
+
+  .workspace-tool .rule-actions .form-divider {
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .workspace-tool .feature-page,
+  .workspace-tool .view-panel,
+  .workspace-tool .router-settings {
+    padding: 10px;
+  }
+
+  .workspace-tool .form-grid,
+  .workspace-tool .security-form-grid,
+  .workspace-tool .tools-form,
+  .workspace-tool .tools-form.is-tcp,
+  .workspace-tool .scan-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-tool .winbox-form .field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .workspace-tool .winbox-form .field > span {
+    text-align: left;
+  }
+
+  .workspace-tool .winbox-form .field > small {
+    grid-column: 1;
+  }
+
+  .workspace-tool input:not([type="checkbox"]):not([type="radio"]),
+  .workspace-tool select,
+  .workspace-tool textarea,
+  .workspace-tool .winbox-form .field input:not([type="checkbox"]),
+  .workspace-tool .winbox-form .field select,
+  .workspace-tool .winbox-form .field textarea {
+    min-height: 36px;
+    font-size: 16px;
+  }
+
+  .workspace-tool .toolbar select,
+  .workspace-tool .search input {
+    max-width: 100%;
+  }
+
+  .workspace-tool .tools-live-actions {
+    margin-top: 0;
+  }
+
+  .workspace-tool .security-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace-tool .dialog-footer {
+    flex-wrap: wrap;
+  }
+
+  .workspace-tool .panel-tabs,
+  .workspace-tool .dialog-tabs {
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+}

@@ -1,0 +1,170 @@
+.workspace-host {
+  height: 100dvh;
+  overflow: hidden;
+}
+.workspace-host .app-shell {
+  height: 100dvh;
+  min-height: 0;
+}
+.workspace-host .main {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+.workspace-host .topbar {
+  flex: 0 0 52px;
+}
+.workspace-host .workspace-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  background: #edf1f5;
+}
+.workspace-notices:empty {
+  display: none;
+}
+.workspace-notices .connection-error,
+.workspace-notices .read-only-banner {
+  margin: 0;
+  border-radius: 0;
+  padding: 8px 16px;
+}
+.workspace-host #desktop-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.workspace-host #statusbar {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 50;
+}
+.workspace-host #statusbar .bottom-status {
+  position: static;
+  width: 100%;
+  min-height: 45px;
+  padding: 9px 16px;
+}
+.workspace-host #statusbar .bottom-status.pending {
+  min-height: 62px;
+}
+.workspace-tool body {
+  background: var(--surface);
+}
+.workspace-tool .app-shell {
+  min-height: 100dvh;
+  display: block;
+}
+.workspace-tool .sidebar,
+.workspace-tool .sidebar-scrim,
+.workspace-tool .topbar,
+.workspace-tool .page-heading,
+.workspace-tool .configuration-summary,
+.workspace-tool .page-footer,
+.workspace-tool #statusbar,
+.workspace-tool .content > .configuration-help,
+.workspace-tool .content > .read-only-banner {
+  display: none;
+}
+.workspace-tool .main {
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+}
+.workspace-tool .content {
+  padding: 0;
+  max-width: none;
+  margin: 0;
+}
+.workspace-tool .panel {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.workspace-tool .feature-page,
+.workspace-tool .telemetry-dashboard {
+  padding: 16px;
+}
+.workspace-tool .feature-heading {
+  gap: 12px;
+}
+.workspace-tool .feature-heading h2 {
+  font-size: 16px;
+}
+.workspace-tool .tools-form {
+  margin: 16px 0;
+}
+.workspace-tool .tools-result pre {
+  height: 300px;
+  min-height: 180px;
+}
+.workspace-tool dialog {
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+}
+.workspace-confirm {
+  width: min(460px, calc(100vw - 24px));
+  padding: 24px;
+}
+.workspace-confirm h2 {
+  margin-top: 0;
+  font-size: 18px;
+}
+.workspace-confirm p {
+  line-height: 1.6;
+}
+.workspace-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 22px;
+}
+.workspace-window-list ul {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  max-height: 55dvh;
+  overflow: auto;
+}
+.workspace-list-entry {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+  border-radius: 0;
+  margin-top: -1px;
+  white-space: normal;
+  min-height: 43px;
+}
+.workspace-list-entry[aria-pressed="true"] {
+  background: var(--selected-bg, #e0ecf5);
+}
+.workspace-list-entry span {
+  color: var(--muted);
+  font-size: 11px;
+}
+@media (max-width: 680px) {
+  .workspace-host .main {
+    margin-left: 0;
+    width: 100%;
+  }
+  .workspace-host .topbar {
+    padding: 0 12px;
+  }
+  .workspace-host #statusbar .bottom-status {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  .workspace-tool .feature-page,
+  .workspace-tool .telemetry-dashboard {
+    padding: 12px;
+  }
+}
