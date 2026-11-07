@@ -21,6 +21,9 @@ def interface_references(config: Configuration, name: str) -> list[str]:
     for peer in network.wireguard_peers:
         if peer.interface == name:
             references.append(f"WireGuard peer {peer.name}")
+    for interface in network.wireguard_interfaces:
+        if interface.server_access and interface.server_access.wan_interface == name:
+            references.append(f"WireGuard server access {interface.name}")
     for address in network.addresses:
         if address.interface == name:
             references.append(f"IP address {address.address}")

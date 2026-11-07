@@ -1,3 +1,4 @@
+import asyncio
 import fcntl
 import json
 import logging
@@ -24,11 +25,12 @@ from app.auth import (
     AuthStore,
     LoginResponse,
     ManagedUser,
+    ProtectedUserCreate,
+    ProtectedUserDelete,
+    ProtectedUserUpdate,
     PublicUser,
     SessionResponse,
-    UserCreate,
     UserList,
-    UserUpdate,
     normalize_username,
 )
 from app.backup_api import backup_router
@@ -57,6 +59,7 @@ from app.wireguard_vault import WireGuardVault
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
+REQUEST_BODY_SECONDS = 30.0
 
 
 def environment(name: str, legacy: str, default: str = "") -> str:
@@ -202,6 +205,7 @@ def create_app(
                     "Another OpenMikroRout process already owns this data directory"
                 ) from exc
             try:
+                runtime.restore_guards(applied)
                 companion.start(effective_fail2ban(applied))
                 runtime.recover_security(applied)
                 service.recover(startup=True)
@@ -245,6 +249,7 @@ def create_app(
         openapi_url=None,
     )
     app.state.service = service
+    app.state.auth = auth
     app.state.connections = connections
     app.state.updates = updates
     app.state.telemetry_history = telemetry_history
@@ -316,18 +321,39 @@ def create_app(
         if api_request and denied is None and request.method not in ("GET", "HEAD"):
             total = 0
             chunks = []
-            async for chunk in request.stream():
-                total += len(chunk)
-                limit = (
-                    16 * 1024 * 1024
-                    if request.url.path == "/api/configuration/inspect"
-                    else 1_048_576
-                )
-                if total > limit:
-                    denied = JSONResponse({"detail": "Request exceeds size limit"}, status_code=413)
-                    break
-                chunks.append(chunk)
+            try:
+                async with asyncio.timeout(REQUEST_BODY_SECONDS):
+                    async for chunk in request.stream():
+                        total += len(chunk)
+                        limit = (
+                            16 * 1024 * 1024
+                            if request.url.path == "/api/configuration/inspect"
+                            else 1_048_576
+                        )
+                        if total > limit:
+                            denied = JSONResponse(
+                                {"detail": "Request exceeds size limit"}, status_code=413
+                            )
+                            break
+                        chunks.append(chunk)
+            except TimeoutError:
+                denied = JSONResponse({"detail": "Request body timed out"}, status_code=408)
             request._body = b"".join(chunks)
+        if (
+            api_request
+            and denied is None
+            and request.url.path not in ("/api/health", "/api/login", "/api/logout")
+            and request.method not in ("GET", "HEAD")
+        ):
+            # Body streaming is an await boundary: the original token may have been
+            # logged out, revoked, expired or demoted while the client supplied it.
+            try:
+                await run_in_threadpool(authenticated, request)
+            except (AuthError, HTTPException) as exc:
+                denied = JSONResponse(
+                    {"detail": str(exc) if isinstance(exc, AuthError) else exc.detail},
+                    status_code=exc.status if isinstance(exc, AuthError) else exc.status_code,
+                )
         response = denied if denied is not None else await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
@@ -342,9 +368,24 @@ def create_app(
         return response
 
     def authenticated(request: Request) -> PublicUser | None:
-        user: PublicUser | None = request.state.current_user
+        user = auth.resolve(request.cookies.get("nat_session", ""))
+        request.state.current_user = user
         if auth.enabled and user is None:
             raise HTTPException(401, "Sign in to manage the router")
+        if (
+            auth.enabled
+            and user is not None
+            and user.role != "full"
+            and request.method not in ("GET", "HEAD")
+            and request.url.path
+            not in (
+                "/api/preview",
+                "/api/me/totp/setup",
+                "/api/me/totp/confirm",
+                "/api/me/totp/disable",
+            )
+        ):
+            raise HTTPException(403, "This account has read-only access")
         return user
 
     def full_access(request: Request) -> PublicUser | None:
@@ -434,7 +475,13 @@ def create_app(
     @app.post("/api/updates/apply", status_code=202, dependencies=[Depends(full_access)])
     def update_apply(body: UpdateApply, request: Request) -> UpdateJob:
         actor = account_actor(request)
-        auth.reauthenticate(actor, body, client_address(request))
+        auth.reauthenticate(
+            actor,
+            body,
+            client_address(request),
+            token=request.cookies.get("nat_session", ""),
+            required_role="full",
+        )
         with service.lock:
             current = service.state()
             if current["pending"] or current["dirty"] or current["runtime_error"]:
@@ -451,12 +498,22 @@ def create_app(
 
     @app.post("/api/me/totp/setup")
     def totp_setup(body: CredentialProof, request: Request) -> TotpEnrollment:
-        return auth.totp_setup(account_actor(request), body, client_address(request))
+        return auth.totp_setup(
+            account_actor(request),
+            body,
+            client_address(request),
+            token=request.cookies.get("nat_session", ""),
+        )
 
     @app.post("/api/me/totp/confirm")
     def totp_confirm(body: CredentialProof, request: Request, response: Response) -> TotpRecovery:
         actor = account_actor(request)
-        result, token = auth.totp_confirm(actor, body, client_address(request))
+        result, token = auth.totp_confirm(
+            actor,
+            body,
+            client_address(request),
+            token=request.cookies.get("nat_session", ""),
+        )
         session_cookie(response, token)
         store.write({}, "totp_enabled", actor.username)
         return result
@@ -464,7 +521,12 @@ def create_app(
     @app.post("/api/me/totp/disable")
     def totp_disable(body: CredentialProof, request: Request, response: Response) -> TotpStatus:
         actor = account_actor(request)
-        token = auth.totp_disable(actor, body, client_address(request))
+        token = auth.totp_disable(
+            actor,
+            body,
+            client_address(request),
+            token=request.cookies.get("nat_session", ""),
+        )
         session_cookie(response, token)
         store.write({}, "totp_disabled", actor.username)
         return TotpStatus(enabled=False, recovery_codes_remaining=0)
@@ -472,7 +534,13 @@ def create_app(
     @app.post("/api/users/{user_id}/totp/reset", dependencies=[Depends(full_access)])
     def totp_reset(user_id: UUID, body: CredentialProof, request: Request) -> dict[str, bool]:
         actor = account_actor(request)
-        auth.totp_reset(str(user_id), actor, body, client_address(request))
+        auth.totp_reset(
+            str(user_id),
+            actor,
+            body,
+            client_address(request),
+            token=request.cookies.get("nat_session", ""),
+        )
         store.write({}, "totp_reset", f"{actor.username}: {user_id}")
         return {"ok": True}
 
@@ -508,17 +576,32 @@ def create_app(
         return UserList(users=auth.require_store().list_users())
 
     @app.post("/api/users", status_code=201, dependencies=[Depends(full_access)])
-    def create_user(body: UserCreate) -> ManagedUser:
-        return auth.create(body)
+    def create_user(body: ProtectedUserCreate, request: Request) -> ManagedUser:
+        return auth.create(
+            body,
+            proof=body.proof,
+            token=request.cookies.get("nat_session", ""),
+            client=client_address(request),
+        )
 
     @app.put("/api/users/{user_id}", dependencies=[Depends(full_access)])
-    def update_user(user_id: UUID, body: UserUpdate) -> ManagedUser:
-        return auth.update(str(user_id), body)
+    def update_user(user_id: UUID, body: ProtectedUserUpdate, request: Request) -> ManagedUser:
+        return auth.update(
+            str(user_id),
+            body,
+            proof=body.proof,
+            token=request.cookies.get("nat_session", ""),
+            client=client_address(request),
+        )
 
     @app.delete("/api/users/{user_id}", dependencies=[Depends(full_access)])
-    def delete_user(user_id: UUID, request: Request) -> dict[str, bool]:
-        actor: PublicUser | None = request.state.current_user
-        auth.delete(str(user_id), actor.id if actor else None)
+    def delete_user(user_id: UUID, body: ProtectedUserDelete, request: Request) -> dict[str, bool]:
+        auth.delete(
+            str(user_id),
+            proof=body.proof,
+            token=request.cookies.get("nat_session", ""),
+            client=client_address(request),
+        )
         return {"ok": True}
 
     @app.get("/api/state", dependencies=[Depends(authenticated)])

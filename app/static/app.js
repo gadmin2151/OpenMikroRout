@@ -2180,6 +2180,14 @@ document.addEventListener("submit", (event) => {
     }).catch((error) => toast(error.message, true));
     return;
   }
+  if (event.target.id === "user-proof") {
+    const button = dialog.querySelector(
+      '[data-action="user-save"],[data-action="user-toggle-confirm"],[data-action="user-delete-confirm"]',
+    );
+    if (button)
+      void handleAction(button).catch((error) => toast(error.message, true));
+    return;
+  }
   if (event.target.id === "user-form") {
     void handleAction({
       dataset: { action: "user-save" },
@@ -2316,7 +2324,7 @@ dialog.addEventListener("close", () => {
   if (
     !dialog.open &&
     dialog.querySelector(
-      "#security-recovery-codes,#security-setup-form,#wg-form,#wg-export-proof,#wg-private-profile,#protection-proof,#apply-security-proof",
+      "#security-recovery-codes,#security-setup-form,#wg-form,#wg-export-proof,#wg-private-profile,#protection-proof,#apply-security-proof,#user-proof",
     )
   )
     dialog.innerHTML = "";

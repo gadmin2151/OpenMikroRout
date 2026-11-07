@@ -43,6 +43,12 @@ def test_server_peer_export_apply_and_rollback_are_a_single_draft_flow(client: T
     assert server["dirty"] and server["revision"] == 1
     interface = server["config"]["network"]["wireguard_interfaces"][0]
     assert interface["name"] == "wg-server"
+    assert interface["server_access"] == {
+        "source_network": "10.77.0.0/24",
+        "access_networks": ["192.168.10.0/24"],
+        "router_access": False,
+        "wan_interface": "",
+    }
     assert client.get("/api/network/status").json() == before
     saved = post(
         client,
@@ -71,6 +77,33 @@ def test_server_peer_export_apply_and_rollback_are_a_single_draft_flow(client: T
     )
     assert client.post("/api/rollback", headers=HEADERS).status_code == 200
     assert not client.get("/api/wireguard/status").json()["interfaces"]
+
+
+def test_explicit_server_access_edit_is_revisioned_and_only_changes_the_draft(
+    client: TestClient,
+) -> None:
+    post(client, "server", {"revision": 0, "address": "10.77.0.1/24"})
+    before = client.get("/api/network/status").json()
+    policy = {
+        "source_network": "10.77.0.0/24",
+        "access_networks": ["172.16.0.0/16"],
+        "router_access": True,
+        "wan_interface": "eth0",
+    }
+    saved = post(
+        client, "server-access", {"revision": 1, "interface": "wg-server", "policy": policy}
+    )
+    assert saved["dirty"] and saved["revision"] == 2
+    assert saved["config"]["network"]["wireguard_interfaces"][0]["server_access"] == policy
+    assert client.get("/api/network/status").json() == before
+    assert (
+        client.post(
+            "/api/wireguard/server-access",
+            headers=HEADERS,
+            json={"revision": 1, "interface": "wg-server", "policy": policy},
+        ).status_code
+        == 409
+    )
 
 
 def test_client_import_is_strict_preserves_main_route_and_generates_selected_source_rules(

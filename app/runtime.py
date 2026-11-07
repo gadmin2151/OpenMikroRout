@@ -7,7 +7,14 @@ from app.compiler import FirewallError
 from app.fail2ban_attempts import ConnectionAttemptCollector
 from app.fail2ban_models import F2BConfiguration
 from app.fail2ban_runtime import Fail2banService
-from app.filtering import FilterDriver, filter_counters, filter_patch, filter_rollback
+from app.filtering import (
+    FilterDriver,
+    filter_counters,
+    filter_patch,
+    filter_rollback,
+    wireguard_guard_patch,
+    wireguard_guard_rollback,
+)
 from app.models import Configuration
 from app.network_models import NetworkConfiguration
 from app.rule_protection import effective_fail2ban
@@ -37,6 +44,14 @@ class WireGuardComponent(NetworkComponent, Protocol):
     def maintain(self) -> None: ...
 
 
+class RoutingComponent(NetworkComponent, Protocol):
+    def restore_guards(self, config: NetworkConfiguration) -> None: ...
+    def protect(self, previous: NetworkConfiguration, target: NetworkConfiguration) -> None: ...
+    def finalize(self) -> None: ...
+    def protect_rollback(self, snapshot: dict[str, Any]) -> None: ...
+    def finish_rollback(self, snapshot: dict[str, Any]) -> None: ...
+
+
 class RouterRuntime:
     def __init__(
         self,
@@ -44,7 +59,7 @@ class RouterRuntime:
         links: LinkComponent,
         filters: FilterDriver,
         wireguard: WireGuardComponent | None = None,
-        vpn_routes: NetworkComponent | None = None,
+        vpn_routes: RoutingComponent | None = None,
         system_lists: SystemListRuntime | None = None,
         fail2ban: Fail2banService | None = None,
         attempts: ConnectionAttemptCollector | None = None,
@@ -69,6 +84,12 @@ class RouterRuntime:
             self.fail2ban.restore(effective_fail2ban(applied))
         if self.attempts:
             self.attempts.configure(effective_fail2ban(applied))
+
+    def restore_guards(self, applied: Configuration) -> None:
+        """Protect the confirmed configuration before any fallible startup dependency."""
+        if self.vpn_routes:
+            self.vpn_routes.restore_guards(applied.network)
+        self.filters.restore(wireguard_guard_patch(self.filters.snapshot(), applied))
 
     def snapshot(self, previous: Configuration) -> dict[str, Any]:
         snapshot = {
@@ -123,6 +144,9 @@ class RouterRuntime:
         return preview
 
     def apply(self, previous: Configuration, target: Configuration) -> None:
+        if self.vpn_routes:
+            self.vpn_routes.protect(previous.network, target.network)
+        self.filters.restore(wireguard_guard_patch(self.filters.snapshot(), target, previous))
         # Bind the private NFLOG group before installing rules that publish to it.
         # The durable router snapshot restores the previous subscription on failure.
         if self.attempts:
@@ -139,9 +163,18 @@ class RouterRuntime:
         self.filters.restore(filter_patch(self.filters.snapshot(), target))
         if self.fail2ban:
             self.fail2ban.apply(effective_fail2ban(previous), effective_fail2ban(target))
+        if self.vpn_routes:
+            self.vpn_routes.finalize()
 
     def rollback(self, snapshot: dict[str, Any]) -> None:
         errors: list[str] = []
+        # Establish confinement before restoring any dependency or relaxing filter state.
+        if "vpn_routes" in snapshot and self.vpn_routes:
+            self.vpn_routes.protect_rollback(snapshot["vpn_routes"])
+        if "filter" in snapshot:
+            self.filters.restore(
+                wireguard_guard_rollback(self.filters.snapshot(), snapshot["filter"])
+            )
         if self.system_lists and "system_lists" in snapshot:
             try:
                 self.system_lists.rollback(snapshot["system_lists"])
@@ -162,7 +195,9 @@ class RouterRuntime:
                 errors.append(f"Link recovery preparation: {exc}")
         if "filter" in snapshot:
             try:
-                payload = filter_rollback(self.filters.snapshot(), snapshot["filter"])
+                payload = filter_rollback(
+                    self.filters.snapshot(), snapshot["filter"], keep_wireguard_guards=True
+                )
                 self.filters.restore(payload, test=True)
                 self.filters.restore(payload)
             except (FirewallError, OSError) as exc:
@@ -194,6 +229,10 @@ class RouterRuntime:
                 errors.append(f"Link recovery: {exc}")
         if errors:
             raise FirewallError("; ".join(errors)[:1500])
+        if "filter" in snapshot:
+            self.filters.restore(filter_rollback(self.filters.snapshot(), snapshot["filter"]))
+        if "vpn_routes" in snapshot and self.vpn_routes:
+            self.vpn_routes.finish_rollback(snapshot["vpn_routes"])
 
     def status(self) -> dict[str, Any]:
         result = {**self.network.status(), **self.links.status()}

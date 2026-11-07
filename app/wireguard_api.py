@@ -12,7 +12,14 @@ from app.firewall import Conflict, FirewallService
 from app.ipv4 import endpoint_host
 from app.link_models import LinkModel
 from app.totp import CredentialProof
-from app.wireguard_service import ClientImport, KeyCreate, PeerCreate, ServerSetup, WireGuardService
+from app.wireguard_service import (
+    ClientImport,
+    KeyCreate,
+    PeerCreate,
+    ServerAccessUpdate,
+    ServerSetup,
+    WireGuardService,
+)
 from app.wireguard_vault import WireGuardKey, WireGuardVault
 
 
@@ -69,6 +76,10 @@ def wireguard_router(
             # The strict parser reports only option/line names, never secret input.
             raise Conflict(str(exc)) from exc
 
+    @router.post("/server-access", dependencies=[Depends(full_access)])
+    def server_access(body: ServerAccessUpdate) -> dict[str, Any]:
+        return service.server_access(body)
+
     @router.post("/peers", dependencies=[Depends(full_access)])
     def peer(body: PeerCreate) -> dict[str, Any]:
         try:
@@ -83,7 +94,11 @@ def wireguard_router(
             if actor is None or body.proof is None:
                 raise Conflict("Confirm your password and enabled second factor to export keys")
             auth.reauthenticate(
-                actor, body.proof, request.client.host if request.client else "unknown"
+                actor,
+                body.proof,
+                request.client.host if request.client else "unknown",
+                token=request.cookies.get("nat_session", ""),
+                required_role="full",
             )
         try:
             result = service.export(body.object_id, body.client, body.endpoint)

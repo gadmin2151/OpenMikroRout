@@ -23,10 +23,15 @@ def service(tmp_path: Path) -> tuple[AuthService, list[float]]:
 def enroll(auth: AuthService) -> tuple[str, list[str]]:
     token, actor = auth.login("admin", PASSWORD, "initial-login")
     assert actor and token
-    setup = auth.totp_setup(actor, CredentialProof(password=SecretStr(PASSWORD)), "setup")
+    setup = auth.totp_setup(
+        actor, CredentialProof(password=SecretStr(PASSWORD)), "setup", token=token
+    )
     code = code_at(setup.secret, int(auth.clock() // 30))
     result, token = auth.totp_confirm(
-        actor, CredentialProof(password=SecretStr(PASSWORD), code=SecretStr(code)), "confirm"
+        actor,
+        CredentialProof(password=SecretStr(PASSWORD), code=SecretStr(code)),
+        "confirm",
+        token=token,
     )
     assert auth.resolve(token) and auth.resolve(token).totp_enabled  # type: ignore[union-attr]
     return setup.secret, result.recovery_codes
@@ -139,22 +144,24 @@ def test_concurrent_code_is_accepted_once(tmp_path: Path) -> None:
 
 def test_confirmation_code_attempts_are_bounded_and_setup_expires(tmp_path: Path) -> None:
     auth, now = service(tmp_path)
-    _, actor = auth.login("admin", PASSWORD, "login")
-    assert actor
-    setup = auth.totp_setup(actor, CredentialProof(password=SecretStr(PASSWORD)), "setup")
+    token, actor = auth.login("admin", PASSWORD, "login")
+    assert actor and token
+    setup = auth.totp_setup(
+        actor, CredentialProof(password=SecretStr(PASSWORD)), "setup", token=token
+    )
     valid = code_at(setup.secret, int(now[0] // 30))
     wrong = "111111" if valid != "111111" else "222222"
     proof = CredentialProof(password=SecretStr(PASSWORD), code=SecretStr(wrong))
     for _ in range(5):
         with pytest.raises(AuthError) as error:
-            auth.totp_confirm(actor, proof, "same")
+            auth.totp_confirm(actor, proof, "same", token=token)
         assert error.value.status == 400
     with pytest.raises(AuthError) as error:
-        auth.totp_confirm(actor, proof, "same")
+        auth.totp_confirm(actor, proof, "same", token=token)
     assert error.value.status == 429
     now[0] += 601
     with pytest.raises(AuthError) as error:
-        auth.totp_confirm(actor, proof, "expired")
+        auth.totp_confirm(actor, proof, "expired", token=token)
     assert error.value.status == 409
 
 
@@ -202,18 +209,25 @@ def test_read_user_can_enroll_self_but_cannot_reset_or_write_config(tmp_path: Pa
 def test_missing_key_fails_closed_and_admin_reset_requires_proof(tmp_path: Path) -> None:
     auth, _ = service(tmp_path)
     secret, recovery = enroll(auth)
-    _, actor = auth.login("admin", PASSWORD, "recovery", recovery[0])
-    assert actor
-    target = auth.create(UserCreate(username="second", password=SecretStr(PASSWORD)))
+    token, actor = auth.login("admin", PASSWORD, "recovery", recovery[0])
+    assert actor and token
+    target = auth.require_store().create(
+        UserCreate(username="second", password=SecretStr(PASSWORD)), password_hash(PASSWORD)
+    )
     with pytest.raises(AuthError):
-        auth.totp_reset(target.id, actor, CredentialProof(password=SecretStr("wrong")), "proof")
+        auth.totp_reset(
+            target.id, actor, CredentialProof(password=SecretStr("wrong")), "proof", token=token
+        )
     with pytest.raises(AuthError):
-        auth.totp_reset(target.id, actor, CredentialProof(password=SecretStr(PASSWORD)), "proof2")
+        auth.totp_reset(
+            target.id, actor, CredentialProof(password=SecretStr(PASSWORD)), "proof2", token=token
+        )
     auth.totp_reset(
         target.id,
         actor,
         CredentialProof(password=SecretStr(PASSWORD), code=SecretStr(recovery[1])),
         "proof3",
+        token=token,
     )
     (tmp_path / "totp.key").unlink()
     with pytest.raises(RuntimeError, match="missing"):

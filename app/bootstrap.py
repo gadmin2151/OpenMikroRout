@@ -1,7 +1,8 @@
-"""Restore confirmed IPv4 filters before host networking starts.
+"""Restore confirmed IPv4 filters and VPN source guards before host networking starts.
 
 This entry point deliberately avoids Store initialization, authentication, NAT,
 interface changes and DHCP/DNS startup. It reads only the last confirmed state.
+VPN guards use device-independent IP rules and preserve specific main-route exceptions.
 """
 
 import argparse
@@ -17,6 +18,7 @@ from app.compiler import FirewallError
 from app.filtering import FilterDriver, LinuxFilterDriver, filter_patch
 from app.models import Configuration
 from app.rule_protection import effective_fail2ban
+from app.wireguard_routing import LinuxWireGuardRouting
 
 
 class BootstrapError(RuntimeError):
@@ -41,9 +43,15 @@ def read_confirmed(data_dir: Path) -> Configuration:
         raise BootstrapError("The confirmed firewall configuration is invalid") from exc
 
 
-def restore_confirmed_filters(data_dir: Path, driver: FilterDriver | None = None) -> None:
+def restore_confirmed_filters(
+    data_dir: Path,
+    driver: FilterDriver | None = None,
+    routing: LinuxWireGuardRouting | None = None,
+) -> None:
     config = read_confirmed(data_dir)
     try:
+        # No tunnel or DNS is needed; keep these guards if any later startup step fails.
+        (routing or LinuxWireGuardRouting(data_dir)).restore_guards(config.network)
         # Restore sets and original ban deadlines before installing rules that reference them.
         if driver is None:
             from app.fail2ban_runtime import Fail2banService
@@ -88,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     except BootstrapError as exc:
         print(f"Early firewall restore failed: {exc}", file=sys.stderr)
         return 1
-    print("Confirmed IPv4 firewall restored before host networking")
+    print("Confirmed IPv4 firewall and VPN source guards restored before host networking")
     return 0
 
 

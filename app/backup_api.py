@@ -56,6 +56,8 @@ def backup_router(
                 request.state.current_user,
                 value,
                 request.client.host if request.client else "unknown",
+                token=request.cookies.get("nat_session", ""),
+                required_role="full",
             )
 
     @router.get("/export", dependencies=[Depends(authenticated)])

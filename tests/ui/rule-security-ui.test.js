@@ -83,6 +83,9 @@ test("inline Fail2ban derives its service from the rule without asking for a pro
   assert.match(html, /создаются автоматически при применении/);
   assert.match(html, /Security → Fail2ban/);
   assert.match(html, /TCP-подключение — не ошибка пароля/);
+  assert.match(html, /завершённым двусторонним TCP-рукопожатием/);
+  assert.match(html, /наблюдённым ответом на обратном пути/);
+  assert.match(html, /hairpin через один интерфейс не создаёт событий/);
   assert.match(html, /ошибки паролей на серверах за NAT требуют их журналов/);
   for (const field of ["f2b_profile", "f2b_match", "dst_ports", "to_ports"])
     assert.ok(!html.includes(`name="${field}"`), field);

@@ -20,6 +20,7 @@ from app.wireguard_routing import (
     LinuxWireGuardRouting,
     entry_command,
     entry_key,
+    guard_entries,
     observed_entries,
     policy_entries,
 )
@@ -203,6 +204,7 @@ class RoutingKernel:
     def __init__(self) -> None:
         self.entries: list[dict[str, Any]] = []
         self.fail_next_add = False
+        self.commands: list[list[str]] = []
 
     def __call__(self, args: list[str]) -> str:
         if "-j" in args:
@@ -226,9 +228,12 @@ class RoutingKernel:
                     row = {
                         "priority": item["priority"],
                         "src": item["source"],
-                        "table": item["table"],
                         "protocol": 196,
                     }
+                    if "action" in item:
+                        row["action"] = item["action"]
+                    else:
+                        row["table"] = item["table"]
                     if "suppress" in item:
                         row["suppress_prefixlen"] = item["suppress"]
                     if "mark" in item:
@@ -236,10 +241,17 @@ class RoutingKernel:
                     rows.append(row)
             return json.dumps(rows)
         operation = args[3]
+        self.commands.append(args)
         if operation == "add" and self.fail_next_add:
             self.fail_next_add = False
             raise WireGuardError("Injected routing failure")
-        for item in self.desired:
+        guards = [
+            guard
+            for item in self.desired
+            if item["kind"] == "rule" and item["source"] != "all"
+            for guard in guard_entries([item["source"]])
+        ]
+        for item in [*self.desired, *guards]:
             if entry_command(args[0], operation, item) == args:
                 if operation == "add":
                     self.entries.append(item)

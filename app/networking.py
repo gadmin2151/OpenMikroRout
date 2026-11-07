@@ -106,6 +106,25 @@ def route_command(binary: str, operation: str, item: StaticRoute) -> list[str]:
     return [*args, "metric", str(item.metric), "proto", ROUTE_PROTOCOL]
 
 
+def bounded_service_logging(content: str | None, kind: str) -> str | None:
+    """Prevent packet-triggered logs from filling the persistent data volume.
+
+    Also normalize recovery snapshots from releases that wrote unbounded files.
+    Lease persistence and startup errors are independent of this runtime log sink.
+    """
+    if content is None:
+        return None
+    lines = [
+        line
+        for line in content.splitlines()
+        if line.strip().partition("=")[0].strip() not in {"log-facility", "log-async", "quiet-dhcp"}
+    ]
+    lines.append("log-facility=/dev/null")
+    if kind == "dhcp":
+        lines.append("quiet-dhcp")
+    return "\n".join(lines) + "\n"
+
+
 def dnsmasq_configs(config: NetworkConfiguration, directory: Path) -> dict[str, str | None]:
     """Keep DNS and DHCP listeners separate so enabling one cannot expose the other."""
     result: dict[str, str | None] = {"dhcp": None, "dns": None}
@@ -124,8 +143,6 @@ def dnsmasq_configs(config: NetworkConfiguration, directory: Path) -> dict[str, 
             "port=0",
             f"pid-file={directory / 'dhcp.pid'}",
             f"dhcp-leasefile={directory / 'dhcp.leases'}",
-            f"log-facility={directory / 'dhcp.log'}",
-            "log-async=10",
             "dhcp-authoritative",
             "except-interface=lo",
         ]
@@ -173,8 +190,6 @@ def dnsmasq_configs(config: NetworkConfiguration, directory: Path) -> dict[str, 
             *common,
             "port=53",
             f"pid-file={directory / 'dns.pid'}",
-            f"log-facility={directory / 'dns.log'}",
-            "log-async=10",
             "domain-needed",
             "bogus-priv",
             "stop-dns-rebind",
@@ -194,7 +209,7 @@ def dnsmasq_configs(config: NetworkConfiguration, directory: Path) -> dict[str, 
             if record.enabled:
                 lines.append(f"host-record={record.name},{record.address},{record.ttl}")
         result["dns"] = "\n".join(lines) + "\n"
-    return result
+    return {kind: bounded_service_logging(content, kind) for kind, content in result.items()}
 
 
 def configuration_commands(
@@ -453,6 +468,7 @@ class LinuxNetworkDriver:
             raise NetworkError("Install dnsmasq-base (dnsmasq binary) to enable DHCP or DNS")
         with tempfile.TemporaryDirectory(prefix="check-", dir=self.directory) as directory:
             for kind, content in configs.items():
+                content = bounded_service_logging(content, kind)
                 if content:
                     path = Path(directory) / f"{kind}.conf"
                     path.write_text(content)
@@ -596,7 +612,7 @@ class LinuxNetworkDriver:
 
     def _configure_services(self, configs: dict[str, str | None]) -> None:
         for kind in SERVICE_KINDS:
-            content = configs.get(kind)
+            content = bounded_service_logging(configs.get(kind), kind)
             current = self._read_config(kind)
             running = self._owned_pid(kind) is not None
             if current == content and (bool(content) == running):
@@ -612,7 +628,7 @@ class LinuxNetworkDriver:
             self._atomic_write(path, content)
             run_command([self.dnsmasq_binary, f"--conf-file={path}"])
             if self._owned_pid(kind) is None:
-                raise NetworkError(f"Managed {kind} service exited during startup; check its log")
+                raise NetworkError(f"Managed {kind} service exited during startup")
 
     @network_operation
     def apply(self, previous: NetworkConfiguration, target: NetworkConfiguration) -> None:

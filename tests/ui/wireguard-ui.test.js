@@ -97,6 +97,8 @@ test("read users inspect VPN properties but cannot generate keys, mutate, export
     "wg-interface-save",
     "wg-peer-save",
     "wg-remove-confirm",
+    "wg-server-access",
+    "wg-server-access-save",
     "tools-run",
   ]) {
     assert.equal(isReadAction(action), false);
@@ -108,6 +110,177 @@ test("read users inspect VPN properties but cannot generate keys, mutate, export
     );
   }
   assert.match(renderTools(ctx), /data-action="tools-run" disabled/);
+});
+
+test("legacy server access editor explicitly opts into restrictions without inferring permissions", async () => {
+  resetWireGuard();
+  const ctx = context();
+  ctx.state.config.network = {
+    wireguard_interfaces: [
+      {
+        id: "one",
+        name: "wg0",
+        role: "server",
+        client_allowed_ips: ["0.0.0.0/0"],
+      },
+    ],
+    addresses: [{ interface: "wg0", address: "10.77.0.1/24" }],
+  };
+  let content = "";
+  ctx.dialogFrame = (_title, subtitle, body) => {
+    content = subtitle + body;
+  };
+  await handleWireGuardAction(
+    { dataset: { action: "wg-server-access", id: "one" } },
+    ctx,
+  );
+  assert.match(content, /ограничения ещё не заданы/);
+  assert.match(content, /name="source_network"[^>]*value="10.77.0.1\/24"/);
+  assert.doesNotMatch(content, /0\.0\.0\.0\/0/);
+  assert.doesNotMatch(content, /name="router_access" checked/);
+  assert.match(content, /после применения черновика/);
+});
+
+test("changing a protected server role requires explicit consent and only clears the draft policy", async () => {
+  const NativeFormData = globalThis.FormData;
+  globalThis.FormData = class {
+    constructor(node) {
+      return node.data;
+    }
+  };
+  try {
+    for (const nextRole of ["client", "site-to-site", "server"]) {
+      resetWireGuard();
+      const policy = {
+        source_network: "10.77.0.0/24",
+        access_networks: [],
+        router_access: false,
+        wan_interface: "",
+      };
+      const item = {
+        id: "one",
+        name: "wg0",
+        role: "server",
+        client_dns: [],
+        client_allowed_ips: [],
+        route_sources: [],
+        server_access: policy,
+      };
+      const node = {
+        reportValidity: () => true,
+        data: new Map(
+          Object.entries({
+            name: "wg0",
+            role: nextRole,
+            mtu: "1420",
+            listen_port: "51820",
+            routing_table: "20000",
+          }),
+        ),
+      };
+      let content = "";
+      const saved = [];
+      const ctx = {
+        ...context(),
+        run: (fn) => fn(),
+        toast: () => {},
+        dialog: { querySelector: () => node, close: () => {} },
+        dialogFrame: (_title, _subtitle, html) => {
+          content = html;
+        },
+        saveConfig: async (config, revision) => {
+          saved.push({ config, revision });
+        },
+      };
+      ctx.state.config.network.wireguard_interfaces = [item];
+      await handleWireGuardAction(
+        { dataset: { action: "wg-interface-edit", id: "one" } },
+        ctx,
+      );
+      assert.match(content, /Подтверждаю снятие серверных ограничений/);
+      assert.match(content, /только после применения черновика/);
+      assert.doesNotMatch(
+        content,
+        /name="confirm_remove_server_access" checked/,
+      );
+      if (nextRole !== "server") {
+        await assert.rejects(
+          handleWireGuardAction(
+            { dataset: { action: "wg-interface-save" } },
+            ctx,
+          ),
+          /подтвердите снятие/,
+        );
+        assert.equal(saved.length, 0);
+      }
+      node.data.set("confirm_remove_server_access", "on");
+      await handleWireGuardAction(
+        { dataset: { action: "wg-interface-save" } },
+        ctx,
+      );
+      assert.equal(saved.length, 1);
+      assert.equal(saved[0].revision, 1);
+      const draft = saved[0].config.network.wireguard_interfaces[0];
+      assert.equal(draft.role, nextRole);
+      assert.deepEqual(
+        draft.server_access,
+        nextRole === "server" ? policy : null,
+      );
+      assert.equal(item.role, "server");
+      assert.deepEqual(item.server_access, policy);
+    }
+    resetWireGuard();
+    const item = {
+      id: "one",
+      name: "wg0",
+      role: "client",
+      client_dns: [],
+      client_allowed_ips: [],
+      route_sources: [],
+      server_access: null,
+    };
+    const node = {
+      reportValidity: () => true,
+      data: new Map(
+        Object.entries({
+          name: "wg0",
+          role: "server",
+          mtu: "1420",
+          listen_port: "51820",
+          routing_table: "20000",
+        }),
+      ),
+    };
+    let content = "";
+    let saved;
+    const ctx = {
+      ...context(),
+      run: (fn) => fn(),
+      toast: () => {},
+      dialog: { querySelector: () => node, close: () => {} },
+      dialogFrame: (_title, _subtitle, html) => {
+        content = html;
+      },
+      saveConfig: async (config) => {
+        saved = config;
+      },
+    };
+    ctx.state.config.network.wireguard_interfaces = [item];
+    await handleWireGuardAction(
+      { dataset: { action: "wg-interface-edit", id: "one" } },
+      ctx,
+    );
+    assert.doesNotMatch(content, /confirm_remove_server_access/);
+    await handleWireGuardAction(
+      { dataset: { action: "wg-interface-save" } },
+      ctx,
+    );
+    assert.equal(saved.network.wireguard_interfaces[0].role, "server");
+    assert.equal(saved.network.wireguard_interfaces[0].server_access, null);
+  } finally {
+    globalThis.FormData = NativeFormData;
+    resetWireGuard();
+  }
 });
 
 test("handshake age never claims connectivity before a handshake; list input is predictable", () => {

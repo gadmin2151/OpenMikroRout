@@ -338,7 +338,7 @@ class Fail2banService:
             self.bans.unban(profile, address)
 
     def _enforced(self) -> bool:
-        from app.fail2ban_rules import F2B_CHAINS, f2b_anchor, profile_chains
+        from app.fail2ban_rules import F2B_CHAINS, f2b_anchor, profile_hooks
         from app.filtering import LinuxFilterDriver, inspect
 
         snapshot = LinuxFilterDriver().snapshot()
@@ -347,16 +347,21 @@ class Fail2banService:
         for profile in self.settings.profiles:
             if not profile.enabled:
                 continue
-            for chain in profile_chains(profile):
+            for chain in profile_hooks(profile):
                 hook = chain.upper()
                 first = next(
                     (line for line in snapshot.splitlines() if line.startswith(f"-A {hook} ")), ""
                 )
                 if f"f2b:{hook}" not in hooks or shlex.split(first) != f2b_anchor(hook):
                     return False
-                expected = [(f"openmikrorout:f2b:{profile.id}", "DROP")]
-                if profile.service == "connections":
+                expected = (
+                    [] if chain == "output" else [(f"openmikrorout:f2b:{profile.id}", "DROP")]
+                )
+                if profile.service == "connections" and chain != "output":
+                    expected.append((f"openmikrorout:f2b-start:{profile.id}", "NFLOG"))
                     expected.append((f"openmikrorout:f2b-attempt:{profile.id}", "NFLOG"))
+                if profile.service == "connections" and chain in ("output", "forward"):
+                    expected.append((f"openmikrorout:f2b-reply:{profile.id}", "NFLOG"))
                 for marker, target in expected:
                     if not any(
                         row[1] == F2B_CHAINS[chain]
@@ -399,7 +404,10 @@ class Fail2banService:
         if any(item.shared_listener and item.enabled for item in self.settings.profiles):
             warnings.append("Бан на общем порту затрагивает все сайты этого listener.")
         if any(item.service == "connections" and item.enabled for item in self.settings.profiles):
-            warnings.append("Правила TCP считают новые подключения, а не ошибки пароля сервиса.")
+            warnings.append(
+                "Правила TCP считают новые соединения с завершённым двусторонним "
+                "рукопожатием, а не ошибки пароля сервиса. SYN без ответа не создаёт бан."
+            )
         if self.demo:
             warnings.append("Деморежим: реальные попытки не считаются, сеть не блокируется.")
         profiles = []

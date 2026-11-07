@@ -45,7 +45,13 @@ def reauthenticate(auth: AuthService, request: Request, proof: CredentialProof |
         actor = request.state.current_user
         if actor is None or actor.role != "full":
             raise Conflict("Full access is required")
-        auth.reauthenticate(actor, proof, request.client.host if request.client else "unknown")
+        auth.reauthenticate(
+            actor,
+            proof,
+            request.client.host if request.client else "unknown",
+            token=request.cookies.get("nat_session", ""),
+            required_role="full",
+        )
 
 
 PageOffset = Annotated[int, Query(ge=0, le=1_000_000)]

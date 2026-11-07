@@ -9,7 +9,13 @@ from pydantic import Field, SecretStr, field_validator
 from app.firewall import Conflict, FirewallService
 from app.ipv4 import endpoint_host as validate_endpoint_host
 from app.ipv4 import ipv4, subnet
-from app.link_models import LinkModel, WireGuardInterface, interface_name, planned_interface_names
+from app.link_models import (
+    LinkModel,
+    WireGuardInterface,
+    WireGuardServerAccess,
+    interface_name,
+    planned_interface_names,
+)
 from app.models import Configuration, FilterRule, NatRule
 from app.network_models import IpAddress
 from app.wireguard_keys import KeyKind, public_key
@@ -68,6 +74,14 @@ class ClientImport(LinkModel):
     _sources = field_validator("route_sources")(
         lambda values: list(dict.fromkeys(subnet(v) for v in values))
     )
+
+
+class ServerAccessUpdate(LinkModel):
+    revision: int = Field(ge=0)
+    interface: str = Field(min_length=1, max_length=13)
+    policy: WireGuardServerAccess
+
+    _interface = field_validator("interface")(interface_name)
 
 
 class PeerCreate(LinkModel):
@@ -150,6 +164,12 @@ class WireGuardService:
                 client_dns=body.dns,
                 export_endpoint=body.endpoint,
                 routing_table=self.table(config),
+                server_access=WireGuardServerAccess(
+                    source_network=str(ipaddress.IPv4Interface(body.address).network),
+                    access_networks=body.access_networks,
+                    router_access=body.router_access,
+                    wan_interface=body.wan_interface if body.internet_access else "",
+                ),
                 client_allowed_ips=["0.0.0.0/0"]
                 if body.internet_access
                 else list(
@@ -232,6 +252,24 @@ class WireGuardService:
                     )
                 )
             config.filter_rules[0:0] = rules
+            return self.firewall.save(_validated(config), body.revision)
+
+    def server_access(self, body: ServerAccessUpdate) -> dict[str, Any]:
+        """Opt a legacy server into an explicit policy through the normal draft transaction."""
+        with self.firewall.lock:
+            self.firewall.check_revision(body.revision)
+            config = self.firewall.config().model_copy(deep=True)
+            interface = next(
+                (
+                    item
+                    for item in config.network.wireguard_interfaces
+                    if item.name == body.interface
+                ),
+                None,
+            )
+            if interface is None or interface.role != "server":
+                raise Conflict("Choose an existing WireGuard server interface")
+            interface.server_access = body.policy
             return self.firewall.save(_validated(config), body.revision)
 
     def import_client(self, body: ClientImport) -> dict[str, Any]:

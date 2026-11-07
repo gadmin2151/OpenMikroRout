@@ -147,6 +147,19 @@ def test_service_configs_never_expose_dns_on_dhcp_listener_implicitly(tmp_path: 
     assert dnsmasq_configs(NetworkConfiguration.model_validate(data), tmp_path)["dns"] is None
 
 
+def test_packet_triggered_logs_cannot_grow_the_data_volume(tmp_path: Path) -> None:
+    configs = dnsmasq_configs(router(), tmp_path)
+    for kind, content in configs.items():
+        assert content is not None
+        assert "log-facility=/dev/null\n" in content
+        assert f"{kind}.log" not in content
+    dhcp = configs["dhcp"] or ""
+    assert "quiet-dhcp\n" in dhcp
+    assert f"dhcp-leasefile={tmp_path / 'dhcp.leases'}\n" in dhcp
+    assert "dhcp-host=tag:eth1,02:11:22:33:44:55,192.168.10.50,printer\n" in dhcp
+    assert "192.168.10.100,192.168.10.200" in dhcp
+
+
 class Kernel:
     """Small kernel fixture that records argv and owns no real host resources."""
 
@@ -390,6 +403,39 @@ def test_dns_port_conflict_keeps_foreign_service_and_recovers_previous_configs(
     assert driver._read_config("dhcp") == before["dnsmasq"]["dhcp"]
 
 
+@pytest.mark.parametrize("sink", ["dhcp.log", "dns.log", "DAEMON", "/tmp/legacy.log"])
+def test_recovery_cannot_restore_unbounded_logging(
+    kernel_driver: tuple[Kernel, LinuxNetworkDriver], sink: str
+) -> None:
+    kernel, driver = kernel_driver
+    target = router()
+    driver.apply(NetworkConfiguration(), target)
+    before = driver.snapshot(target)
+    for kind in ("dhcp", "dns"):
+        old = before["dnsmasq"][kind].replace("log-facility=/dev/null", f"log-facility={sink}")
+        before["dnsmasq"][kind] = old + "log-async=10\n"
+        driver._atomic_write(driver._config_file(kind), before["dnsmasq"][kind])
+    checked: list[str] = []
+
+    def command(args: list[str]) -> str:
+        if "--test" in args:
+            checked.append(Path(args[-1].split("=", 1)[1]).read_text())
+        return kernel.command(args)
+
+    with patch("app.networking.run_command", side_effect=command):
+        driver.rollback(before)
+    assert len(checked) == 2
+    for kind in ("dhcp", "dns"):
+        restored = driver._read_config(kind)
+        assert restored is not None
+        assert restored in checked
+        assert restored.count("log-facility=") == 1
+        assert "log-facility=/dev/null\n" in restored
+        assert "log-async=" not in restored
+        assert kernel.services[kind]
+    assert driver._read_config("dhcp") == dnsmasq_configs(target, driver.directory)["dhcp"]
+
+
 def test_reconcile_restarts_missing_services_without_duplicating_resources(
     kernel_driver: tuple[Kernel, LinuxNetworkDriver],
 ) -> None:
@@ -552,6 +598,62 @@ def test_demo_lifecycle_never_calls_subprocess(tmp_path: Path) -> None:
         assert driver.status()["dnsmasq"]["dhcp"]["running"]
         driver.rollback(before)
         assert driver.status()["addresses"] == []
+
+
+@pytest.mark.skipif(
+    os.environ.get("NAT_RUN_KERNEL_TESTS") != "1" or platform.system() != "Linux",
+    reason="Opt-in Linux network namespace test; never mutates host networking",
+)
+def test_real_dnsmasq_logging_policy_preserves_dns_and_dhcp_startup() -> None:
+    unshare = shutil.which("unshare")
+    assert unshare, "Install util-linux"
+    code = """
+import socket, struct
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from app.networking import LinuxNetworkDriver, run_command
+from app.network_models import NetworkConfiguration
+run_command(['ip', 'link', 'set', 'lo', 'up'])
+run_command(['ip', 'link', 'add', 'eth1', 'type', 'dummy'])
+run_command(['ip', 'link', 'set', 'eth1', 'up'])
+with TemporaryDirectory() as path:
+    driver = LinuxNetworkDriver(Path(path))
+    target = NetworkConfiguration.model_validate({
+        'addresses': [{'interface': 'eth1', 'address': '192.168.10.1/24'}],
+        'pools': [{'name': 'lan', 'start': '192.168.10.100', 'end': '192.168.10.110'}],
+        'dhcp_servers': [{'name': 'lan', 'interface': 'eth1', 'pool': 'lan',
+            'network': '192.168.10.0/24', 'gateway': '192.168.10.1'}],
+        'dns': {'enabled': True, 'listen_interfaces': ['eth1'], 'servers': ['9.9.9.9']},
+        'dns_static': [{'name': 'printer.test', 'address': '192.168.10.50'}],
+    })
+    before = driver.snapshot(NetworkConfiguration())
+    try:
+        driver.check(NetworkConfiguration(), target)
+        driver.apply(NetworkConfiguration(), target)
+        assert all(item['running'] for item in driver.status()['dnsmasq'].values())
+        query = struct.pack('!6H', 123, 256, 1, 0, 0, 0)
+        query += b'\\x07printer\\x04test\\x00' + struct.pack('!2H', 1, 1)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+            client.settimeout(2)
+            for _ in range(200):
+                client.sendto(query, ('192.168.10.1', 53))
+                response = client.recv(2048)
+                assert struct.unpack('!6H', response[:12])[3] == 1
+                assert socket.inet_aton('192.168.10.50') in response
+        assert not list(driver.directory.glob('*.log'))
+        assert (driver.directory / 'dhcp.leases').exists()
+    finally:
+        driver.rollback(before)
+    assert not any(item['running'] for item in driver.status()['dnsmasq'].values())
+"""
+    result = subprocess.run(
+        [unshare, "--net", sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=40,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.skipif(

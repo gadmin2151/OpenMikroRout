@@ -6,9 +6,16 @@ import shutil
 from typing import Protocol
 
 from app.compiler import FirewallError, expanded_matches, match_tokens
-from app.fail2ban_rules import F2B_CHAINS, f2b_anchor, f2b_rules, profile_chains
+from app.fail2ban_rules import F2B_CHAINS, f2b_anchor, f2b_rules, profile_hooks
 from app.models import Configuration
 from app.rule_protection import effective_fail2ban
+from app.wireguard_filter import (
+    WG_CHAINS,
+    access_rules,
+    rollback_access_rules,
+    snapshot_access_rules,
+    wg_anchor,
+)
 
 CHAINS = {"input": "OMR_INPUT", "forward": "OMR_FORWARD", "output": "OMR_OUTPUT"}
 HOOKS = {key.upper(): value for key, value in CHAINS.items()}
@@ -36,15 +43,22 @@ def inspect(snapshot: str) -> tuple[list[str], set[str]]:
             continue
         tokens = shlex.split(line)
         chain = tokens[1]
-        if chain in (*CHAINS.values(), *F2B_CHAINS.values()):
+        if chain in (*CHAINS.values(), *F2B_CHAINS.values(), *WG_CHAINS.values()):
             if "--comment" not in tokens or not tokens[tokens.index("--comment") + 1].startswith(
                 MARKER
             ):
                 raise FirewallError(f"Reserved chain {chain} contains an unmanaged rule")
             rules.append(line)
         for flag in ("-j", "-g"):
+            if flag in tokens and tokens[tokens.index(flag) + 1] in WG_CHAINS.values():
+                if chain not in WG_CHAINS or tokens != wg_anchor(chain):
+                    raise FirewallError("An unmanaged rule references a reserved WireGuard chain")
+                key = f"wg:{chain}"
+                if key in hooks:
+                    raise FirewallError("Duplicate OpenMikroRout WireGuard hook detected")
+                hooks.add(key)
             if flag in tokens and tokens[tokens.index(flag) + 1] in F2B_CHAINS.values():
-                if chain not in ("INPUT", "FORWARD") or tokens != f2b_anchor(chain):
+                if chain.lower() not in F2B_CHAINS or tokens != f2b_anchor(chain):
                     raise FirewallError("An unmanaged rule references a reserved Fail2ban chain")
                 key = f"f2b:{chain}"
                 if key in hooks:
@@ -84,32 +98,74 @@ def _f2b_declarations(snapshot: str, enabled: bool) -> list[str]:
     ]
 
 
+def _wireguard_patch(snapshot: str, rules: list[str], hooks: set[str]) -> list[str]:
+    lines = [
+        f":{chain} - [0:0]" for chain in WG_CHAINS.values() if rules or f":{chain} " in snapshot
+    ]
+    lines += rules
+    for hook in WG_CHAINS:
+        tokens = wg_anchor(hook)
+        if f"wg:{hook}" in hooks:
+            lines.append(" ".join(["-D", *tokens[1:]]))
+        if rules:
+            # Only this ingress-scoped guard moves ahead of foreign/PVE ACCEPT rules.
+            lines.append(" ".join(["-I", hook, "1", *tokens[2:]]))
+    return lines
+
+
+def wireguard_guard_patch(snapshot: str, *configs: Configuration) -> str:
+    _, hooks = inspect(snapshot)
+    return "\n".join(
+        ["*filter", *_wireguard_patch(snapshot, access_rules(*configs), hooks), "COMMIT", ""]
+    )
+
+
+def wireguard_guard_rollback(current: str, previous: str) -> str:
+    _, hooks = inspect(current)
+    inspect(previous)
+    return "\n".join(
+        [
+            "*filter",
+            *_wireguard_patch(current, rollback_access_rules(current, previous), hooks),
+            "COMMIT",
+            "",
+        ]
+    )
+
+
 def filter_patch(snapshot: str, config: Configuration) -> str:
     _, hooks = inspect(snapshot)
     protection = effective_fail2ban(config)
     lines = ["*filter", *(f":{chain} - [0:0]" for chain in CHAINS.values())]
     lines += _f2b_declarations(snapshot, protection.enabled)
     lines += compiled_filters(config)
+    lines += _wireguard_patch(snapshot, access_rules(config), hooks)
     lines += f2b_rules(protection)
     lines += [" ".join(anchor(hook, chain)) for hook, chain in HOOKS.items() if hook not in hooks]
-    for hook in ("INPUT", "FORWARD"):
+    for hook in (chain.upper() for chain in F2B_CHAINS):
         tokens = f2b_anchor(hook)
         if f"f2b:{hook}" in hooks:
             lines.append(" ".join(["-D", *tokens[1:]]))
         if protection.enabled and any(
-            p.enabled and hook.lower() in profile_chains(p) for p in protection.profiles
+            p.enabled and hook.lower() in profile_hooks(p) for p in protection.profiles
         ):
             # Move ONLY our jump to the front so even earlier foreign ACCEPT rules cannot bypass it.
             lines.append(" ".join(["-I", hook, "1", *tokens[2:]]))
     return "\n".join([*lines, "COMMIT", ""])
 
 
-def filter_rollback(current: str, previous: str) -> str:
+def filter_rollback(current: str, previous: str, *, keep_wireguard_guards: bool = False) -> str:
     _, current_hooks = inspect(current)
     rules, old_hooks = inspect(previous)
     lines = ["*filter", *(f":{chain} - [0:0]" for chain in CHAINS.values())]
     lines += _f2b_declarations(current + previous, False)
-    lines += rules
+    lines += [line for line in rules if line not in snapshot_access_rules(previous)]
+    guard_rules = (
+        rollback_access_rules(current, previous)
+        if keep_wireguard_guards
+        else snapshot_access_rules(previous)
+    )
+    lines += _wireguard_patch(current + previous, guard_rules, current_hooks)
     for hook, chain in HOOKS.items():
         tokens = anchor(hook, chain)
         if hook in current_hooks and hook not in old_hooks:
@@ -117,7 +173,7 @@ def filter_rollback(current: str, previous: str) -> str:
             lines.append(" ".join(tokens))
         elif hook in old_hooks and hook not in current_hooks:
             lines.append(" ".join(tokens))
-    for hook in ("INPUT", "FORWARD"):
+    for hook in (chain.upper() for chain in F2B_CHAINS):
         tokens = f2b_anchor(hook)
         if f"f2b:{hook}" in current_hooks:
             lines.append(" ".join(["-D", *tokens[1:]]))

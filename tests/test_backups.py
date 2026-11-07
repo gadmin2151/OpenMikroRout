@@ -104,7 +104,12 @@ def test_restore_accounts_waits_for_confirmation_and_invalidates_sessions(tmp_pa
             client.post(
                 "/api/users",
                 headers=HEADERS,
-                json={"username": "later", "password": "test-only-extra-account", "role": "read"},
+                json={
+                    "username": "later",
+                    "password": "test-only-extra-account",
+                    "role": "read",
+                    "proof": {"password": ADMIN},
+                },
             ).status_code
             == 201
         )
@@ -136,7 +141,12 @@ def test_rollback_before_confirmation_keeps_current_accounts(tmp_path: Path) -> 
         client.post(
             "/api/users",
             headers=HEADERS,
-            json={"username": "later", "password": "test-only-extra-account", "role": "read"},
+            json={
+                "username": "later",
+                "password": "test-only-extra-account",
+                "role": "read",
+                "proof": {"password": ADMIN},
+            },
         )
         stage(client, inspect(client, blob))
         apply(client)
@@ -152,7 +162,12 @@ def test_restart_recovers_accounts_if_confirm_was_interrupted(tmp_path: Path) ->
         client.post(
             "/api/users",
             headers=HEADERS,
-            json={"username": "later", "password": "test-only-extra-account", "role": "read"},
+            json={
+                "username": "later",
+                "password": "test-only-extra-account",
+                "role": "read",
+                "proof": {"password": ADMIN},
+            },
         )
         stage(client, inspect(client, blob))
         pending = apply(client)
@@ -233,7 +248,12 @@ def test_import_preview_is_actor_bound_and_restore_can_keep_current_users(tmp_pa
         first.post(
             "/api/users",
             headers=HEADERS,
-            json={"username": "second", "password": ADMIN, "role": "full"},
+            json={
+                "username": "second",
+                "password": ADMIN,
+                "role": "full",
+                "proof": {"password": ADMIN},
+            },
         ).raise_for_status()
         preview = inspect(first, blob)
         login(second, "second")

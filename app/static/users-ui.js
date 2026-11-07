@@ -1,3 +1,5 @@
+import { proofForm, proof, clearProof } from "./security-ui.js?v=1";
+
 /** Account management uses the authenticated users API, independently of router drafts. */
 const actions = new Set([
   "user-new",
@@ -6,6 +8,7 @@ const actions = new Set([
   "user-remove",
   "user-delete-confirm",
   "user-toggle",
+  "user-toggle-confirm",
 ]);
 const usernamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -78,7 +81,7 @@ function showEditor(ctx, user = null) {
   ctx.dialogFrame(
     user ? "Edit User" : "New User",
     "Группы доступа: read — просмотр, full — полное управление.",
-    `<div class="rule-editor-layout"><form id="user-form" class="winbox-form" data-id="${e(user?.id || "")}"><label class="field"><span>Имя пользователя</span><input name="username" type="text" autocomplete="off" value="${e(user?.username || "")}" minlength="1" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\\-]{0,63}" required><small>Латинские буквы, цифры, точка, дефис и подчёркивание. До 64 символов.</small></label><label class="field"><span>Группа</span><select name="role" required><option value="read" ${role === "read" ? "selected" : ""} ${finalAdmin ? "disabled" : ""}>read · только просмотр</option><option value="full" ${role === "full" ? "selected" : ""}>full · полное управление</option></select></label><label class="field"><span>${user ? "Новый пароль" : "Пароль"}</span><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="512" ${user ? "" : "required"}><small>${user ? "Оставьте пустым, чтобы сохранить пароль. Новый пароль — от 12 символов." : "От 12 до 512 символов."}</small></label>${user ? `<div class="field"><span>Статус</span><label class="checkbox-label"><input name="enabled" type="checkbox" ${user.enabled ? "checked" : ""} ${finalAdmin ? "disabled" : ""}>Включён</label>${finalAdmin ? '<input type="hidden" name="enabled" value="on">' : ""}</div>` : ""}${finalAdmin ? '<div class="field-note users-last-admin-note">Это последний включённый пользователь full. Чтобы изменить его группу или отключить, сначала добавьте другого администратора.</div>' : ""}<div class="field-note">Изменения сохраняются сразу. При изменении своей учётной записи потребуется войти снова.</div></form><aside class="rule-actions"><button class="primary" data-action="user-save">OK</button><button data-action="close">Cancel</button></aside></div>`,
+    `<div class="rule-editor-layout"><div><form id="user-form" class="winbox-form" data-id="${e(user?.id || "")}"><label class="field"><span>Имя пользователя</span><input name="username" type="text" autocomplete="off" value="${e(user?.username || "")}" minlength="1" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\\-]{0,63}" required><small>Латинские буквы, цифры, точка, дефис и подчёркивание. До 64 символов.</small></label><label class="field"><span>Группа</span><select name="role" required><option value="read" ${role === "read" ? "selected" : ""} ${finalAdmin ? "disabled" : ""}>read · только просмотр</option><option value="full" ${role === "full" ? "selected" : ""}>full · полное управление</option></select></label><label class="field"><span>${user ? "Новый пароль" : "Пароль"}</span><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="512" ${user ? "" : "required"}><small>${user ? "Оставьте пустым, чтобы сохранить пароль. Новый пароль — от 12 символов." : "От 12 до 512 символов."}</small></label>${user ? `<div class="field"><span>Статус</span><label class="checkbox-label"><input name="enabled" type="checkbox" ${user.enabled ? "checked" : ""} ${finalAdmin ? "disabled" : ""}>Включён</label>${finalAdmin ? '<input type="hidden" name="enabled" value="on">' : ""}</div>` : ""}${finalAdmin ? '<div class="field-note users-last-admin-note">Это последний включённый пользователь full. Чтобы изменить его группу или отключить, сначала добавьте другого администратора.</div>' : ""}<div class="field-note">Изменения сохраняются сразу. При изменении своей учётной записи потребуется войти снова.</div></form>${proofForm(ctx, "user-proof", "Подтвердите изменение своим текущим паролем и кодом 2FA.")}</div><aside class="rule-actions"><button class="primary" data-action="user-save">OK</button><button data-action="close">Cancel</button></aside></div>`,
     '<span class="muted">Управление доступом · без изменения сетевого черновика</span>',
   );
   ctx.dialog.classList.add("winbox-editor", "users-editor");
@@ -119,7 +122,7 @@ export async function handleUsersAction(button, ctx) {
       ctx.dialogFrame(
         "Удалить пользователя?",
         "Учётная запись и её сессии будут удалены сразу.",
-        `<p class="preview-note">Удалить пользователя «${ctx.e(user.username)}»?</p>`,
+        `<p class="preview-note">Удалить пользователя «${ctx.e(user.username)}»?</p>${proofForm(ctx, "user-proof", "Подтвердите удаление своим текущим паролем и кодом 2FA.")}`,
         `<button data-action="close">Cancel</button><button class="danger" data-action="user-delete-confirm" data-id="${ctx.e(user.id)}">Удалить</button>`,
       );
       return;
@@ -160,14 +163,20 @@ export async function handleUsersAction(button, ctx) {
             "Должен оставаться хотя бы один включённый пользователь full.",
           );
       }
-      await ctx.api(
-        previous ? `users/${encodeURIComponent(userId)}` : "users",
-        {
-          method: previous ? "PUT" : "POST",
-          body: JSON.stringify(payload),
-        },
-      );
-      form.querySelector('[name="password"]').value = "";
+      const credentials = proof(ctx, "user-proof");
+      if (!credentials) return;
+      payload.proof = credentials;
+      try {
+        await ctx.api(
+          previous ? `users/${encodeURIComponent(userId)}` : "users",
+          {
+            method: previous ? "PUT" : "POST",
+            body: JSON.stringify(payload),
+          },
+        );
+      } finally {
+        clearProof(ctx);
+      }
       await refreshAfterWrite(
         ctx,
         previous ? "Пользователь обновлён" : "Пользователь создан",
@@ -180,10 +189,33 @@ export async function handleUsersAction(button, ctx) {
         throw new Error(
           "Нельзя отключить последнего включённого пользователя full.",
         );
-      await ctx.api(`users/${encodeURIComponent(user.id)}`, {
-        method: "PUT",
-        body: JSON.stringify({ enabled: !user.enabled }),
-      });
+      ctx.dialogFrame(
+        user.enabled ? "Отключить пользователя?" : "Включить пользователя?",
+        "Изменение применяется сразу и завершает сессии этой учётной записи.",
+        proofForm(
+          ctx,
+          "user-proof",
+          `Подтвердите изменение пользователя «${user.username}» своим текущим паролем и кодом 2FA.`,
+        ),
+        `<button data-action="close">Cancel</button><button class="primary" data-action="user-toggle-confirm" data-id="${ctx.e(user.id)}">Подтвердить</button>`,
+      );
+      return;
+    }
+    if (action === "user-toggle-confirm") {
+      if (lastFull(user, users(ctx)))
+        throw new Error(
+          "Нельзя отключить последнего включённого пользователя full.",
+        );
+      const credentials = proof(ctx, "user-proof");
+      if (!credentials) return;
+      try {
+        await ctx.api(`users/${encodeURIComponent(user.id)}`, {
+          method: "PUT",
+          body: JSON.stringify({ enabled: !user.enabled, proof: credentials }),
+        });
+      } finally {
+        clearProof(ctx);
+      }
       await refreshAfterWrite(
         ctx,
         user.enabled ? "Пользователь отключён" : "Пользователь включён",
@@ -195,9 +227,16 @@ export async function handleUsersAction(button, ctx) {
         throw new Error(
           "Нельзя удалить последнего включённого пользователя full.",
         );
-      await ctx.api(`users/${encodeURIComponent(user.id)}`, {
-        method: "DELETE",
-      });
+      const credentials = proof(ctx, "user-proof");
+      if (!credentials) return;
+      try {
+        await ctx.api(`users/${encodeURIComponent(user.id)}`, {
+          method: "DELETE",
+          body: JSON.stringify({ proof: credentials }),
+        });
+      } finally {
+        clearProof(ctx);
+      }
       await refreshAfterWrite(ctx, "Пользователь удалён");
     }
   });

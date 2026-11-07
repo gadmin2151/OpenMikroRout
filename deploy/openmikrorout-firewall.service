@@ -1,8 +1,8 @@
 [Unit]
-Description=OpenMikroRout - restore confirmed firewall before host networking
+Description=OpenMikroRout - restore confirmed firewall and VPN guards before host networking
 DefaultDependencies=no
 After=local-fs.target systemd-sysctl.service systemd-modules-load.service
-Before=network-pre.target networking.service shutdown.target
+Before=network-pre.target networking.service systemd-networkd.service NetworkManager.service shutdown.target
 Wants=network-pre.target
 RequiresMountsFor=/opt/openmikrorout /var/lib/openmikrorout
 Conflicts=shutdown.target

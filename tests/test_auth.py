@@ -23,11 +23,13 @@ from app.auth import (
     password_matches,
 )
 from app.main import Settings, create_app
+from app.totp import CredentialProof
 
 ADMIN_PASSWORD = "test-only-administrator-password"
 READ_PASSWORD = "test-only-reader-password"
 NEW_PASSWORD = "test-only-replacement-password"
 HEADERS = {"X-NAT-Request": "1"}
+PROOF = {"password": ADMIN_PASSWORD}
 
 
 @pytest.fixture
@@ -108,29 +110,51 @@ def test_full_account_can_manage_users_and_last_full_is_protected(client: TestCl
     login(client)
     admin_id = client.get("/api/session").json()["user"]["id"]
     for body in ({"role": "read"}, {"enabled": False}):
-        assert client.put(f"/api/users/{admin_id}", headers=HEADERS, json=body).status_code == 409
-    assert client.delete(f"/api/users/{admin_id}", headers=HEADERS).status_code == 409
+        assert (
+            client.put(
+                f"/api/users/{admin_id}", headers=HEADERS, json={**body, "proof": PROOF}
+            ).status_code
+            == 409
+        )
+    assert (
+        client.request(
+            "DELETE", f"/api/users/{admin_id}", headers=HEADERS, json={"proof": PROOF}
+        ).status_code
+        == 409
+    )
     result = client.post(
         "/api/users",
         headers=HEADERS,
-        json={"username": "Operator", "password": NEW_PASSWORD, "role": "full"},
+        json={"username": "Operator", "password": NEW_PASSWORD, "role": "full", "proof": PROOF},
     )
     assert result.status_code == 201
     user = result.json()
     assert user["username"] == "operator" and user["enabled"]
     assert isinstance(user["created_at"], float)
     updated = client.put(
-        f"/api/users/{user['id']}", headers=HEADERS, json={"username": "auditor", "role": "read"}
+        f"/api/users/{user['id']}",
+        headers=HEADERS,
+        json={"username": "auditor", "role": "read", "proof": PROOF},
     )
     assert updated.status_code == 200
     assert updated.json()["username"] == "auditor"
-    assert client.delete(f"/api/users/{user['id']}", headers=HEADERS).status_code == 200
-    assert client.delete(f"/api/users/{user['id']}", headers=HEADERS).status_code == 404
+    assert (
+        client.request(
+            "DELETE", f"/api/users/{user['id']}", headers=HEADERS, json={"proof": PROOF}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.request(
+            "DELETE", f"/api/users/{user['id']}", headers=HEADERS, json={"proof": PROOF}
+        ).status_code
+        == 404
+    )
     assert (
         client.post(
             "/api/users",
             headers=HEADERS,
-            json={"username": "ADMIN", "password": NEW_PASSWORD, "role": "read"},
+            json={"username": "ADMIN", "password": NEW_PASSWORD, "role": "read", "proof": PROOF},
         ).status_code
         == 409
     )
@@ -151,8 +175,16 @@ def test_account_changes_revoke_existing_sessions(
     service = AuthService(tmp_path, True, "admin", ADMIN_PASSWORD, "viewer", READ_PASSWORD)
     token, user = service.login("viewer", READ_PASSWORD, "test-client")
     assert token and user and service.resolve(token)
-    service.update(user.id, UserUpdate.model_validate(change))
-    assert not service.sessions
+    admin_token, _ = service.login("admin", ADMIN_PASSWORD, "admin-client")
+    assert admin_token
+    service.update(
+        user.id,
+        UserUpdate.model_validate(change),
+        token=admin_token,
+        proof=CredentialProof.model_validate(PROOF),
+        client="admin-client",
+    )
+    assert service.resolve(admin_token)
     assert service.resolve(token) is None
     if change == {"enabled": False}:
         with pytest.raises(AuthError, match="Incorrect username or password"):
@@ -176,8 +208,9 @@ def test_sessions_store_only_token_hash_and_expire(tmp_path: Path) -> None:
 
 def test_last_full_guard_is_transactional_under_concurrent_demotions(tmp_path: Path) -> None:
     service = AuthService(tmp_path, True, "admin", ADMIN_PASSWORD)
-    second = service.create(
-        UserCreate(username="second", password=SecretStr(NEW_PASSWORD), role="full")
+    second = service.require_store().create(
+        UserCreate(username="second", password=SecretStr(NEW_PASSWORD), role="full"),
+        password_hash(NEW_PASSWORD),
     )
     store = service.require_store()
     admin = store.by_name("admin")
@@ -207,10 +240,17 @@ def test_existing_accounts_restart_without_bootstrap_env_and_cannot_open_anonymo
         users = first.get("/api/users").json()["users"]
         admin = next(user for user in users if user["role"] == "full")
         viewer = next(user for user in users if user["role"] == "read")
-        assert first.delete(f"/api/users/{viewer['id']}", headers=HEADERS).status_code == 200
+        assert (
+            first.request(
+                "DELETE", f"/api/users/{viewer['id']}", headers=HEADERS, json={"proof": PROOF}
+            ).status_code
+            == 200
+        )
         assert (
             first.put(
-                f"/api/users/{admin['id']}", headers=HEADERS, json={"password": NEW_PASSWORD}
+                f"/api/users/{admin['id']}",
+                headers=HEADERS,
+                json={"password": NEW_PASSWORD, "proof": PROOF},
             ).status_code
             == 200
         )
@@ -246,28 +286,37 @@ def test_corrupt_account_database_fails_closed_and_empty_demo_stays_compatible(
         Settings(data_dir=tmp_path)
 
 
-def test_login_rate_limits_user_and_client_and_errors_do_not_enumerate(client: TestClient) -> None:
+def test_login_rate_limits_target_account_without_blocking_shared_proxy_users(
+    client: TestClient,
+) -> None:
     unknown = client.post(
         "/api/login", headers=HEADERS, json={"username": "missing", "password": "incorrect"}
     )
     known = client.post(
-        "/api/login", headers=HEADERS, json={"username": "admin", "password": "incorrect"}
+        "/api/login", headers=HEADERS, json={"username": "viewer", "password": "incorrect"}
     )
     assert known.status_code == unknown.status_code == 401
     assert known.json() == unknown.json()
-    for _index in range(3):
+    for _index in range(4):
         assert (
             client.post(
-                "/api/login", headers=HEADERS, json={"username": "viewer", "password": "incorrect"}
+                "/api/login",
+                headers=HEADERS,
+                json={"username": "viewer", "password": "incorrect"},
             ).status_code
             == 401
         )
     assert (
         client.post(
-            "/api/login", headers=HEADERS, json={"username": "other", "password": "incorrect"}
+            "/api/login",
+            headers={**HEADERS, "X-Forwarded-For": "198.51.100.12"},
+            json={"username": "viewer", "password": READ_PASSWORD},
         ).status_code
         == 429
     )
+    # A forged forwarded address cannot reset the targeted bucket; the other
+    # identity behind exactly the same transport peer can still authenticate.
+    login(client)
 
 
 def test_invalid_user_input_and_passwords_are_rejected_without_echo(client: TestClient) -> None:
@@ -330,7 +379,13 @@ def test_revoked_full_session_pool_is_freed_immediately_after_password_change(
             admin.id, admin.version, service.clock() + SESSION_SECONDS
         )
     assert len(service.sessions) == MAX_SESSIONS
-    service.update(admin.id, UserUpdate(password=SecretStr(NEW_PASSWORD)))
+    service.update(
+        admin.id,
+        UserUpdate(password=SecretStr(NEW_PASSWORD)),
+        token="test-token-0",
+        proof=CredentialProof.model_validate(PROOF),
+        client="admin",
+    )
     assert not service.sessions
     token, user = service.login("admin", NEW_PASSWORD, "test-client")
     assert token and user and service.resolve(token)
@@ -341,7 +396,9 @@ def test_deleting_account_frees_its_sessions_without_revoking_other_users(tmp_pa
     admin_token, admin = service.login("admin", ADMIN_PASSWORD, "admin-client")
     viewer_token, viewer = service.login("viewer", READ_PASSWORD, "viewer-client")
     assert admin_token and admin and viewer_token and viewer
-    service.delete(viewer.id, admin.id)
+    service.delete(
+        viewer.id, token=admin_token, proof=CredentialProof.model_validate(PROOF), client="admin"
+    )
     assert len(service.sessions) == 1
     assert service.resolve(admin_token)
     assert service.resolve(viewer_token) is None

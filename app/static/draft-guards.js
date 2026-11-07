@@ -20,6 +20,9 @@ export function linkReferences(config, name) {
     if (item.interface === name) add("DHCP Server", item.name);
   for (const item of network.wireguard_peers || [])
     if (item.interface === name) add("WireGuard Peer", item.name);
+  for (const item of network.wireguard_interfaces || [])
+    if (item.server_access?.wan_interface === name)
+      add("WireGuard Server Access", item.name);
   if ((network.dns?.listen_interfaces || []).includes(name))
     add("DNS Listen Interface", name);
   for (const item of network.vlans || [])

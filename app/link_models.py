@@ -66,6 +66,28 @@ class VirtualInterface(ManagedLink):
     kind: Literal["dummy"] = "dummy"
 
 
+class WireGuardServerAccess(LinkModel):
+    """Explicit ingress policy; legacy/manual interfaces retain their existing firewall policy."""
+
+    source_network: str = Field(max_length=18)
+    access_networks: list[Annotated[str, Field(max_length=18)]] = Field(
+        default_factory=list, max_length=16
+    )
+    router_access: bool = False
+    wan_interface: str = Field(default="", max_length=15)
+
+    _source = field_validator("source_network")(subnet)
+    _wan = field_validator("wan_interface")(lambda value: interface_name(value) if value else "")
+
+    @field_validator("access_networks")
+    @classmethod
+    def validate_networks(cls, values: list[str]) -> list[str]:
+        values = list(dict.fromkeys(subnet(value) for value in values))
+        if "0.0.0.0/0" in values:
+            raise ValueError("Choose an explicit WAN interface for VPN internet access")
+        return values
+
+
 class WireGuardInterface(ManagedLink):
     name: Annotated[str, Field(min_length=1, max_length=13)]
     mtu: int = Field(default=1420, ge=576, le=9000)
@@ -86,6 +108,7 @@ class WireGuardInterface(ManagedLink):
         default_factory=list, max_length=128
     )
     export_endpoint: str = Field(default="", max_length=253)
+    server_access: WireGuardServerAccess | None = None
 
     @field_validator("public_key")
     @classmethod
@@ -116,6 +139,8 @@ class WireGuardInterface(ManagedLink):
     def validate_routing(self) -> Self:
         if self.route_allowed_ips and not self.route_sources:
             raise ValueError("Choose source IPv4 networks for routing through WireGuard")
+        if self.server_access is not None and self.role != "server":
+            raise ValueError("Server access policy requires a WireGuard server interface")
         return self
 
 

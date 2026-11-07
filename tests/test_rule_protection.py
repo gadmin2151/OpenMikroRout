@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.compiler import FirewallError
 from app.fail2ban_models import F2BConfiguration
+from app.fail2ban_rules import observation_limit_name, reply_match_tokens
 from app.fail2ban_runtime import Fail2banService
 from app.filtering import EMPTY_FILTER, DemoFilterDriver, filter_patch, filter_rollback, inspect
 from app.ipsets import DemoIPSetDriver
@@ -179,9 +180,61 @@ def test_filter_endpoint_lists_remain_bounded_and_country_is_a_destination_set()
     assert profile.scope.out_interfaces == ["br0"]
     assert profile.scope.destination_sets == ["geo_US"]
     script = filter_patch(EMPTY_FILTER, source)
-    assert script.count("--nflog-prefix") == 4
+    assert script.count("--nflog-prefix") == 12
+    limit_names = {
+        line.split("--hashlimit-name ")[-1].split()[0]
+        for line in script.splitlines()
+        if "--hashlimit-name " in line
+    }
+    assert len(limit_names) == 1  # Every expanded selector shares the same profile budget.
+    for phase in ("start", "reply", "attempt"):
+        name = observation_limit_name(profile, phase)
+        assert len(name) == 15 and name not in limit_names
+        assert script.count(f"--hashlimit-name {name}") == 4
     assert script.count(f"--match-set omr_f2b_{profile.id} src") == 4
     assert "-o br0" in script and "--match-set omr_geo_US dst" in script
+    assert "-i br0" in script and "--match-set omr_geo_US src" in script
+
+
+def test_reply_scope_preserves_literal_interface_and_set_names() -> None:
+    original = [
+        "-p",
+        "tcp",
+        "-i",
+        "src",
+        "-o",
+        "dst",
+        "-d",
+        "10.0.0.1/32",
+        "-m",
+        "multiport",
+        "--dports",
+        "443",
+        "-m",
+        "set",
+        "--match-set",
+        "src",
+        "dst",
+    ]
+    assert reply_match_tokens(original) == [
+        "-p",
+        "tcp",
+        "-o",
+        "src",
+        "-i",
+        "dst",
+        "-s",
+        "10.0.0.1/32",
+        "-m",
+        "multiport",
+        "--sports",
+        "443",
+        "-m",
+        "set",
+        "--match-set",
+        "src",
+        "src",
+    ]
 
 
 def test_managed_ownership_cannot_be_forged_in_editable_manual_configuration() -> None:
@@ -242,7 +295,11 @@ def test_ban_guard_precedes_attempt_log_and_foreign_accept_with_rollback() -> No
     payload = filter_patch(before, source)
     assert payload.index(f"openmikrorout:f2b:{profile.id}") < payload.index("--nflog-prefix")
     assert "--nflog-group 5088" in payload
-    assert "--ctstate NEW -m tcp --syn" in payload
+    assert "--ctstate NEW --ctdir ORIGINAL -m tcp --syn" in payload
+    assert "--ctstate ESTABLISHED --ctdir ORIGINAL --ctstatus ASSURED" in payload
+    assert "--hashlimit-upto 128/second" in payload
+    assert "--nflog-size 0" in payload
+    assert "CONNMARK" not in payload
     assert "--dports 3389" in payload
     assert "--dports 13389" not in payload
     driver.restore(payload)
@@ -300,11 +357,19 @@ def test_dnat_local_endpoint_is_protected_on_input_as_well_as_forward() -> None:
     for chain in ("OMR_F2B", "OMR_F2B_FORWARD"):
         rows = [line for line in payload.splitlines() if line.startswith(f"-A {chain} ")]
         guarded = [line for line in rows if f"openmikrorout:f2b:{profile.id}" in line]
-        attempts = [line for line in rows if "--nflog-prefix" in line]
-        assert len(guarded) == len(attempts) == 1
+        attempts = [
+            line for line in rows if "--nflog-prefix" in line and "--ctdir ORIGINAL" in line
+        ]
+        assert len(guarded) == 1 and len(attempts) == 2
         for line in [*guarded, *attempts]:
             assert "-d 127.0.0.1/32" in line and "--dports 8088" in line
     assert "-I INPUT 1" in payload and "-I FORWARD 1" in payload
+    assert "-I OUTPUT 1" in payload
+    replies = [line for line in payload.splitlines() if "--ctdir REPLY" in line]
+    assert len(replies) == 2
+    for line in replies:
+        assert "-s 127.0.0.1/32" in line and "--sports 8088" in line
+        assert "--tcp-flags SYN,RST,ACK SYN,ACK" in line
 
 
 def test_runtime_verifies_both_endpoint_hooks_and_collector_rules(tmp_path: Path) -> None:
@@ -316,12 +381,18 @@ def test_runtime_verifies_both_endpoint_hooks_and_collector_rules(tmp_path: Path
         with patch("app.filtering.LinuxFilterDriver") as driver:
             driver.return_value.snapshot.return_value = snapshot
             assert service._enforced()
-        for missing_target in ("NFLOG", "DROP"):
+        for chain, missing_marker in (
+            ("OMR_F2B", "f2b-start:"),
+            ("OMR_F2B", "f2b-attempt:"),
+            ("OMR_F2B", "f2b:"),
+            ("OMR_F2B_FORWARD", "f2b-reply:"),
+            ("OMR_F2B_OUTPUT", "f2b-reply:"),
+        ):
             missing = (
                 "\n".join(
                     row
                     for row in snapshot.splitlines()
-                    if not (row.startswith("-A OMR_F2B ") and f"-j {missing_target}" in row)
+                    if not (row.startswith(f"-A {chain} ") and missing_marker in row)
                 )
                 + "\n"
             )

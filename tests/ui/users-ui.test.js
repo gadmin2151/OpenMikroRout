@@ -10,6 +10,17 @@ const e = (value) =>
         char
       ],
   );
+const credentials = {
+  password: "current-administrator-password",
+  code: "123456",
+};
+
+function mockForms(t) {
+  t.mock.method(globalThis, "FormData", function (form) {
+    return form.fields;
+  });
+}
+
 const admin = {
   id: "admin-id",
   username: "admin",
@@ -32,6 +43,14 @@ function context(overrides = {}) {
     refreshed: 0,
     rendered: 0,
     toasts: [],
+  };
+  const proofInputs = [
+    { value: credentials.password },
+    { value: credentials.code },
+  ];
+  const proofForm = {
+    reportValidity: () => true,
+    fields: new Map(Object.entries(credentials)),
   };
   const ctx = {
     state: { auth_enabled: true },
@@ -60,11 +79,13 @@ function context(overrides = {}) {
         calls.closed++;
       },
       classList: { add: () => {} },
-      querySelector: () => null,
+      querySelector: (selector) =>
+        selector === "#user-proof" ? proofForm : null,
+      querySelectorAll: () => proofInputs,
     },
     ...overrides,
   };
-  return { ctx, calls };
+  return { ctx, calls, proofInputs, proofForm };
 }
 function button(action, id, disabled = false) {
   return { dataset: { action, id }, disabled };
@@ -124,7 +145,12 @@ test("edit form never pre-fills a password and protects the only enabled full us
 });
 
 test("direct mutation actions cannot bypass read access or the last enabled full guard", async () => {
-  for (const action of ["user-remove", "user-toggle", "user-delete-confirm"]) {
+  for (const action of [
+    "user-remove",
+    "user-toggle",
+    "user-toggle-confirm",
+    "user-delete-confirm",
+  ]) {
     const { ctx, calls } = context();
     await assert.rejects(
       handleUsersAction(button(action, admin.id), ctx),
@@ -144,16 +170,23 @@ test("direct mutation actions cannot bypass read access or the last enabled full
   assert.equal(calls.api.length, 0);
 });
 
-test("toggle updates the selected account then refreshes the user view", async () => {
+test("toggle requires fresh proof then updates the selected account", async (t) => {
+  mockForms(t);
   const { ctx, calls } = context();
   assert.equal(
     await handleUsersAction(button("user-toggle", reader.id), ctx),
     true,
   );
+  assert.equal(calls.api.length, 0);
+  assert.ok(calls.frames[0][2].includes('id="user-proof"'));
+  await handleUsersAction(button("user-toggle-confirm", reader.id), ctx);
   assert.deepEqual(calls.api, [
     {
       path: "users/reader-id",
-      options: { method: "PUT", body: JSON.stringify({ enabled: false }) },
+      options: {
+        method: "PUT",
+        body: JSON.stringify({ enabled: false, proof: credentials }),
+      },
     },
   ]);
   assert.equal(calls.refreshed, 1);
@@ -161,7 +194,8 @@ test("toggle updates the selected account then refreshes the user view", async (
   assert.equal(calls.closed, 1);
 });
 
-test("deletion requires its confirmation action and uses an encoded account id", async () => {
+test("deletion requires its confirmation action and uses an encoded account id", async (t) => {
+  mockForms(t);
   const id = "reader / unsafe";
   const { ctx, calls } = context({
     users: [admin, { ...reader, id, username: "<viewer>" }],
@@ -172,6 +206,9 @@ test("deletion requires its confirmation action and uses an encoded account id",
   await handleUsersAction(button("user-delete-confirm", id), ctx);
   assert.equal(calls.api[0].path, "users/reader%20%2F%20unsafe");
   assert.equal(calls.api[0].options.method, "DELETE");
+  assert.deepEqual(JSON.parse(calls.api[0].options.body), {
+    proof: credentials,
+  });
 });
 
 test("blank edit password preserves the existing secret and submitted passwords are never echoed", async (t) => {
@@ -190,14 +227,18 @@ test("blank edit password preserves the existing secret and submitted passwords 
     ]),
     querySelector: () => passwordInput,
   };
-  const { ctx, calls } = context();
-  ctx.dialog.querySelector = () => form;
+  const { ctx, calls, proofForm, proofInputs } = context();
+  ctx.dialog.querySelector = (selector) =>
+    selector === "#user-proof" ? proofForm : form;
+  ctx.dialog.querySelectorAll = () => [...proofInputs, passwordInput];
   await handleUsersAction(button("user-save"), ctx);
   assert.deepEqual(JSON.parse(calls.api[0].options.body), {
     username: "viewer",
     role: "read",
     enabled: true,
+    proof: credentials,
   });
+  assert.ok(proofInputs.every((input) => input.value === ""));
   form.dataset.id = "";
   form.fields.set("password", "valid-new-password");
   passwordInput.value = "valid-new-password";
@@ -233,17 +274,31 @@ test("forged save cannot demote or disable the final full account", async (t) =>
   assert.equal(calls.api.length, 0);
 });
 
-test("API failures reach the shared error handler without clearing the form or refreshing", async () => {
-  const { ctx, calls } = context({
+test("API failures clear proof while preserving the dialog and account fields", async (t) => {
+  mockForms(t);
+  const { ctx, calls, proofInputs } = context({
     api: async () => {
       throw new Error("Conflict");
     },
   });
   await assert.rejects(
-    handleUsersAction(button("user-toggle", reader.id), ctx),
+    handleUsersAction(button("user-toggle-confirm", reader.id), ctx),
     /Conflict/,
   );
   assert.equal(calls.closed, 0);
   assert.equal(calls.refreshed, 0);
+  assert.ok(proofInputs.every((input) => input.value === ""));
   assert.equal(await handleUsersAction(button("unrelated"), ctx), false);
+});
+
+test("mutation actions cannot send a request without a valid proof form", async () => {
+  for (const action of ["user-toggle-confirm", "user-delete-confirm"]) {
+    const { ctx, calls } = context();
+    ctx.dialog.querySelector = () => null;
+    await handleUsersAction(button(action, reader.id), ctx);
+    assert.equal(calls.api.length, 0);
+    ctx.dialog.querySelector = () => ({ reportValidity: () => false });
+    await handleUsersAction(button(action, reader.id), ctx);
+    assert.equal(calls.api.length, 0);
+  }
 });

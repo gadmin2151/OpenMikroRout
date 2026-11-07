@@ -1,12 +1,12 @@
-"""Private, metadata-only NFLOG collector for distinct IPv4 TCP connection attempts.
+"""Private, metadata-only NFLOG collector for verified IPv4 TCP connections.
 
 The ABI is Linux's nfnetlink_log.h / nfnetlink_conntrack.h. No protocol-family
 logger is bound or unbound: this process exclusively owns its one NFLOG group.
-Conntrack IDs and original tuples identify connections. Unconfirmed entries may
-be destroyed by a later DROP, so their tuples are conservatively deduplicated
-for the entire observation window (exact tuple reuse can undercount attempts).
-Missing conntrack metadata never falls back to counting packets. This does not
-detect authentication failures.
+An observed SYN is only pending evidence. The same conntrack ID and original
+tuple need a SYN/ACK observed on the expected reply hook/interface path, then an
+assured original-direction established packet. Conntrack flags alone are not
+reply provenance. Missing or lost evidence never falls back to counting packets.
+This does not detect authentication failures.
 """
 
 import errno
@@ -19,12 +19,13 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from app.compiler import FirewallError
-from app.fail2ban_models import F2BConfiguration
+from app.fail2ban_models import MAX_INLINE_PROFILES, F2BConfiguration
+from app.fail2ban_rules import OBSERVATIONS_PER_PROFILE_SECOND
 
 NFLOG_GROUP = 5088
 NETLINK_NETFILTER = 12
@@ -33,6 +34,8 @@ LOG_CONFIG = LOG_PACKET | 1
 MAX_DATAGRAM = 131072
 MAX_TRACKED_CONNECTIONS = 65536
 MAX_EVENTS_PER_SECOND = 2000
+MAX_CONNECTIONS_PER_PROFILE = MAX_TRACKED_CONNECTIONS // MAX_INLINE_PROFILES
+MAX_EVENTS_PER_PROFILE_SECOND = MAX_EVENTS_PER_SECOND // MAX_INLINE_PROFILES
 LOG_MAX_BYTES = 2 * 1024 * 1024
 LOG_BACKUPS = 3
 _NL_HEADER = struct.Struct("=IHHII")
@@ -82,6 +85,10 @@ class MissingConntrack(ValueError):
     """The kernel supplied a packet without a reliable connection identity."""
 
 
+class UnverifiedConnection(ValueError):
+    """Metadata does not prove either a starting SYN or a completed handshake."""
+
+
 @dataclass(frozen=True)
 class ConnectionAttempt:
     profile: str
@@ -90,16 +97,24 @@ class ConnectionAttempt:
     source_port: int
     destination_port: int
     connection_id: int
-    confirmed: bool
+    established: bool
     zone: int
     sequence: int
+    hook: int
+    input_index: int
+    output_index: int
+    reply: bool = False
 
 
 @dataclass(frozen=True)
 class _SeenConnection:
     at: float
     connection_id: int
-    confirmed: bool
+    counted: bool
+    hook: int
+    input_index: int
+    output_index: int
+    replied: bool = False
 
 
 def parse_attempt(payload: bytes) -> ConnectionAttempt:
@@ -109,14 +124,23 @@ def parse_attempt(payload: bytes) -> ConnectionAttempt:
     if family != socket.AF_INET or version != 0 or group != NFLOG_GROUP:
         raise ValueError("Unexpected NFLOG family or group")
     attributes = _attributes(payload[4:])
+    if len(attributes.get(1, b"")) != 4:
+        raise MissingConntrack("NFLOG hook metadata is required")
+    hook = attributes[1][2]
+    interfaces = []
+    for kind in (4, 5):
+        value = attributes.get(kind, b"\0\0\0\0")
+        if len(value) != 4:
+            raise MissingConntrack("NFLOG interface metadata is incomplete")
+        interfaces.append(struct.unpack("!I", value)[0])
     prefix = attributes.get(10, b"")
     if not prefix.endswith(b"\0"):
         raise ValueError("Missing NFLOG prefix")
     profile = prefix[:-1].decode("ascii")
     if not _PROFILE.fullmatch(profile):
         raise ValueError("Unexpected profile identifier")
-    if 18 not in attributes or attributes.get(19) != struct.pack("!I", 2):
-        raise MissingConntrack("A new original-direction conntrack entry is required")
+    if 18 not in attributes or len(attributes.get(19, b"")) != 4:
+        raise MissingConntrack("Original-direction conntrack metadata is required")
     ct = _attributes(attributes[18])
     original = _attributes(ct.get(1, b""))
     addresses = _attributes(original.get(1, b""))
@@ -132,6 +156,17 @@ def parse_attempt(payload: bytes) -> ConnectionAttempt:
         or len(attributes.get(12, b"")) != 4
     ):
         raise MissingConntrack("Incomplete IPv4 TCP conntrack identity")
+    tcp = _attributes(_attributes(ct.get(4, b"")).get(1, b""))
+    state = tcp.get(1)
+    status = struct.unpack("!I", ct[3])[0]
+    info = struct.unpack("!I", attributes[19])[0]
+    # CT_INFO=NEW/original + SYN_SENT only starts observation. IPS_CONFIRMED
+    # merely means insertion into the conntrack table and is not source proof.
+    starting = info == 2 and state == b"\x01" and not status & (2 | 4)
+    established = info == 0 and state == b"\x03" and status & (2 | 4) == (2 | 4)
+    reply = info == 3 and state == b"\x02" and bool(status & 2)
+    if not starting and not established and not reply:
+        raise UnverifiedConnection("TCP handshake/source participation is not verified")
     source = ipaddress.IPv4Address(addresses[1])
     if source.is_loopback or source.is_unspecified or source.is_multicast:
         raise ValueError("Non-client source address")
@@ -145,9 +180,13 @@ def parse_attempt(payload: bytes) -> ConnectionAttempt:
         source_port=struct.unpack("!H", protocol[2])[0],
         destination_port=struct.unpack("!H", protocol[3])[0],
         connection_id=struct.unpack("!I", ct[12])[0],
-        confirmed=bool(struct.unpack("!I", ct[3])[0] & 8),  # IPS_CONFIRMED
+        established=established,
         zone=struct.unpack("!H", zone)[0],
         sequence=struct.unpack("!I", attributes[12])[0],
+        hook=hook,
+        input_index=interfaces[0],
+        output_index=interfaces[1],
+        reply=reply,
     )
 
 
@@ -263,10 +302,10 @@ class ConnectionAttemptCollector:
         self._stop = threading.Event()
         self._closed = False
         self._profiles: dict[str, int] = {}
-        self._seen: OrderedDict[tuple[object, ...], _SeenConnection] = OrderedDict()
+        self._seen: dict[str, OrderedDict[tuple[object, ...], _SeenConnection]] = {}
         self._last_sequence: int | None = None
-        self._rate_second = 0
-        self._rate_count = 0
+        self._rates: dict[str, tuple[int, int]] = {}
+        self._observations: dict[str, tuple[int, int]] = {}
         self._counters = dict(
             events=0,
             duplicates=0,
@@ -276,6 +315,9 @@ class ConnectionAttemptCollector:
             overflows=0,
             rate_limited=0,
             ignored=0,
+            unverified=0,
+            observation_saturated=0,
+            unverified_path=0,
         )
         self._last_error = ""
 
@@ -322,6 +364,13 @@ class ConnectionAttemptCollector:
                 self._thread.start()
             with self._lock:
                 self._profiles = selected
+                # Removed profiles cannot retain capacity indefinitely. Never evict
+                # identities belonging to a profile that is still enabled.
+                self._seen = {key: value for key, value in self._seen.items() if key in selected}
+                self._rates = {key: value for key, value in self._rates.items() if key in selected}
+                self._observations = {
+                    key: value for key, value in self._observations.items() if key in selected
+                }
 
     def _halt(self) -> None:
         self._stop.set()
@@ -354,7 +403,9 @@ class ConnectionAttemptCollector:
                 "demo": self.demo,
                 "group": NFLOG_GROUP,
                 "profiles": sorted(self._profiles),
-                "tracked_connections": len(self._seen),
+                "tracked_connections": sum(len(items) for items in self._seen.values()),
+                "profile_capacity": MAX_CONNECTIONS_PER_PROFILE,
+                "profile_event_rate": MAX_EVENTS_PER_PROFILE_SECOND,
                 **self._counters,
                 "last_error": self._last_error,
                 "healthy": not active or self.demo or (running and not self._last_error),
@@ -365,47 +416,129 @@ class ConnectionAttemptCollector:
             if self._closed or attempt.profile not in self._profiles:
                 self._counters["ignored"] += 1
                 return
+            second, observations = self._observations.get(attempt.profile, (int(now), 0))
+            if second != int(now):
+                second, observations = int(now), 0
+            observations += 1
+            self._observations[attempt.profile] = second, observations
+            if observations == OBSERVATIONS_PER_PROFILE_SECOND:
+                self._counters["observation_saturated"] += 1
+                self._last_error = (
+                    f"NFLOG observation budget for {attempt.profile} reached; "
+                    "protection may be degraded"
+                )
             identity = (
-                attempt.profile,
                 attempt.zone,
                 attempt.source,
                 attempt.destination,
                 attempt.source_port,
                 attempt.destination_port,
             )
-            previous = self._seen.get(identity)
-            if (
-                previous is not None
-                and now - previous.at < self._profiles[attempt.profile]
-                and (previous.connection_id == attempt.connection_id or not previous.confirmed)
-            ):
-                self._seen[identity] = _SeenConnection(
-                    now, attempt.connection_id, attempt.confirmed
-                )
-                self._seen.move_to_end(identity)
-                self._counters["duplicates"] += 1
-                return
-            # Expire only entries outside their own complete observation window.
-            while self._seen:
-                key, seen_at = next(iter(self._seen.items()))
-                if now - seen_at.at < max(self._profiles.values(), default=600):
+            seen = self._seen.setdefault(attempt.profile, OrderedDict())
+            # Each profile owns its full partition and observation window, so a
+            # flooded/long-window service cannot suppress an unrelated service.
+            while seen:
+                key, seen_at = next(iter(seen.items()))
+                if now - seen_at.at < self._profiles[attempt.profile]:
                     break
-                self._seen.pop(key)
-            if int(now) != self._rate_second:
-                self._rate_second, self._rate_count = int(now), 0
-            if self._rate_count >= MAX_EVENTS_PER_SECOND:
-                self._counters["rate_limited"] += 1
-                self._last_error = "Connection event rate limit reached; protection is degraded"
+                seen.pop(key)
+            previous = seen.get(identity)
+            if attempt.reply:
+                if previous is None or previous.connection_id != attempt.connection_id:
+                    self._counters["unverified"] += 1
+                    return
+                path_matches = (
+                    previous.hook == 1
+                    and attempt.hook == 3
+                    and attempt.input_index == 0
+                    and attempt.output_index == previous.input_index
+                ) or (
+                    previous.hook == 2
+                    and attempt.hook == 2
+                    and attempt.input_index == previous.output_index
+                    and attempt.output_index == previous.input_index
+                )
+                if not path_matches:
+                    self._unverified_path(attempt.profile)
+                    return
+                seen[identity] = replace(previous, at=now, replied=True)
+                seen.move_to_end(identity)
                 return
-            if len(self._seen) >= MAX_TRACKED_CONNECTIONS and identity not in self._seen:
-                self._counters["overflows"] += 1
-                self._last_error = "Connection identity cache is full; protection is degraded"
+            path_valid = (
+                attempt.hook == 1 and attempt.input_index > 0 and attempt.output_index == 0
+            ) or (
+                attempt.hook == 2
+                and attempt.input_index > 0
+                and attempt.output_index > 0
+                and attempt.input_index != attempt.output_index
+            )
+            if not path_valid:
+                self._unverified_path(attempt.profile)
+                return
+            if previous is not None and previous.connection_id == attempt.connection_id:
+                if (attempt.hook, attempt.input_index, attempt.output_index) != (
+                    previous.hook,
+                    previous.input_index,
+                    previous.output_index,
+                ):
+                    self._unverified_path(attempt.profile)
+                    return
+                if previous.counted or not attempt.established:
+                    seen[identity] = replace(previous, at=now)
+                    seen.move_to_end(identity)
+                    self._counters["duplicates"] += 1
+                    return
+            elif attempt.established:
+                # A missing SYN, old ID or idle established connection is not a
+                # new handshake. Never create a countable identity from it.
+                self._counters["unverified"] += 1
+                return
+            if not attempt.established:
+                if len(seen) >= MAX_CONNECTIONS_PER_PROFILE and identity not in seen:
+                    self._counters["overflows"] += 1
+                    self._last_error = (
+                        f"Connection cache for {attempt.profile} is full; protection is degraded"
+                    )
+                    return
+                seen[identity] = _SeenConnection(
+                    now,
+                    attempt.connection_id,
+                    False,
+                    attempt.hook,
+                    attempt.input_index,
+                    attempt.output_index,
+                )
+                seen.move_to_end(identity)
+                return
+            assert previous is not None
+            if not previous.replied:
+                self._counters["unverified"] += 1
+                return
+            second, count = self._rates.get(attempt.profile, (int(now), 0))
+            if second != int(now):
+                second, count = int(now), 0
+            if count >= MAX_EVENTS_PER_PROFILE_SECOND:
+                self._counters["rate_limited"] += 1
+                self._last_error = (
+                    f"Connection event rate for {attempt.profile} exceeded; protection is degraded"
+                )
+                # Consume the proof conservatively. Retrying ordinary data later
+                # must not move this connection into a later detection window.
+                seen[identity] = replace(previous, at=now, counted=True)
+                seen.move_to_end(identity)
                 return
             self.journal.append(attempt)
-            self._seen[identity] = _SeenConnection(now, attempt.connection_id, attempt.confirmed)
-            self._seen.move_to_end(identity)
-            self._rate_count += 1
+            seen[identity] = replace(previous, at=now, counted=True)
+            seen.move_to_end(identity)
+            self._rates[attempt.profile] = second, count + 1
             self._counters["events"] += 1
+
+    def _unverified_path(self, profile: str) -> None:
+        self._counters["unverified_path"] += 1
+        self._last_error = (
+            f"Cannot verify reply interface path for {profile}; protection is degraded. "
+            "Forwarded protection requires distinct ingress and egress interfaces"
+        )
 
     def _consume(self, data: bytes) -> None:
         for kind, _sequence, payload in _messages(data):
@@ -431,6 +564,10 @@ class ConnectionAttemptCollector:
                     self._last_error = (
                         "NFLOG lacks TCP conntrack identity; attempts were not counted"
                     )
+                continue
+            except UnverifiedConnection:
+                with self._lock:
+                    self._counters["unverified"] += 1
                 continue
             except (ValueError, UnicodeError):
                 with self._lock:

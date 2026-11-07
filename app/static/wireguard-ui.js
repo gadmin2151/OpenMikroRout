@@ -170,7 +170,7 @@ export function renderWireGuard(ctx, peers = false) {
         "",
       )}${entries.length ? `<tr data-wg-filter-empty ${matched ? "hidden" : ""}><td colspan="6" class="muted">По этому фильтру peers не найдены.</td></tr>` : ""}</tbody></table>`;
   } else {
-    table = `<table class="rules-table wg-table"><thead><tr><th>Name</th><th>Role</th><th>Listen Port</th><th>Public Key</th><th>Routing</th><th>Peers</th><th></th></tr></thead><tbody>${interfaces.map((item) => `<tr class="${item.enabled ? "" : "disabled-row"}"><td><strong class="mono">${ctx.e(item.name)}</strong><small class="wg-table-sub">${item.enabled ? "enabled" : "disabled"} · MTU ${item.mtu}</small></td><td>${ctx.e(role(item.role))}</td><td class="mono">${item.listen_port || "auto"} / UDP</td><td><span class="wg-public-key mono" title="${ctx.e(item.public_key)}">${ctx.e(item.public_key)}</span></td><td>${item.route_allowed_ips ? `<span class="wg-route-badge">Table ${item.routing_table}</span><small class="wg-table-sub wg-route-sources" title="${ctx.e(item.route_sources.join(", "))}">${ctx.e(item.route_sources.join(", "))}${item.kill_switch ? " · Kill switch" : ""}</small>` : '<span class="muted">IP → Routes</span>'}</td><td>${entries.filter((peer) => peer.interface === item.name).length}</td><td><div class="row-actions"><button class="icon ghost" data-action="wg-interface-edit" data-id="${ctx.e(item.id)}" aria-label="Настройки ${ctx.e(item.name)}">${ctx.icon("edit")}</button><button class="icon ghost" data-action="wg-export" data-client="false" data-id="${ctx.e(item.id)}" aria-label="Экспорт ${ctx.e(item.name)}">${ctx.icon("download")}</button><button class="icon ghost danger" data-action="wg-remove" data-kind="wireguard_interfaces" data-id="${ctx.e(item.id)}" ${disable} aria-label="Удалить ${ctx.e(item.name)}">${ctx.icon("minus")}</button></div></td></tr>`).join("")}</tbody></table>`;
+    table = `<table class="rules-table wg-table"><thead><tr><th>Name</th><th>Role</th><th>Listen Port</th><th>Public Key</th><th>Routing</th><th>Peers</th><th></th></tr></thead><tbody>${interfaces.map((item) => `<tr class="${item.enabled ? "" : "disabled-row"}"><td><strong class="mono">${ctx.e(item.name)}</strong><small class="wg-table-sub">${item.enabled ? "enabled" : "disabled"} · MTU ${item.mtu}</small></td><td>${ctx.e(role(item.role))}</td><td class="mono">${item.listen_port || "auto"} / UDP</td><td><span class="wg-public-key mono" title="${ctx.e(item.public_key)}">${ctx.e(item.public_key)}</span></td><td>${item.route_allowed_ips ? `<span class="wg-route-badge">Table ${item.routing_table}</span><small class="wg-table-sub wg-route-sources" title="${ctx.e(item.route_sources.join(", "))}">${ctx.e(item.route_sources.join(", "))}${item.kill_switch ? " · Kill switch" : ""}</small>` : '<span class="muted">IP → Routes</span>'}</td><td>${entries.filter((peer) => peer.interface === item.name).length}</td><td><div class="row-actions">${item.role === "server" ? `<button class="icon ghost" data-action="wg-server-access" data-id="${ctx.e(item.id)}" ${disable} aria-label="Доступ клиентов ${ctx.e(item.name)}">${ctx.icon("shield")}</button>` : ""}<button class="icon ghost" data-action="wg-interface-edit" data-id="${ctx.e(item.id)}" aria-label="Настройки ${ctx.e(item.name)}">${ctx.icon("edit")}</button><button class="icon ghost" data-action="wg-export" data-client="false" data-id="${ctx.e(item.id)}" aria-label="Экспорт ${ctx.e(item.name)}">${ctx.icon("download")}</button><button class="icon ghost danger" data-action="wg-remove" data-kind="wireguard_interfaces" data-id="${ctx.e(item.id)}" ${disable} aria-label="Удалить ${ctx.e(item.name)}">${ctx.icon("minus")}</button></div></td></tr>`).join("")}</tbody></table>`;
   }
   const empty = (peers ? entries : interfaces).length
     ? ""
@@ -267,6 +267,26 @@ function openImport(ctx) {
     "Импортировать",
   );
 }
+function openServerAccess(ctx, item) {
+  editing = { revision: ctx.state.revision, item: structuredClone(item) };
+  const policy = item.server_access || {
+    source_network:
+      network(ctx).addresses?.find((address) => address.interface === item.name)
+        ?.address || "",
+    access_networks: [],
+    router_access: false,
+    wan_interface: "",
+  };
+  form(
+    ctx,
+    `${item.name} · доступ клиентов`,
+    item.server_access
+      ? "Сервер ограничивает назначения независимо от маршрутов в клиентском профиле."
+      : "Для этого сервера отдельные ограничения ещё не заданы. Сохранение включит выбранную политику после применения черновика.",
+    `<div class="wg-form-grid">${field(ctx, "source_network", "VPN-подсеть клиентов", policy.source_network, { required: true, wide: true })}${field(ctx, "access_networks", "Разрешённые сети LAN", policy.access_networks, { lines: true, wide: true })}<label class="field wg-wide"><span>Интернет через WAN · необязательно</span>${interfaceSelect(ctx, "wan_interface", policy.wan_interface)}<small>Пусто — доступ только к выбранным LAN. Маршруты, NAT и разрешения Firewall настраиваются отдельно.</small></label></div>${check(ctx, "router_access", "Разрешить доступ к самому роутеру", policy.router_access)}<p class="feature-note">Остальные назначения будут запрещены. Существующий Firewall продолжает проверять разрешённый здесь трафик.</p>`,
+    "wg-server-access-save",
+  );
+}
 function openInterface(ctx, item = null) {
   editing = {
     revision: ctx.state.revision,
@@ -287,11 +307,20 @@ function openInterface(ctx, item = null) {
     export_endpoint: "",
     comment: "",
   };
+  const roleConfirmation = value.server_access
+    ? check(
+        ctx,
+        "confirm_remove_server_access",
+        "Подтверждаю снятие серверных ограничений при смене роли на Client или Site-to-site",
+        false,
+        "Смена роли удалит отдельную политику доступа клиентов только после применения черновика. Обычные правила Firewall сохраняются. Если роль остаётся Server, ограничения не меняются.",
+      )
+    : "";
   form(
     ctx,
     item ? `${item.name} · WireGuard Interface` : "WireGuard · интерфейс",
     "Закрытый ключ хранится зашифрованным. IP назначается в IP → Addresses.",
-    `<div class="wg-form-grid">${field(ctx, "name", "Name", value.name, { required: true, readonly: !!item, max: 13 })}<label class="field"><span>Role</span><select name="role">${["server", "client", "site-to-site"].map((name) => `<option value="${name}" ${name === value.role ? "selected" : ""}>${role(name)}</option>`).join("")}</select></label>${field(ctx, "listen_port", "Listen Port · UDP (0 = auto)", value.listen_port, { type: "number", required: true })}${field(ctx, "mtu", "MTU", value.mtu, { type: "number", required: true })}${field(ctx, "export_endpoint", "Public endpoint для клиентов", value.export_endpoint)}${field(ctx, "client_dns", "DNS для клиентов", value.client_dns.join(", "))}${item ? field(ctx, "public_key", "Public Key", item.public_key, { readonly: true, wide: true }) : field(ctx, "private_key", "Private Key · необязательно", "", { type: "password", wide: true, note: "Пусто — сгенерировать новый. Ключ не появится в обычном Backup." })}${field(ctx, "client_allowed_ips", "Сети для новых клиентов · Allowed IPs", value.client_allowed_ips || [], { lines: true, wide: true, note: "Значение по умолчанию для генерируемых клиентских профилей." })}${field(ctx, "route_sources", "Source networks для VPN", value.route_sources, { lines: true, wide: true })}${field(ctx, "routing_table", "Routing table · 20000–20999", value.routing_table, { type: "number" })}${field(ctx, "comment", "Comment", value.comment)}</div>${check(ctx, "enabled", "Enabled", value.enabled)}${check(ctx, "route_allowed_ips", "Маршрутизировать источники к Allowed IPs peers", value.route_allowed_ips, "Явные маршруты из main сохраняют приоритет. Сети-источники должны быть заданы и не пересекаться.")}${check(ctx, "kill_switch", "Kill switch · запретить выход вне VPN", value.kill_switch, "Для выбранных источников сохранится только VPN и явные маршруты LAN / main. Защита остаётся при отключении интерфейса или удалении peers.")}`,
+    `<div class="wg-form-grid">${field(ctx, "name", "Name", value.name, { required: true, readonly: !!item, max: 13 })}<label class="field"><span>Role</span><select name="role">${["server", "client", "site-to-site"].map((name) => `<option value="${name}" ${name === value.role ? "selected" : ""}>${role(name)}</option>`).join("")}</select></label>${field(ctx, "listen_port", "Listen Port · UDP (0 = auto)", value.listen_port, { type: "number", required: true })}${field(ctx, "mtu", "MTU", value.mtu, { type: "number", required: true })}${field(ctx, "export_endpoint", "Public endpoint для клиентов", value.export_endpoint)}${field(ctx, "client_dns", "DNS для клиентов", value.client_dns.join(", "))}${item ? field(ctx, "public_key", "Public Key", item.public_key, { readonly: true, wide: true }) : field(ctx, "private_key", "Private Key · необязательно", "", { type: "password", wide: true, note: "Пусто — сгенерировать новый. Ключ не появится в обычном Backup." })}${field(ctx, "client_allowed_ips", "Сети для новых клиентов · Allowed IPs", value.client_allowed_ips || [], { lines: true, wide: true, note: "Значение по умолчанию для генерируемых клиентских профилей." })}${field(ctx, "route_sources", "Source networks для VPN", value.route_sources, { lines: true, wide: true })}${field(ctx, "routing_table", "Routing table · 20000–20999", value.routing_table, { type: "number" })}${field(ctx, "comment", "Comment", value.comment)}</div>${check(ctx, "enabled", "Enabled", value.enabled)}${check(ctx, "route_allowed_ips", "Маршрутизировать источники к Allowed IPs peers", value.route_allowed_ips, "Явные маршруты из main сохраняют приоритет. Сети-источники должны быть заданы и не пересекаться.")}${check(ctx, "kill_switch", "Kill switch · запретить выход вне VPN", value.kill_switch, "Для выбранных источников сохранится только VPN и явные маршруты LAN / main. Защита остаётся при отключении интерфейса или удалении peers.")}${roleConfirmation}`,
     "wg-interface-save",
   );
 }
@@ -362,6 +391,15 @@ export async function handleWireGuardAction(button, ctx) {
   }
   if (!ctx.canWrite())
     throw new Error("Для настройки WireGuard нужна группа full.");
+  if (action === "wg-server-access") {
+    const item = collection(ctx, "wireguard_interfaces").find(
+      (row) => row.id === button.dataset.id,
+    );
+    if (!item || item.role !== "server")
+      throw new Error("Выберите существующий сервер WireGuard.");
+    openServerAccess(ctx, item);
+    return true;
+  }
   if (action === "wg-server") {
     openServer(ctx);
     return true;
@@ -473,6 +511,20 @@ export async function handleWireGuardAction(button, ctx) {
             router_access: data.has("router_access"),
           }),
         });
+      else if (action === "wg-server-access-save")
+        result = await ctx.api("wireguard/server-access", {
+          method: "POST",
+          body: JSON.stringify({
+            revision: editing.revision,
+            interface: editing.item.name,
+            policy: {
+              source_network: text("source_network"),
+              access_networks: splitNetworks(text("access_networks")),
+              router_access: data.has("router_access"),
+              wan_interface: text("wan_interface"),
+            },
+          }),
+        });
       else if (action === "wg-import-save")
         result = await ctx.api("wireguard/import", {
           method: "POST",
@@ -507,6 +559,12 @@ export async function handleWireGuardAction(button, ctx) {
       else {
         const config = structuredClone(ctx.state.config);
         if (action === "wg-interface-save") {
+          const removeServerAccess =
+            !!editing.item?.server_access && text("role") !== "server";
+          if (removeServerAccess && !data.has("confirm_remove_server_access"))
+            throw new Error(
+              "Для смены роли подтвердите снятие серверных ограничений доступа после применения черновика.",
+            );
           let key = null;
           if (!editing.item)
             key = await ctx.api("wireguard/keys", {
@@ -524,6 +582,7 @@ export async function handleWireGuardAction(button, ctx) {
             }),
             name: text("name"),
             role: text("role"),
+            ...(removeServerAccess ? { server_access: null } : {}),
             mtu: Number(text("mtu")),
             listen_port: Number(text("listen_port")),
             enabled: data.has("enabled"),
