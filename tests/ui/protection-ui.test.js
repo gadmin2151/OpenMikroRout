@@ -124,7 +124,7 @@ test("Security lists rule-owned protection by translated service and draft state
   assert.match(html, /10\.0\.0\.5/);
   assert.match(html, /TCP 3389 · eth0/);
   assert.match(html, /NAT · input \/ forward/);
-  assert.match(html, /Filter Rules · input/);
+  assert.match(html, /Правила фильтрации · input/);
   assert.match(html, /TCP-подключения/);
   assert.match(html, /Ошибки SSH/);
   assert.match(html, /8 за 120 с/);

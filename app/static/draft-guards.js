@@ -2,7 +2,9 @@
 export function assertDraftRevision(expected, current) {
   if (!Number.isSafeInteger(expected) || expected < 0 || expected !== current) {
     throw new Error(
-      "Конфигурация изменилась в другой сессии. Введённые значения остаются в форме. Загрузите актуальный черновик и повторите изменение.",
+      t(
+        "Конфигурация изменилась в другой сессии. Введённые значения остаются в форме. Загрузите актуальный черновик и повторите изменение.",
+      ),
     );
   }
   return expected;
@@ -11,7 +13,7 @@ export function assertDraftRevision(expected, current) {
 export function linkReferences(config, name) {
   const network = config.network || {};
   const refs = [];
-  const add = (label, item) => refs.push(`${label}: ${item}`);
+  const add = (label, item) => refs.push(`${t(label)}: ${item}`);
   for (const item of network.addresses || [])
     if (item.interface === name) add("IP Address", item.address);
   for (const item of network.routes || [])
@@ -58,9 +60,10 @@ export function assertLinkRemoval(config, kind, id) {
   if (refs.length) {
     const details =
       refs.slice(0, 8).join("; ") +
-      (refs.length > 8 ? `; ещё ${refs.length - 8}` : "");
+      (refs.length > 8 ? html`; ещё ${refs.length - 8}` : "");
     throw new Error(
-      `Нельзя удалить ${item.name}: ${details}. Сначала переназначьте или удалите эти зависимости.`,
+      html`Нельзя удалить ${item.name}: ${details}. Сначала переназначьте или удалите эти зависимости.`,
     );
   }
 }
+import { html, t } from "./i18n.js";

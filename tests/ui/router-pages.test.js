@@ -255,11 +255,14 @@ test("Filter tabs preserve hidden conditions, clear visible checks, and save all
   const action = (name, data = {}) =>
     handleRouterAction({ dataset: { action: name, ...data } }, ctx);
   await action("router-edit", { kind: "filter", id: original.id });
-  assert.match(ctx.tabs, /General.*Advanced.*Fail2ban.*Action/);
+  assert.deepEqual(
+    [...ctx.tabs.matchAll(/data-tab="([^"]+)"/g)].map((match) => match[1]),
+    ["general", "advanced", "fail2ban", "action"],
+  );
   assert.ok(!ctx.body.includes('name="action"'));
   ctx.currentForm = form({ name: "Edited", enabled: null, dst_ports: "8443" });
   await action("router-editor-tab", { tab: "advanced" });
-  assert.match(ctx.body, /Src\. Country/);
+  assert.match(ctx.body, /Страна источника/);
   assert.match(ctx.body, /value="RO" selected/);
   assert.match(ctx.body, /Дополнительное условие по списку Fail2ban/);
   assert.match(ctx.body, /name="f2b_profile"/);
@@ -444,4 +447,26 @@ test("Filter table makes country and Fail2ban conditions visible without opening
   assert.match(html, /Country: MD/);
   assert.match(html, /Country: RO/);
   assert.match(html, /∈ f2b_ssh/);
+});
+
+test("DNS interfaces use checkboxes and retain selected interfaces that are absent from discovery", () => {
+  const ctx = context({
+    network: {
+      dns: {
+        enabled: true,
+        listen_interfaces: ["br-stored"],
+        servers: ["1.1.1.1"],
+        cache_size: 1000,
+        local_domain: "",
+      },
+    },
+  });
+  ctx.interfaces = [{ name: "eth0" }];
+  const html = renderRouterView("dns", ctx);
+  assert.match(
+    html,
+    /type="checkbox" name="listen_interfaces" value="br-stored" checked/,
+  );
+  assert.match(html, /type="checkbox" name="listen_interfaces" value="eth0"/);
+  assert.doesNotMatch(html, /<select[^>]*multiple|Ctrl \/ Cmd/);
 });

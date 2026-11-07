@@ -1,5 +1,7 @@
+import { t } from "./i18n.js";
 /** UI permissions complement server authorization; unknown actions require full access. */
 const readActions = new Set([
+  "preferences-save",
   "close",
   "menu",
   "nav-group",
@@ -71,7 +73,7 @@ export function applyReadAccess(scope, state) {
   for (const button of scope.querySelectorAll("button[data-action]")) {
     if (!isReadAction(button.dataset.action)) {
       button.disabled = true;
-      button.title = "Группа read: доступен только просмотр";
+      button.title = t("Группа read: доступен только просмотр");
     }
   }
   for (const handle of scope.querySelectorAll(

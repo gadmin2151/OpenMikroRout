@@ -1,3 +1,4 @@
+import { html, t, locale } from "./i18n.js";
 import { proofForm, proof, clearProof } from "./security-ui.js?v=1";
 
 let status = null,
@@ -13,15 +14,15 @@ const activePhases = new Set([
   "recovering",
 ]);
 const phases = {
-  queued: "В очереди",
-  downloading: "Загрузка",
-  validating: "Проверка подписи и пакета",
-  installing: "Подготовка окружения",
-  backup: "Резервная копия",
-  restarting: "Перезапуск и проверка",
-  recovering: "Восстановление",
-  succeeded: "Обновлено",
-  failed: "Обновление не установлено",
+  queued: t("В очереди"),
+  downloading: t("Загрузка"),
+  validating: t("Проверка подписи и пакета"),
+  installing: t("Подготовка окружения"),
+  backup: t("Резервная копия"),
+  restarting: t("Перезапуск и проверка"),
+  recovering: t("Восстановление"),
+  succeeded: t("Обновлено"),
+  failed: t("Обновление не установлено"),
 };
 
 /** Wait for the worker's completed health check, not just a listening server. */
@@ -32,7 +33,7 @@ export function createUpdateReloadWatcher({
       credentials: "same-origin",
       signal: AbortSignal.timeout(5000),
     });
-    if (!response.ok) throw new Error("Сервис перезапускается.");
+    if (!response.ok) throw new Error(t("Сервис перезапускается."));
     return response.json();
   },
   reload = () => window.location.reload(),
@@ -57,7 +58,7 @@ export function createUpdateReloadWatcher({
         if (health.update.phase === "failed") {
           stop();
           onStopped(
-            "Обновление не установлено. Подробности — в разделе обновлений.",
+            t("Обновление не установлено. Подробности — в разделе обновлений."),
           );
           return;
         }
@@ -79,7 +80,9 @@ export function createUpdateReloadWatcher({
     if (now() >= installation.deadline) {
       stop();
       onStopped(
-        "Не удалось дождаться обновления. Проверьте состояние сервиса и обновите страницу.",
+        t(
+          "Не удалось дождаться обновления. Проверьте состояние сервиса и обновите страницу.",
+        ),
       );
       return;
     }
@@ -122,13 +125,13 @@ export function resetUpdates() {
 
 export function renderUpdates(ctx) {
   if (!ctx.canWrite() || !ctx.currentUser)
-    return '<div class="empty">Обновления доступны пользователям full после входа.</div>';
+    return html`<div class="empty">Обновления доступны пользователям full после входа.</div>`;
   const e = ctx.e;
   const latest = status?.latest;
   const job = status?.job;
   const active = activePhases.has(job?.phase);
   const blocked = ctx.busy || ctx.offline || active;
-  return `<div class="feature-page"><div class="feature-heading"><div><h2>Обновление OpenMikroRout</h2><p>Установленная версия <strong>${e(status?.current_version || ctx.state.version)}</strong></p></div>${ctx.icon("download")}</div><div class="update-source"><span>Источник</span><a href="https://github.com/gadmin2151/OpenMikroRout" target="_blank" rel="noopener noreferrer">gadmin2151/OpenMikroRout</a><span>Проверка подписи Ed25519 и SHA-256</span></div>${error ? `<div class="connection-error" role="alert">${e(error)}</div>` : ""}${status?.error ? `<p class="feature-note">${e(status.error)}</p>` : ""}<div class="security-card"><div><h3>${latest ? (latest.available ? `Доступна версия ${e(latest.version)}` : "Установлена актуальная версия") : "Проверка новой версии"}</h3><p>${latest ? `GitHub: ${e(latest.version)} · commit ${e(latest.commit.slice(0, 12))}` : "Проверяется последний стабильный подписанный выпуск вашего репозитория."}</p></div><div class="update-buttons"><button data-action="updates-check" ${blocked || !status?.enabled ? "disabled" : ""}>${ctx.icon("refresh")}Проверить GitHub</button>${latest?.available ? `<button class="primary" data-action="updates-open" ${blocked || ctx.state.dirty || ctx.state.pending ? "disabled" : ""}>${ctx.icon("download")}Установить ${e(latest.version)}</button>` : ""}</div></div>${job ? `<div class="update-job" role="status"><strong>${e(phases[job.phase] || job.phase)} · ${e(job.version)}</strong><p>${e(job.message)}</p>${job.error ? `<p class="update-error">${e(job.error)}</p>` : ""}<small>${e(new Date(job.updated_at * 1000).toLocaleString("ru-RU"))}</small></div>` : ""}<p class="feature-note">Сначала примените или отмените сетевой черновик. Обновление сохраняет конфигурацию, пользователей и ключи 2FA, готовит отдельную версию и проверяет запуск. При ошибке возвращается предыдущая версия. После перезапуска панели потребуется снова войти.</p></div>`;
+  return html`<div class="feature-page"><div class="feature-heading"><div><h2>Обновление OpenMikroRout</h2><p>Установленная версия <strong>${e(status?.current_version || ctx.state.version)}</strong></p></div>${ctx.icon("download")}</div><div class="update-source"><span>Источник</span><a href="https://github.com/gadmin2151/OpenMikroRout" target="_blank" rel="noopener noreferrer">gadmin2151/OpenMikroRout</a><span>Проверка подписи Ed25519 и SHA-256</span></div>${error ? html`<div class="connection-error" role="alert">${e(error)}</div>` : ""}${status?.error ? html`<p class="feature-note">${e(status.error)}</p>` : ""}<div class="security-card"><div><h3>${latest ? (latest.available ? html`Доступна версия ${e(latest.version)}` : t("Установлена актуальная версия")) : t("Проверка новой версии")}</h3><p>${latest ? `GitHub: ${e(latest.version)} · commit ${e(latest.commit.slice(0, 12))}` : t("Проверяется последний стабильный подписанный выпуск вашего репозитория.")}</p></div><div class="update-buttons"><button data-action="updates-check" ${blocked || !status?.enabled ? "disabled" : ""}>${ctx.icon("refresh")}Проверить GitHub</button>${latest?.available ? html`<button class="primary" data-action="updates-open" ${blocked || ctx.state.dirty || ctx.state.pending ? "disabled" : ""}>${ctx.icon("download")}Установить ${e(latest.version)}</button>` : ""}</div></div>${job ? html`<div class="update-job" role="status"><strong>${e(t(phases[job.phase] || job.phase))} · ${e(job.version)}</strong><p>${e(job.message)}</p>${job.error ? html`<p class="update-error">${e(job.error)}</p>` : ""}<small>${e(new Date(job.updated_at * 1000).toLocaleString(locale()))}</small></div>` : ""}<p class="feature-note">Сначала примените или отмените сетевой черновик. Обновление сохраняет конфигурацию, пользователей и ключи 2FA, готовит отдельную версию и проверяет запуск. При ошибке возвращается предыдущая версия. После перезапуска панели потребуется снова войти.</p></div>`;
 }
 
 export async function refreshUpdates(ctx) {
@@ -163,7 +166,7 @@ export async function handleUpdatesAction(button, ctx) {
   if (!["updates-check", "updates-open", "updates-apply"].includes(action))
     return false;
   if (!ctx.canWrite() || !ctx.currentUser)
-    throw new Error("Нужна учётная запись full.");
+    throw new Error(t("Нужна учётная запись full."));
   await ctx.run(async () => {
     if (action === "updates-check") {
       try {
@@ -176,19 +179,21 @@ export async function handleUpdatesAction(button, ctx) {
       return;
     }
     if (!status?.latest?.available || activePhases.has(status.job?.phase))
-      throw new Error("Сначала проверьте доступную версию.");
+      throw new Error(t("Сначала проверьте доступную версию."));
     if (ctx.state.dirty || ctx.state.pending)
-      throw new Error("Сначала примените или отмените сетевой черновик.");
+      throw new Error(t("Сначала примените или отмените сетевой черновик."));
     if (action === "updates-open") {
       ctx.dialogFrame(
-        `Установить OpenMikroRout ${status.latest.version}?`,
-        "Подтвердите свои учётные данные.",
+        html`Установить OpenMikroRout ${status.latest.version}?`,
+        t("Подтвердите свои учётные данные."),
         proofForm(
           ctx,
           "update-proof-form",
-          "Панель ненадолго перезапустится. Конфигурация будет сохранена; при ошибке запуска выполнится откат.",
+          t(
+            "Панель ненадолго перезапустится. Конфигурация будет сохранена; при ошибке запуска выполнится откат.",
+          ),
         ),
-        '<button data-action="close">Отмена</button><button class="primary" data-action="updates-apply">Обновить сервис</button>',
+        html`<button data-action="close">Отмена</button><button class="primary" data-action="updates-apply">Обновить сервис</button>`,
       );
       return;
     }
@@ -205,7 +210,9 @@ export async function handleUpdatesAction(button, ctx) {
     watchUpdate(job, ctx);
     ctx.render();
     ctx.toast(
-      "Обновление запущено. После проверки запуска страница обновится автоматически.",
+      t(
+        "Обновление запущено. После проверки запуска страница обновится автоматически.",
+      ),
     );
   });
   return true;

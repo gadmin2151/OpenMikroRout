@@ -1,3 +1,5 @@
+import { t, html, setLanguage, locale } from "./i18n.js";
+import { installCheckboxSelectEvents } from "./checkbox-select.js";
 import { assertDraftRevision } from "./draft-guards.js";
 import {
   renderHeaderControls,
@@ -139,7 +141,7 @@ const paths = {
   user: "M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M4 21v-2a8 8 0 0 1 16 0v2",
 };
 const icon = (name) =>
-  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[name] || paths.grid}"/></svg>`;
+  html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[name] || paths.grid}"/></svg>`;
 const e = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -212,7 +214,7 @@ const currentUser = () => state?.current_user || null;
 function requireWrite() {
   if (!canWrite())
     throw new Error(
-      "Группа read: изменения доступны только пользователям full.",
+      t("Группа read: изменения доступны только пользователям full."),
     );
 }
 function applyAccessControls() {
@@ -270,19 +272,19 @@ function clearSession() {
   document.body.classList.remove("router-drag-active");
 }
 const ruleColumns = [
-  ["name", "Comment / Name"],
-  ["action", "Action"],
-  ["chain", "Chain"],
-  ["protocol", "Protocol"],
-  ["src", "Src. Address / List"],
-  ["dst", "Dst. Address / List"],
-  ["src_ports", "Src. Port"],
-  ["dst_ports", "Dst. Port"],
-  ["in_interface", "In. Interface"],
-  ["out_interface", "Out. Interface"],
-  ["target", "To Addresses / Ports"],
-  ["bytes", "Bytes"],
-  ["packets", "Packets"],
+  ["name", t("Comment / Name")],
+  ["action", t("Action")],
+  ["chain", t("Chain")],
+  ["protocol", t("Protocol")],
+  ["src", t("Src. Address / List")],
+  ["dst", t("Dst. Address / List")],
+  ["src_ports", t("Src. Port")],
+  ["dst_ports", t("Dst. Port")],
+  ["in_interface", t("In. Interface")],
+  ["out_interface", t("Out. Interface")],
+  ["target", t("To Addresses / Ports")],
+  ["bytes", t("Bytes")],
+  ["packets", t("Packets")],
 ];
 const defaultColumns = ruleColumns
   .map(([key]) => key)
@@ -319,6 +321,7 @@ async function api(path, options = {}) {
       "me/totp/setup",
       "me/totp/confirm",
       "me/totp/disable",
+      "me/preferences",
     ].includes(path)
   )
     requireWrite();
@@ -342,7 +345,7 @@ async function api(path, options = {}) {
       clearSession();
       renderLogin();
     }
-    throw new Error("Сессия завершена. Войдите снова.");
+    throw new Error(t("Сессия завершена. Войдите снова."));
   }
   if (!response.ok) {
     const detail = Array.isArray(data.detail)
@@ -350,7 +353,7 @@ async function api(path, options = {}) {
           .map((x) => `${x.field ? x.field + ": " : ""}${x.message}`)
           .join("\n")
       : data.detail;
-    throw new Error(detail || `Ошибка HTTP ${response.status}`);
+    throw new Error(detail || html`Ошибка HTTP ${response.status}`);
   }
   return data;
 }
@@ -388,6 +391,7 @@ async function run(task) {
 }
 function acceptState(data) {
   state = { ...state, ...data };
+  if (state.current_user) setLanguage(state.current_user.language);
   const ids = new Set(state.config.rules.map((r) => r.id));
   selected = new Set([...selected].filter((id) => ids.has(id)));
   render();
@@ -412,27 +416,27 @@ const fmtBytes = (bytes) =>
       ? `${(bytes / 1024).toFixed(1)} KB`
       : `${bytes} B`;
 function actionBadge(action) {
-  return `<span class="action-badge ${e(action)}">${icon(action === "masquerade" ? "swap" : action === "accept" ? "check" : "arrow")}${e(action)}</span>`;
+  return html`<span class="action-badge ${e(action)}">${icon(action === "masquerade" ? "swap" : action === "accept" ? "check" : "arrow")}${e(action)}</span>`;
 }
 function listRef(name) {
-  return `<span class="list-ref">${icon("list")}${e(name)}</span>`;
+  return html`<span class="list-ref">${icon("list")}${e(name)}</span>`;
 }
 function addr(rule, side) {
   const address = rule[`${side}_list`]
     ? listRef(rule[`${side}_list`])
-    : `<span class="mono ${rule[`${side}_address`] ? "" : "muted"}">${e(rule[`${side}_address`] || "any")}</span>`;
+    : html`<span class="mono ${rule[`${side}_address`] ? "" : "muted"}">${e(rule[`${side}_address`] || "any")}</span>`;
   const country = rule[`${side}_country`];
   const conditions = [
     country ? `Country: ${country}` : "",
     side === "src" && rule.f2b_profile
       ? `${rule.f2b_match === "banned" ? "∈" : "∉"} f2b_${rule.f2b_profile}`
       : "",
-    side === "src" && rule.protection?.enabled ? "Fail2ban · авто" : "",
+    side === "src" && rule.protection?.enabled ? t("Fail2ban · авто") : "",
   ].filter(Boolean);
   return (
     address +
     (conditions.length
-      ? `<small class="cell-note">${e(conditions.join(" · "))}</small>`
+      ? html`<small class="cell-note">${e(conditions.join(" · "))}</small>`
       : "")
   );
 }
@@ -499,15 +503,16 @@ async function refreshUsers() {
   return request;
 }
 function stat(title, number, meta) {
-  return `<div class="configuration-stat" title="${e(meta)}"><span>${e(title)}</span><strong>${e(number)}</strong></div>`;
+  return html`<div class="configuration-stat" title="${e(meta)}"><span>${e(t(title))}</span><strong>${e(number)}</strong></div>`;
 }
 
 function brandMarkup() {
-  return `<div class="brand"><img src="/logo.png?v=5" alt="OpenMikroRout"><div class="brand-word"><strong>Open<span>Mikro</span>Rout</strong><small>OPEN NETWORK ROUTER</small></div></div>`;
+  return html`<div class="brand"><img src="/logo.png?v=5" alt="OpenMikroRout"><div class="brand-word"><strong>Open<span>Mikro</span>Rout</strong><small>OPEN NETWORK ROUTER</small></div></div>`;
 }
 function routerContext() {
   return {
     state,
+    setLanguage,
     showHostConnections: (address) => {
       setConnectionSource(address);
       return handleAction({
@@ -577,57 +582,62 @@ function render() {
     routerViews[view] ||
     {
       rules: [
-        "NAT Rules",
-        "Трансляция адресов, проброс портов и управление доступом в интернет.",
+        t("NAT Rules"),
+        t(
+          "Трансляция адресов, проброс портов и управление доступом в интернет.",
+        ),
       ],
-      lists: ["Address Lists", "Списки адресов и подсетей для NAT и Firewall."],
+      lists: [
+        t("Address Lists"),
+        t("Списки адресов и подсетей для NAT и Firewall."),
+      ],
       interfaces: [
-        "Interfaces",
-        "Обнаруженные физические и виртуальные интерфейсы Linux.",
+        t("Interfaces"),
+        t("Обнаруженные физические и виртуальные интерфейсы Linux."),
       ],
       audit: [
-        "Журнал изменений",
-        "История сохранения, применения и восстановления конфигурации.",
+        t("Журнал изменений"),
+        t("История сохранения, применения и восстановления конфигурации."),
       ],
-      users: ["Users", "Учётные записи и группы доступа read / full."],
+      users: [t("Users"), t("Учётные записи и группы доступа read / full.")],
       security: [
-        "My Account · 2FA",
-        "Личная двухфакторная аутентификация и резервные коды.",
+        t("Мой профиль"),
+        t("Личная двухфакторная аутентификация и резервные коды."),
       ],
       connections: [
-        "Connections",
-        "Входящие соединения IPv4 и наблюдение попыток подключения.",
+        t("Connections"),
+        t("Входящие соединения IPv4 и наблюдение попыток подключения."),
       ],
       backups: [
-        "Backup / Restore",
-        "Экспорт .rsc, импорт и зашифрованные резервные копии.",
+        t("Backup / Restore"),
+        t("Экспорт .rsc, импорт и зашифрованные резервные копии."),
       ],
       updates: [
-        "Updates",
-        "Подписанные обновления из GitHub с резервной копией и откатом.",
+        t("Updates"),
+        t("Подписанные обновления из GitHub с резервной копией и откатом."),
       ],
       wireguard: [
-        "WireGuard",
-        "VPN-сервер, клиент и site-to-site · IPv4 · ключи и peers.",
+        t("WireGuard"),
+        t("VPN-сервер, клиент и site-to-site · IPv4 · ключи и peers."),
       ],
       wireguard_peers: [
-        "WireGuard Peers",
-        "Устройства и удалённые сети, handshake и счётчики туннелей.",
+        t("WireGuard Peers"),
+        t("Устройства и удалённые сети, handshake и счётчики туннелей."),
       ],
       tools: [
-        "Tools",
-        "Ping, traceroute, DNS, маршруты и проверка TCP-соединений.",
+        t("Tools"),
+        t("Ping, traceroute, DNS, маршруты и проверка TCP-соединений."),
       ],
     }[view] ||
     routerViews.overview;
-  document.title = `OpenMikroRout · ${title}`;
+  document.title = `OpenMikroRout · ${t(title)}`;
   let tabs;
   if (["rules", "filter", "lists", "connections"].includes(view))
     tabs = [
-      ["filter", "Filter Rules", "shield", (cfg.filter_rules || []).length],
+      ["filter", t("Filter Rules"), "shield", (cfg.filter_rules || []).length],
       ["rules", "NAT", "swap", rules.length],
-      ["lists", "Address Lists", "list", cfg.address_lists.length],
-      ["connections", "Connections", "activity", ""],
+      ["lists", t("Address Lists"), "list", cfg.address_lists.length],
+      ["connections", t("Connections"), "activity", ""],
     ];
   else if (
     ["interfaces", "vlans", "virtual_interfaces", "interface_lists"].includes(
@@ -635,22 +645,22 @@ function render() {
     )
   )
     tabs = [
-      ["interfaces", "Interfaces", "network", interfaces.length],
-      ["vlans", "VLAN", "swap", count("vlans")],
-      ["virtual_interfaces", "Virtual", "grid", count("virtual_interfaces")],
+      ["interfaces", t("Interfaces"), "network", interfaces.length],
+      ["vlans", t("VLAN"), "swap", count("vlans")],
+      ["virtual_interfaces", t("Virtual"), "grid", count("virtual_interfaces")],
       [
         "interface_lists",
-        "Interface Lists",
+        t("Interface Lists"),
         "network",
         count("interface_lists"),
       ],
     ];
   else if (["bridges", "bridge_ports"].includes(view))
     tabs = [
-      ["bridges", "Bridge", "network", count("bridges")],
+      ["bridges", t("Bridge"), "network", count("bridges")],
       [
         "bridge_ports",
-        "Ports",
+        t("Ports"),
         "network",
         (network.bridges || []).reduce(
           (total, bridge) => total + bridge.members.length,
@@ -660,19 +670,19 @@ function render() {
     ];
   else if (["dhcp_servers", "dhcp_networks", "leases"].includes(view))
     tabs = [
-      ["dhcp_servers", "DHCP Server", "server", count("dhcp_servers")],
-      ["dhcp_networks", "Networks", "network", count("dhcp_servers")],
-      ["leases", "Leases", "clock", (networkStatus.leases || []).length],
+      ["dhcp_servers", t("DHCP Server"), "server", count("dhcp_servers")],
+      ["dhcp_networks", t("Networks"), "network", count("dhcp_servers")],
+      ["leases", t("Leases"), "clock", (networkStatus.leases || []).length],
     ];
   else if (["wireguard", "wireguard_peers"].includes(view))
     tabs = [
-      ["wireguard", "Interfaces", "network", count("wireguard_interfaces")],
-      ["wireguard_peers", "Peers", "user", count("wireguard_peers")],
+      ["wireguard", t("Interfaces"), "network", count("wireguard_interfaces")],
+      ["wireguard_peers", t("Peers"), "user", count("wireguard_peers")],
     ];
   else if (["dns", "dns_static"].includes(view))
     tabs = [
-      ["dns", "Settings", "activity", ""],
-      ["dns_static", "Static", "list", count("dns_static")],
+      ["dns", t("Settings"), "activity", ""],
+      ["dns_static", t("Static"), "list", count("dns_static")],
     ];
   else tabs = [];
   const body = protectionViews[view]
@@ -704,18 +714,18 @@ function render() {
                             : (view === "filter"
                                 ? renderF2BRuleSummary(routerContext())
                                 : "") + renderRouterView(view, routerContext());
-  root.innerHTML = `<div class="app-shell">
+  root.innerHTML = html`<div class="app-shell">
     <aside class="sidebar ${sidebarOpen ? "open" : ""}" id="sidebar">${brandMarkup()}
       <nav class="sidebar-navigation" aria-label="Настройки роутера">${renderNavigation()}</nav>
       <div class="sidebar-bottom"><button class="nav-item" data-action="help">${icon("help")}Справка</button></div>
     </aside><button class="sidebar-scrim" data-action="menu" aria-label="Закрыть меню" tabindex="-1"></button>
     <main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false" data-action="menu">${icon("menu")}</button>${icon("network")}${renderNavigationBreadcrumbs(navigationContext(), title)}</div>${renderHeaderControls(routerContext())}</header>
-    <div class="content">${state.runtime_error ? `<div class="connection-error" role="alert">${icon("info")} Восстановление конфигурации требует внимания: ${e(state.runtime_error)}</div>` : ""}${offline ? '<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>' : ""}
-      ${!canWrite() ? `<div class="read-only-banner">${icon("lock")}Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}
-      <div class="page-heading"><div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="heading-buttons"><button data-action="preview" title="Предпросмотр конфигурации">${icon("terminal")}<span class="btn-label">Preview</span></button><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Export</span></button></div></div>
-      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : `<div class="configuration-summary" aria-label="Сводка конфигурации">${stat("Интерфейсы", interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat("IP-адреса", count("addresses"), "Назначены в конфигурации")}${stat("DHCP Servers", count("dhcp_servers"), `${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat("Firewall Rules", rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
-      <section class="panel ${view === "overview" ? "overview-panel" : ""}">${tabs.length ? `<div class="panel-tabs">${tabs.map(([id, label, ico, total]) => `<button class="panel-tab ${view === id ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${label}<span class="tab-count">${total}</span></button>`).join("")}</div>` : ""}${body}</section>
-      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : `<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? "Можно спокойно экспериментировать" : "Применение с контролем связи"}</h3><p>${isDemo() ? "Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются." : "После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию."}</p></div></div></div></details>`}
+    <div class="content">${state.runtime_error ? html`<div class="connection-error" role="alert">${icon("info")} Восстановление конфигурации требует внимания: ${e(state.runtime_error)}</div>` : ""}${offline ? html`<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>` : ""}
+      ${!canWrite() ? html`<div class="read-only-banner">${icon("lock")}Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}
+      <div class="page-heading"><div><h1>${e(t(title))}</h1><p>${e(t(description))}</p></div><div class="heading-buttons"><button data-action="preview" title="Предпросмотр конфигурации">${icon("terminal")}<span class="btn-label">Preview</span></button><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Export</span></button></div></div>
+      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : html`<div class="configuration-summary" aria-label="Сводка конфигурации">${stat(t("Интерфейсы"), interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat(t("IP-адреса"), count("addresses"), t("Назначены в конфигурации"))}${stat(t("DHCP Servers"), count("dhcp_servers"), html`${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat(t("Firewall Rules"), rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
+      <section class="panel ${view === "overview" ? "overview-panel" : ""}">${tabs.length ? html`<div class="panel-tabs">${tabs.map(([id, label, ico, total]) => html`<button class="panel-tab ${view === id ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${t(label)}<span class="tab-count">${total}</span></button>`).join("")}</div>` : ""}${body}</section>
+      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : html`<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? t("Можно спокойно экспериментировать") : t("Применение с контролем связи")}</h3><p>${isDemo() ? t("Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются.") : t("После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию.")}</p></div></div></div></details>`}
       <div class="page-footer"><span>${icon("shield")}OpenMikroRout · Your network. Your rules.</span><span>Lightweight Linux router · IPv4</span></div>
     </div><div id="statusbar">${renderStatus()}</div></main></div>`;
   const navigation = document.querySelector(".sidebar-navigation");
@@ -737,38 +747,38 @@ function filteredRules() {
 function renderRules() {
   const rows = filteredRules(),
     locked = !!state.pending || offline || !canWrite();
-  return `<div class="toolbar"><div class="toolbar-start"><button class="primary add" data-action="add" ${locked ? "disabled" : ""}>${icon("plus")}Добавить правило</button><span class="separator"></span>${[
-    ["delete", "minus", "Удалить выбранные"],
-    ["enable", "check", "Включить"],
-    ["disable", "x", "Отключить"],
-    ["comment", "edit", "Комментарий"],
-    ["duplicate", "copy", "Создать копию"],
-    ["move-up", "up", "Переместить выше"],
-    ["move-down", "arrowdown", "Переместить ниже"],
+  return html`<div class="toolbar"><div class="toolbar-start"><button class="primary add" data-action="add" ${locked ? "disabled" : ""}>${icon("plus")}Добавить правило</button><span class="separator"></span>${[
+    ["delete", "minus", t("Удалить выбранные")],
+    ["enable", "check", t("Включить")],
+    ["disable", "x", t("Отключить")],
+    ["comment", "edit", t("Комментарий")],
+    ["duplicate", "copy", t("Создать копию")],
+    ["move-up", "up", t("Переместить выше")],
+    ["move-down", "arrowdown", t("Переместить ниже")],
   ]
     .map(
       ([a, i, t]) =>
-        `<button class="icon ghost" title="${t}" aria-label="${t}" data-action="${a}" ${!selected.size || locked ? "disabled" : ""}>${icon(i)}</button>`,
+        html`<button class="icon ghost" title="${t}" aria-label="${t}" data-action="${a}" ${!selected.size || locked ? "disabled" : ""}>${icon(i)}</button>`,
     )
     .join(
       "",
     )}</div><div class="toolbar-end"><div class="search">${icon("search")}<input id="rule-search" aria-label="Поиск правил" placeholder="Найти правило…" value="${e(search)}"></div><select id="chain-filter" aria-label="Фильтр цепочки">${[
-    ["", "Все цепочки"],
+    ["", t("Все цепочки")],
     ["srcnat", "srcnat"],
     ["dstnat", "dstnat"],
     ["output", "output"],
   ]
     .map(
       ([v, l]) =>
-        `<option value="${v}" ${chainFilter === v ? "selected" : ""}>${l}</option>`,
+        html`<option value="${v}" ${chainFilter === v ? "selected" : ""}>${l}</option>`,
     )
     .join(
       "",
     )}</select><select id="protocol-filter" aria-label="Фильтр протокола">${[
-    ["", "Протокол"],
+    ["", t("Протокол")],
     ["tcp", "TCP"],
     ["udp", "UDP"],
-    ["any", "Any"],
+    ["any", t("Any")],
     ["icmp", "ICMP"],
     ["gre", "GRE"],
     ["esp", "ESP"],
@@ -776,93 +786,118 @@ function renderRules() {
   ]
     .map(
       ([v, l]) =>
-        `<option value="${v}" ${protocolFilter === v ? "selected" : ""}>${l}</option>`,
+        html`<option value="${v}" ${protocolFilter === v ? "selected" : ""}>${l}</option>`,
     )
     .join(
       "",
     )}</select><button class="icon ghost" data-action="columns" title="Настроить колонки" aria-label="Настроить колонки">${icon("list")}</button><button class="icon ghost" data-action="refresh" title="Обновить" aria-label="Обновить">${icon("refresh")}</button></div></div>
-    <div class="table-scroll"><table class="rules-table"><thead><tr><th><input type="checkbox" id="select-all" aria-label="Выбрать все показанные правила" ${rows.length && rows.every((r) => selected.has(r.id)) ? "checked" : ""}></th><th class="drag-column" aria-label="Перетаскивание"></th><th>#</th>${ruleColumns.map(([key, label]) => `<th data-column="${key}" ${visibleColumns.has(key) ? "" : "hidden"}>${label}</th>`).join("")}<th></th></tr></thead><tbody id="rules-body">${renderRuleRows(rows)}</tbody></table>${!rows.length ? empty("shield", search || chainFilter || protocolFilter ? "Ничего не найдено" : "Пока нет правил NAT", search || chainFilter || protocolFilter ? "Измените поисковый запрос или фильтры." : "Добавьте первое правило или выберите готовый шаблон в редакторе.") : ""}</div>
+    <div class="table-scroll"><table class="rules-table"><thead><tr><th><input type="checkbox" id="select-all" aria-label="Выбрать все показанные правила" ${rows.length && rows.every((r) => selected.has(r.id)) ? "checked" : ""}></th><th class="drag-column" aria-label="Перетаскивание"></th><th>#</th>${ruleColumns.map(([key, label]) => html`<th data-column="${key}" ${visibleColumns.has(key) ? "" : "hidden"}>${t(label)}</th>`).join("")}<th></th></tr></thead><tbody id="rules-body">${renderRuleRows(rows)}</tbody></table>${!rows.length ? empty("shield", search || chainFilter || protocolFilter ? t("Ничего не найдено") : t("Пока нет правил NAT"), search || chainFilter || protocolFilter ? t("Измените поисковый запрос или фильтры.") : t("Добавьте первое правило или выберите готовый шаблон в редакторе.")) : ""}</div>
     ${selected.size === 1 ? renderDetail(state.config.rules.find((r) => selected.has(r.id))) : ""}
-    <div class="panel-footer"><span>${rows.length} из ${state.config.rules.length} правил${selected.size ? ` · выбрано ${selected.size}` : ""}</span><div class="footer-legend"><span><i class="dot"></i>Включено</span><span><i class="dot off"></i>Отключено</span><span>${isDemo() ? "Счётчики недоступны в демо" : "Счётчики первых пакетов соединений"}</span></div></div>`;
+    <div class="panel-footer"><span>${rows.length} из ${state.config.rules.length} правил${selected.size ? html` · выбрано ${selected.size}` : ""}</span><div class="footer-legend"><span><i class="dot"></i>Включено</span><span><i class="dot off"></i>Отключено</span><span>${isDemo() ? t("Счётчики недоступны в демо") : t("Счётчики первых пакетов соединений")}</span></div></div>`;
+}
+function updateRuleTable() {
+  const body = document.querySelector("#rules-body");
+  if (!body) return;
+  const rows = filteredRules();
+  body.innerHTML = renderRuleRows(rows);
+  const scroll = body.closest(".table-scroll");
+  scroll.querySelector(".empty")?.remove();
+  if (!rows.length)
+    scroll.insertAdjacentHTML(
+      "beforeend",
+      empty(
+        "shield",
+        t("Ничего не найдено"),
+        t("Измените поисковый запрос или фильтры."),
+      ),
+    );
+  updateSelection();
 }
 function renderRuleRows(rows) {
   return rows
     .map((rule) => {
       const values = {
-        name: `<div class="rule-name"><span class="dot ${rule.enabled ? "" : "off"}"></span>${e(rule.name)}</div>${rule.comment ? `<div class="rule-comment" title="${e(rule.comment)}">${e(rule.comment)}</div>` : ""}`,
+        name: html`<div class="rule-name"><span class="dot ${rule.enabled ? "" : "off"}"></span>${e(rule.name)}</div>${rule.comment ? html`<div class="rule-comment" title="${e(rule.comment)}">${e(rule.comment)}</div>` : ""}`,
         action: actionBadge(rule.action),
-        chain: `<span class="mono">${e(rule.chain)}</span>`,
-        protocol: `<span class="protocol-badge">${e(rule.protocol)}</span>`,
+        chain: html`<span class="mono">${e(rule.chain)}</span>`,
+        protocol: html`<span class="protocol-badge">${e(rule.protocol)}</span>`,
         src: addr(rule, "src"),
         dst: addr(rule, "dst"),
-        src_ports: `<span class="mono">${e(rule.src_ports || "—")}</span>`,
-        dst_ports: `<span class="mono">${e(rule.dst_ports || "—")}</span>`,
-        in_interface: `<span class="mono">${e(rule.in_interface || "—")}</span>`,
-        out_interface: `<span class="mono">${e(rule.out_interface || "—")}</span>`,
-        target: `<span class="mono">${e(target(rule))}</span>`,
+        src_ports: html`<span class="mono">${e(rule.src_ports || "—")}</span>`,
+        dst_ports: html`<span class="mono">${e(rule.dst_ports || "—")}</span>`,
+        in_interface: html`<span class="mono">${e(rule.in_interface || "—")}</span>`,
+        out_interface: html`<span class="mono">${e(rule.out_interface || "—")}</span>`,
+        target: html`<span class="mono">${e(target(rule))}</span>`,
         bytes: isDemo() ? "—" : fmtBytes(statistics[rule.id]?.bytes || 0),
         packets: isDemo()
           ? "—"
-          : (statistics[rule.id]?.packets || 0).toLocaleString("ru-RU"),
+          : (statistics[rule.id]?.packets || 0).toLocaleString(locale()),
       };
-      return `<tr data-rule="${e(rule.id)}" class="${selected.has(rule.id) ? "selected " : ""}${rule.enabled ? "" : "disabled"}" tabindex="0" aria-label="${e(rule.name)}">
+      return html`<tr data-rule="${e(rule.id)}" class="${selected.has(rule.id) ? "selected " : ""}${rule.enabled ? "" : "disabled"}" tabindex="0" aria-label="${e(rule.name)}">
       <td><input type="checkbox" data-select="${e(rule.id)}" aria-label="Выбрать ${e(rule.name)}" ${selected.has(rule.id) ? "checked" : ""}></td>
       <td class="drag-column"><button class="drag-handle" draggable="${canWrite() && !state.pending && !offline}" data-drag-id="${e(rule.id)}" title="Перетащить правило" aria-label="Перетащить ${e(rule.name)}" ${!canWrite() || state.pending || offline ? "disabled" : ""}>${icon("grip")}</button></td>
       <td class="row-number">${state.config.rules.indexOf(rule)}</td>
-      ${ruleColumns.map(([key]) => `<td data-column="${key}" ${visibleColumns.has(key) ? "" : "hidden"} class="${["bytes", "packets"].includes(key) ? "counter-cell" : ""}">${values[key]}</td>`).join("")}
+      ${ruleColumns.map(([key]) => html`<td data-column="${key}" ${visibleColumns.has(key) ? "" : "hidden"} class="${["bytes", "packets"].includes(key) ? "counter-cell" : ""}">${values[key]}</td>`).join("")}
       <td><button class="icon ghost" data-action="edit" data-id="${e(rule.id)}" title="Редактировать правило" aria-label="Редактировать ${e(rule.name)}" ${state.pending ? "disabled" : ""}>${icon("edit")}</button></td></tr>`;
     })
     .join("");
 }
 function renderDetail(r) {
   if (!r) return "";
-  return `<div class="detail"><div class="detail-title"><b>${e(r.name)} <span>· предпросмотр потока</span></b><button class="small ghost" data-action="edit" data-id="${e(r.id)}" ${state.pending ? "disabled" : ""}>${icon("edit")}Редактировать</button></div><div class="flow"><div class="flow-item"><div class="flow-label">Source</div><div class="flow-value">${addr(r, "src")}${r.src_ports ? " : " + e(r.src_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">Match · ${e(r.chain)}</div><div class="flow-value">${e(r.protocol.toUpperCase())} → ${addr(r, "dst")}${r.dst_ports ? " : " + e(r.dst_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">${e(r.action)}</div><div class="flow-value">${e(target(r))}</div></div></div></div>`;
+  return html`<div class="detail"><div class="detail-title"><b>${e(r.name)} <span>· предпросмотр потока</span></b><button class="small ghost" data-action="edit" data-id="${e(r.id)}" ${state.pending ? "disabled" : ""}>${icon("edit")}Редактировать</button></div><div class="flow"><div class="flow-item"><div class="flow-label">Source</div><div class="flow-value">${addr(r, "src")}${r.src_ports ? " : " + e(r.src_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">Match · ${e(r.chain)}</div><div class="flow-value">${e(r.protocol.toUpperCase())} → ${addr(r, "dst")}${r.dst_ports ? " : " + e(r.dst_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">${e(r.action)}</div><div class="flow-value">${e(target(r))}</div></div></div></div>`;
 }
 function empty(ico, title, description) {
-  return `<div class="empty">${icon(ico)}<p>${e(title)}</p><small>${e(description)}</small></div>`;
+  return html`<div class="empty">${icon(ico)}<p>${e(t(title))}</p><small>${e(t(description))}</small></div>`;
 }
 function renderLists() {
-  return `<div class="toolbar"><button class="primary add" data-action="add-list" ${state.pending || offline ? "disabled" : ""}>${icon("plus")}Создать список</button><span class="muted">${state.config.address_lists.length} списков</span></div><div class="view-panel"><div class="list-grid">${state.config.address_lists
+  return html`<div class="toolbar"><button class="primary add" data-action="add-list" ${state.pending || offline ? "disabled" : ""}>${icon("plus")}Создать список</button><span class="muted">${state.config.address_lists.length} списков</span></div><div class="view-panel"><div class="list-grid">${state.config.address_lists
     .map((l) => {
       const refs = [
         ...state.config.rules,
         ...(state.config.filter_rules || []),
       ].filter((r) => r.src_list === l.name || r.dst_list === l.name).length;
-      return `<article class="address-card"><div class="address-card-head"><h3>${e(l.name)}</h3><button class="icon ghost" data-action="edit-list" data-id="${e(l.id)}" title="Редактировать список" aria-label="Редактировать ${e(l.name)}" ${state.pending ? "disabled" : ""}>${icon("edit")}</button></div>${l.comment ? `<p>${e(l.comment)}</p>` : ""}<div class="addresses">${l.addresses.map((a) => `<span class="address-chip">${e(a)}</span>`).join("")}</div><div class="address-card-foot"><span>${l.addresses.length} адресов · ${refs} правил</span><button class="small ghost" data-action="delete-list" data-id="${e(l.id)}" ${refs || state.pending ? "disabled" : ""} title="${refs ? "Сначала уберите список из правил" : "Удалить список"}">${icon("minus")}Удалить</button></div></article>`;
+      return html`<article class="address-card"><div class="address-card-head"><h3>${e(l.name)}</h3><button class="icon ghost" data-action="edit-list" data-id="${e(l.id)}" title="Редактировать список" aria-label="Редактировать ${e(l.name)}" ${state.pending ? "disabled" : ""}>${icon("edit")}</button></div>${l.comment ? html`<p>${e(l.comment)}</p>` : ""}<div class="addresses">${l.addresses.map((a) => html`<span class="address-chip">${e(a)}</span>`).join("")}</div><div class="address-card-foot"><span>${l.addresses.length} адресов · ${refs} правил</span><button class="small ghost" data-action="delete-list" data-id="${e(l.id)}" ${refs || state.pending ? "disabled" : ""} title="${refs ? t("Сначала уберите список из правил") : t("Удалить список")}">${icon("minus")}Удалить</button></div></article>`;
     })
     .join(
       "",
-    )}</div>${!state.config.address_lists.length ? empty("list", "Пока нет списков адресов", "Добавьте IP-адреса или подсети и используйте список в правилах.") : ""}</div>${renderSystemLists(routerContext())}`;
+    )}</div>${!state.config.address_lists.length ? empty("list", t("Пока нет списков адресов"), t("Добавьте IP-адреса или подсети и используйте список в правилах.")) : ""}</div>${renderSystemLists(routerContext())}`;
 }
 function renderInterfaces() {
-  return `<div class="toolbar"><span class="muted">${isDemo() ? "Пример сетевой конфигурации" : "Обнаруженные интерфейсы Linux-хоста"}</span><button class="small" data-action="refresh">${icon("refresh")}Обновить</button></div><div class="view-panel"><div class="interface-grid">${interfaces.map((i) => `<article class="interface-card">${icon("network")}<h3>${e(i.name)}</h3><p>${e(i.address || "IPv4 не назначен")}</p><div class="interface-status"><span class="badge">${e(i.state)}</span><span>${e(i.role)}</span></div></article>`).join("")}</div>${!interfaces.length ? empty("network", "Нет данных об интерфейсах", "Нажмите «Обновить», чтобы повторить запрос.") : ""}<p class="interface-note">${isDemo() ? "В деморежиме показаны примерные интерфейсы. В Linux здесь появятся реальные интерфейсы сервера." : `IPv4 forwarding: <b>${forwarding ? "включён" : "выключен"}</b>. IP-адреса задаются в IP Addresses, bridge и VLAN — в соответствующих разделах. Forwarding настраивается в DNS & Forwarding; разрешения транзита — в Firewall Filter.`}</p></div>`;
+  return html`<div class="toolbar"><span class="muted">${isDemo() ? t("Пример сетевой конфигурации") : t("Обнаруженные интерфейсы Linux-хоста")}</span><button class="small" data-action="refresh">${icon("refresh")}Обновить</button></div><div class="view-panel"><div class="interface-grid">${interfaces.map((i) => html`<article class="interface-card">${icon("network")}<h3>${e(i.name)}</h3><p>${e(i.address || t("IPv4 не назначен"))}</p><div class="interface-status"><span class="badge">${e(i.state)}</span><span>${e(i.role)}</span></div></article>`).join("")}</div>${!interfaces.length ? empty("network", t("Нет данных об интерфейсах"), t("Нажмите «Обновить», чтобы повторить запрос.")) : ""}<p class="interface-note">${isDemo() ? t("В деморежиме показаны примерные интерфейсы. В Linux здесь появятся реальные интерфейсы сервера.") : html`IPv4 forwarding: <b>${forwarding ? t("включён") : t("выключен")}</b>. IP-адреса задаются в IP Addresses, bridge и VLAN — в соответствующих разделах. Forwarding настраивается в DNS & Forwarding; разрешения транзита — в Firewall Filter.`}</p></div>`;
 }
 const eventNames = {
-  saved: "Черновик сохранён",
-  discarded: "Черновик отменён",
-  applying: "Правила применяются",
-  confirmed: "Применение подтверждено",
-  rolled_back: "Правила восстановлены",
-  rollback_failed: "Ошибка отката",
+  saved: t("Черновик сохранён"),
+  discarded: t("Черновик отменён"),
+  applying: t("Правила применяются"),
+  confirmed: t("Применение подтверждено"),
+  rolled_back: t("Правила восстановлены"),
+  rollback_failed: t("Ошибка отката"),
 };
 function renderAudit() {
-  return `<div class="toolbar"><span class="muted">Последние 100 событий</span><button class="small" data-action="refresh">${icon("refresh")}Обновить</button></div><div class="view-panel">${audit.length ? audit.map((row) => `<div class="audit-row">${icon(row.event === "rollback_failed" ? "info" : "clock")}<div><b>${e(eventNames[row.event] || row.event)}</b><p>${e(row.detail)}</p></div><time>${e(new Date(row.at * 1000).toLocaleString("ru-RU"))}</time></div>`).join("") : empty("clock", "Журнал пока пуст", "Здесь появятся события сохранения, применения и восстановления правил.")}</div>`;
+  return html`<div class="toolbar"><span class="muted">Последние 100 событий</span><button class="small" data-action="refresh">${icon("refresh")}Обновить</button></div><div class="view-panel">${audit.length ? audit.map((row) => html`<div class="audit-row">${icon(row.event === "rollback_failed" ? "info" : "clock")}<div><b>${e(t(eventNames[row.event] || row.event))}</b><p>${e(row.detail)}</p></div><time>${e(new Date(row.at * 1000).toLocaleString(locale()))}</time></div>`).join("") : empty("clock", t("Журнал пока пуст"), t("Здесь появятся события сохранения, применения и восстановления правил."))}</div>`;
 }
 function renderStatus() {
   if (!canWrite())
-    return `<footer class="bottom-status"><div class="status-left"><div>${icon("lock")}Только просмотр · группа read</div><span>${state.pending ? "Применение конфигурации выполняется администратором" : state.dirty ? "На сервере есть неприменённый черновик" : "Конфигурация доступна для просмотра"}</span></div><div class="status-right"><button class="small" data-action="preview">${icon("terminal")}Предпросмотр</button><span>Revision ${state.revision}</span></div></footer>`;
+    return html`<footer class="bottom-status"><div class="status-left"><div>${icon("lock")}Только просмотр · группа read</div><span>${state.pending ? t("Применение конфигурации выполняется администратором") : state.dirty ? t("На сервере есть неприменённый черновик") : t("Конфигурация доступна для просмотра")}</span></div><div class="status-right"><button class="small" data-action="preview">${icon("terminal")}Предпросмотр</button><span>Revision ${state.revision}</span></div></footer>`;
   if (state.pending)
-    return `<footer class="bottom-status pending"><div class="status-left"><div class="status-message">${icon("clock")}<b>${state.pending.error ? "Ошибка отката. Требуется проверка сервера." : `Подтвердите связь: <span id="countdown">${secondsLeft()}</span> сек.`}</b></div><span>Без подтверждения — автоматический откат${state.restore_accounts ? " · После подтверждения войдите с учётными данными из копии" : ""}</span></div><div class="status-right"><button data-action="rollback">Откатить сейчас</button><button class="primary" data-action="confirm" ${state.pending.error ? "disabled" : ""}>${icon("check")}Подтвердить связь</button></div></footer>`;
+    return html`<footer class="bottom-status pending"><div class="status-left"><div class="status-message">${icon("clock")}<b>${state.pending.error ? t("Ошибка отката. Требуется проверка сервера.") : html`Подтвердите связь: <span id="countdown">${secondsLeft()}</span> сек.`}</b></div><span>Без подтверждения — автоматический откат${state.restore_accounts ? t(" · После подтверждения войдите с учётными данными из копии") : ""}</span></div><div class="status-right"><button data-action="rollback">Откатить сейчас</button><button class="primary" data-action="confirm" ${state.pending.error ? "disabled" : ""}>${icon("check")}Подтвердить связь</button></div></footer>`;
   if (state.dirty)
-    return `<footer class="bottom-status dirty"><div class="status-left"><div class="status-message">${icon("edit")}<b>Есть неприменённые изменения</b></div><span>${state.restore_accounts ? "Восстановление включает пользователей и 2FA; учётки заменятся после подтверждения" : "Черновик сохранён на сервере"}</span></div><div class="status-right"><button class="ghost" data-action="discard">Отменить</button><button data-action="preview">${icon("terminal")}Предпросмотр</button><button class="primary" data-action="apply" ${offline ? "disabled" : ""}>${icon("check")}${isDemo() ? "Применить в демо" : "Применить"}</button></div></footer>`;
-  return `<footer class="bottom-status"><div class="status-left"><div><span class="dot"></span>${isDemo() ? "Деморежим · изменения сети отключены" : "Подтверждённая конфигурация сохранена"}</div><span>Revision ${state.revision}</span></div><div class="status-right"><span class="muted">${selected.size ? "Двойной щелчок — редактировать" : view === "rules" ? "Выберите правило для просмотра деталей" : "IP · DHCP · VLAN · Firewall"}</span>${!isDemo() ? '<button class="small" data-action="apply">Применить повторно</button>' : ""}<span>IPv4</span></div></footer>`;
+    return html`<footer class="bottom-status dirty"><div class="status-left"><div class="status-message">${icon("edit")}<b>Есть неприменённые изменения</b></div><span>${state.restore_accounts ? t("Восстановление включает пользователей и 2FA; учётки заменятся после подтверждения") : t("Черновик сохранён на сервере")}</span></div><div class="status-right"><button class="ghost" data-action="discard">Отменить</button><button data-action="preview">${icon("terminal")}Предпросмотр</button><button class="primary" data-action="apply" ${offline ? "disabled" : ""}>${icon("check")}${isDemo() ? t("Применить в демо") : t("Применить")}</button></div></footer>`;
+  return html`<footer class="bottom-status"><div class="status-left"><div><span class="dot"></span>${isDemo() ? t("Деморежим · изменения сети отключены") : t("Подтверждённая конфигурация сохранена")}</div><span>Revision ${state.revision}</span></div><div class="status-right"><span class="muted">${selected.size ? t("Двойной щелчок — редактировать") : view === "rules" ? t("Выберите правило для просмотра деталей") : t("IP · DHCP · VLAN · Firewall")}</span>${!isDemo() ? html`<button class="small" data-action="apply">Применить повторно</button>` : ""}<span>IPv4</span></div></footer>`;
 }
 function secondsLeft() {
   return Math.max(0, Math.ceil(state.pending.deadline - Date.now() / 1000));
 }
-function dialogFrame(title, subtitle, content, footer = "", tabs = "") {
+function dialogFrame(
+  title,
+  subtitle,
+  content,
+  footer = "",
+  tabs = "",
+  { rawTitle = false } = {},
+) {
   dialog.className = "";
-  dialog.innerHTML = `<div class="dialog-head"><div><h2 id="dialog-title">${e(title)}</h2>${subtitle ? `<p>${e(subtitle)}</p>` : ""}</div><button class="icon ghost" data-action="close" aria-label="Закрыть">${icon("x")}</button></div>${tabs}<div class="dialog-content">${content}</div><div class="dialog-error hidden" role="alert"></div><div class="dialog-footer">${footer || '<button data-action="close">Закрыть</button>'}</div>`;
+  dialog.innerHTML = html`<div class="dialog-head"><div><h2 id="dialog-title">${e(rawTitle ? title : t(title))}</h2>${subtitle ? html`<p>${e(subtitle)}</p>` : ""}</div><button class="icon ghost" data-action="close" aria-label="Закрыть">${icon("x")}</button></div>${tabs}<div class="dialog-content">${content}</div><div class="dialog-error hidden" role="alert"></div><div class="dialog-footer">${footer || html`<button data-action="close">Закрыть</button>`}</div>`;
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   if (!dialog.open) dialog.showModal();
   applyAccessControls();
@@ -896,13 +931,16 @@ const defaultRule = () => ({
 });
 function openEditor(id, duplicate = false) {
   if (!canWrite() && (!id || duplicate)) {
-    toast("Группа read: новые правила и копии недоступны.", true);
+    toast(t("Группа read: новые правила и копии недоступны."), true);
     return;
   }
   if (busy) return;
   draftRevision = state.revision;
   if (state.pending)
-    return toast("Сначала подтвердите применение или откатите правила.", true);
+    return toast(
+      t("Сначала подтвердите применение или откатите правила."),
+      true,
+    );
   const found = state.config.rules.find((r) => r.id === id);
   draft = found ? structuredClone(found) : defaultRule();
   if (duplicate) {
@@ -920,28 +958,28 @@ function field(
   type = "text",
   extra = "",
 ) {
-  return `<label class="field ${extra}"><span>${label}</span><input name="${name}" value="${e(value)}" placeholder="${e(placeholder)}" type="${type}" ${name === "name" ? 'maxlength="80"' : ""}></label>`;
+  return html`<label class="field ${extra}"><span>${t(label)}</span><input name="${name}" value="${e(value)}" placeholder="${e(placeholder)}" type="${type}" ${name === "name" ? 'maxlength="80"' : ""}></label>`;
 }
 function selectField(label, name, value, options, note = "") {
-  return `<label class="field"><span>${label}</span><select name="${name}">${options
+  return html`<label class="field"><span>${t(label)}</span><select name="${name}">${options
     .map((option) => {
       const [val, text] = Array.isArray(option) ? option : [option, option];
-      return `<option value="${e(val)}" ${value === val ? "selected" : ""}>${e(text)}</option>`;
+      return html`<option value="${e(val)}" ${value === val ? "selected" : ""}>${e(text)}</option>`;
     })
-    .join("")}</select>${note ? `<small>${e(note)}</small>` : ""}</label>`;
+    .join("")}</select>${note ? html`<small>${e(note)}</small>` : ""}</label>`;
 }
 function interfaceField(label, name, value, available) {
   const names = interfaceNames(routerContext());
   const options = [
-    ["", "Любой интерфейс"],
+    ["", t("Любой интерфейс")],
     ...names.map((name) => [
       name,
       `${name}${interfaces.find((item) => item.name === name)?.address ? " · " + interfaces.find((item) => item.name === name).address : ""}`,
     ]),
   ];
   if (value && !names.includes(value))
-    options.push([value, `${value} · не обнаружен`]);
-  return `<label class="field"><span>${label}</span><select name="${name}" ${available ? "" : "disabled"}>${options.map(([key, text]) => `<option value="${e(key)}" ${value === key ? "selected" : ""}>${e(text)}</option>`).join("")}</select></label>`;
+    options.push([value, html`${value} · не обнаружен`]);
+  return html`<label class="field"><span>${t(label)}</span><select name="${name}" ${available ? "" : "disabled"}>${options.map(([key, text]) => html`<option value="${e(key)}" ${value === key ? "selected" : ""}>${e(text)}</option>`).join("")}</select></label>`;
 }
 
 function renderEditor() {
@@ -949,17 +987,17 @@ function renderEditor() {
   const existing = state.config.rules.some((rule) => rule.id === r.id);
   let content = "";
   if (editorTab === "general")
-    content = `<div class="winbox-form">
-    ${field("Name", "name", r.name, "Имя правила")}
-    ${selectField("Chain", "chain", r.chain, [
+    content = html`<div class="winbox-form">
+    ${field(t("Name"), "name", r.name, t("Имя правила"))}
+    ${selectField(t("Chain"), "chain", r.chain, [
       ["dstnat", "dstnat"],
       ["srcnat", "srcnat"],
       ["output", "output"],
     ])}
     <div class="form-divider"></div>
-    ${field("Src. Address", "src_address", r.src_address, "0.0.0.0/0 · любой")}
-    ${field("Dst. Address", "dst_address", r.dst_address, "0.0.0.0/0 · любой")}
-    ${selectField("Protocol", "protocol", r.protocol, [
+    ${field(t("Src. Address"), "src_address", r.src_address, t("0.0.0.0/0 · любой"))}
+    ${field(t("Dst. Address"), "dst_address", r.dst_address, t("0.0.0.0/0 · любой"))}
+    ${selectField(t("Protocol"), "protocol", r.protocol, [
       ["any", "all"],
       ["tcp", "6 (tcp)"],
       ["udp", "17 (udp)"],
@@ -968,53 +1006,53 @@ function renderEditor() {
       ["esp", "50 (esp)"],
       ["ah", "51 (ah)"],
     ])}
-    ${field("Src. Port", "src_ports", r.src_ports, "Любой · 1024-65535")}
-    ${field("Dst. Port", "dst_ports", r.dst_ports, "Любой · 80,443,8000-8010")}
+    ${field(t("Src. Port"), "src_ports", r.src_ports, t("Любой · 1024-65535"))}
+    ${field(t("Dst. Port"), "dst_ports", r.dst_ports, t("Любой · 80,443,8000-8010"))}
     <div class="form-divider"></div>
-    ${interfaceField("In. Interface", "in_interface", r.in_interface, r.chain === "dstnat")}
-    ${interfaceField("Out. Interface", "out_interface", r.out_interface, r.chain !== "dstnat")}
-    <div class="field-note">${isDemo() ? "Демо: интерфейсы приведены для примера." : "Интерфейсы обнаружены автоматически на Linux-хосте."} Списки адресов — во вкладке Advanced.</div>
+    ${interfaceField(t("In. Interface"), "in_interface", r.in_interface, r.chain === "dstnat")}
+    ${interfaceField(t("Out. Interface"), "out_interface", r.out_interface, r.chain !== "dstnat")}
+    <div class="field-note">${isDemo() ? t("Демо: интерфейсы приведены для примера.") : t("Интерфейсы обнаружены автоматически на Linux-хосте.")} Списки адресов — во вкладке Advanced.</div>
     <label class="field"><span>Template</span><select id="template"><option value="">Без шаблона</option><option value="forward">Port forwarding</option><option value="masquerade">Masquerade · Internet access</option><option value="dns">DNS redirect</option><option value="snat">Source NAT</option></select></label>
     <label class="field"><span>Comment</span><textarea name="comment" rows="2" maxlength="200" placeholder="Комментарий к правилу">${e(r.comment)}</textarea></label>
     </div>`;
   if (editorTab === "advanced")
-    content = `<div class="winbox-form">
-    ${selectField("Src. Address List", "src_list", r.src_list, [["", "Не использовать"], ...addressListChoices(state.config)])}
-    ${selectField("Dst. Address List", "dst_list", r.dst_list, [["", "Не использовать"], ...addressListChoices(state.config)])}
+    content = html`<div class="winbox-form">
+    ${selectField(t("Src. Address List"), "src_list", r.src_list, [["", t("Не использовать")], ...addressListChoices(state.config)])}
+    ${selectField(t("Dst. Address List"), "dst_list", r.dst_list, [["", t("Не использовать")], ...addressListChoices(state.config)])}
     ${countryField(routerContext(), "src_country", r.src_country)}
     ${countryField(routerContext(), "dst_country", r.dst_country)}
     <div class="field-note">Страна дополняет адрес и список: должны совпасть все условия. Dst. Country в dstnat проверяется до подмены назначения. База стран и обновления — Security → GeoIP.</div>
-    ${selectField("In. Interface List", "in_interface_list", r.in_interface_list || "", [["", "Не использовать"], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}${selectField("Out. Interface List", "out_interface_list", r.out_interface_list || "", [["", "Не использовать"], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}<div class="field-note">Для source и destination укажите адрес в General или список здесь. Если список ещё не создан, добавьте его в Address Lists.</div>
-    <div class="form-divider"></div><div class="field"><span>Connection State</span><div class="states">${["NEW", "ESTABLISHED", "RELATED", "INVALID", "UNTRACKED"].map((value) => `<label class="checkbox-label"><input type="checkbox" name="state" value="${value}" ${r.connection_states.includes(value) ? "checked" : ""}>${value.toLowerCase()}</label>`).join("")}</div><small>Без отметок — любое состояние.</small></div></div>`;
+    ${selectField(t("In. Interface List"), "in_interface_list", r.in_interface_list || "", [["", t("Не использовать")], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}${selectField(t("Out. Interface List"), "out_interface_list", r.out_interface_list || "", [["", t("Не использовать")], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}<div class="field-note">Для source и destination укажите адрес в General или список здесь. Если список ещё не создан, добавьте его в Address Lists.</div>
+    <div class="form-divider"></div><div class="field"><span>Connection State</span><div class="states">${["NEW", "ESTABLISHED", "RELATED", "INVALID", "UNTRACKED"].map((value) => html`<label class="checkbox-label"><input type="checkbox" name="state" value="${value}" ${r.connection_states.includes(value) ? "checked" : ""}>${value.toLowerCase()}</label>`).join("")}</div><small>Без отметок — любое состояние.</small></div></div>`;
   if (editorTab === "fail2ban")
     content = renderRuleFail2ban(routerContext(), r);
   if (editorTab === "advanced")
-    content += `<details class="rule-condition-help" ${r.f2b_profile ? "open" : ""}><summary>Дополнительное условие по списку Fail2ban</summary>${renderLegacyBanMatch(routerContext(), r)}</details>`;
+    content += html`<details class="rule-condition-help" ${r.f2b_profile ? "open" : ""}><summary>Дополнительное условие по списку Fail2ban</summary>${renderLegacyBanMatch(routerContext(), r)}</details>`;
   if (editorTab === "action")
-    content = `<div class="winbox-form">
-    ${selectField("Action", "action", r.action, r.chain === "srcnat" ? ["masquerade", "src-nat", "accept"] : ["dst-nat", "redirect", "accept"])}
-    ${["dst-nat", "src-nat"].includes(r.action) ? field("To Addresses", "to_address", r.to_address, "192.168.10.10") : ""}
-    ${r.action !== "accept" ? field("To Ports", "to_ports", r.to_ports, "Не менять") : ""}
-    <div class="field-note">${r.action === "masquerade" ? "Подставляет IP исходящего интерфейса. Выберите Out. Interface в General." : r.action === "redirect" ? "Перенаправляет на сервис этого Linux-хоста. Укажите локальный порт." : r.action === "accept" ? "Завершает обработку NAT. Разрешения FORWARD настраиваются отдельно." : "Укажите один IPv4-адрес. To Ports — один порт или диапазон; пустое поле сохраняет порт."}</div></div>`;
+    content = html`<div class="winbox-form">
+    ${selectField(t("Action"), "action", r.action, r.chain === "srcnat" ? ["masquerade", "src-nat", "accept"] : ["dst-nat", "redirect", "accept"])}
+    ${["dst-nat", "src-nat"].includes(r.action) ? field(t("To Addresses"), "to_address", r.to_address, "192.168.10.10") : ""}
+    ${r.action !== "accept" ? field(t("To Ports"), "to_ports", r.to_ports, t("Не менять")) : ""}
+    <div class="field-note">${r.action === "masquerade" ? t("Подставляет IP исходящего интерфейса. Выберите Out. Interface в General.") : r.action === "redirect" ? t("Перенаправляет на сервис этого Linux-хоста. Укажите локальный порт.") : r.action === "accept" ? t("Завершает обработку NAT. Разрешения FORWARD настраиваются отдельно.") : t("Укажите один IPv4-адрес. To Ports — один порт или диапазон; пустое поле сохраняет порт.")}</div></div>`;
   if (editorTab === "statistics")
-    content = `<div class="rule-statistics"><div class="statistics-caption">${isDemo() ? "В деморежиме реальных счётчиков нет" : "Счётчики работающей версии правила"}</div>
-    <dl><div><dt>Bytes</dt><dd data-counter="bytes">${isDemo() ? "—" : fmtBytes(statistics[r.id]?.bytes || 0)}</dd></div><div><dt>Packets</dt><dd data-counter="packets">${isDemo() ? "—" : (statistics[r.id]?.packets || 0).toLocaleString("ru-RU")}</dd></div><div><dt>Chain</dt><dd>${e(r.chain)}</dd></div><div><dt>Action</dt><dd>${e(r.action)}</dd></div></dl><div class="field-note">NAT учитывает первые пакеты соединений. После применения счётчики управляемых цепочек сбрасываются. Изменения черновика ещё не меняют работающие правила.</div></div>`;
-  const buttons = `<aside class="rule-actions"><button class="primary" data-action="save-rule">OK</button><button data-action="close">Cancel</button><button data-action="save-rule-open">Apply</button><div class="form-divider"></div><button data-action="editor-toggle">${icon(r.enabled ? "x" : "check")}${r.enabled ? "Disable" : "Enable"}</button><button data-action="editor-comment">${icon("edit")}Comment</button><button data-action="editor-copy">${icon("copy")}Copy</button>${existing ? `<button class="danger" data-action="editor-remove">${icon("minus")}Remove</button>` : ""}</aside>`;
+    content = html`<div class="rule-statistics"><div class="statistics-caption">${isDemo() ? t("В деморежиме реальных счётчиков нет") : t("Счётчики работающей версии правила")}</div>
+    <dl><div><dt>Bytes</dt><dd data-counter="bytes">${isDemo() ? "—" : fmtBytes(statistics[r.id]?.bytes || 0)}</dd></div><div><dt>Packets</dt><dd data-counter="packets">${isDemo() ? "—" : (statistics[r.id]?.packets || 0).toLocaleString(locale())}</dd></div><div><dt>Chain</dt><dd>${e(r.chain)}</dd></div><div><dt>Action</dt><dd>${e(r.action)}</dd></div></dl><div class="field-note">NAT учитывает первые пакеты соединений. После применения счётчики управляемых цепочек сбрасываются. Изменения черновика ещё не меняют работающие правила.</div></div>`;
+  const buttons = html`<aside class="rule-actions"><button class="primary" data-action="save-rule">OK</button><button data-action="close">Cancel</button><button data-action="save-rule-open">Apply</button><div class="form-divider"></div><button data-action="editor-toggle">${icon(r.enabled ? "x" : "check")}${r.enabled ? t("Disable") : t("Enable")}</button><button data-action="editor-comment">${icon("edit")}Comment</button><button data-action="editor-copy">${icon("copy")}Copy</button>${existing ? html`<button class="danger" data-action="editor-remove">${icon("minus")}Remove</button>` : ""}</aside>`;
   dialogFrame(
-    existing ? `NAT Rule · ${r.name}` : "New NAT Rule",
-    "OK / Apply сохраняют правило в черновик. Применение к сети — отдельно.",
-    `<div class="rule-editor-layout"><form id="rule-form">${content}</form>${buttons}</div>`,
-    `<label class="checkbox-label left"><input type="checkbox" id="rule-enabled" ${r.enabled ? "checked" : ""}>Enabled</label><span class="muted">${e(r.chain)} → ${e(r.action)}</span>`,
-    `<div class="dialog-tabs">${[
-      ["general", "General"],
-      ["advanced", "Advanced"],
+    existing ? `NAT Rule · ${r.name}` : t("New NAT Rule"),
+    t("OK / Apply сохраняют правило в черновик. Применение к сети — отдельно."),
+    html`<div class="rule-editor-layout"><form id="rule-form">${content}</form>${buttons}</div>`,
+    html`<label class="checkbox-label left"><input type="checkbox" id="rule-enabled" ${r.enabled ? "checked" : ""}>Enabled</label><span class="muted">${e(r.chain)} → ${e(r.action)}</span>`,
+    html`<div class="dialog-tabs">${[
+      ["general", t("General")],
+      ["advanced", t("Advanced")],
       ["fail2ban", "Fail2ban"],
-      ["action", "Action"],
-      ["statistics", "Statistics"],
+      ["action", t("Action")],
+      ["statistics", t("Statistics")],
     ]
       .map(
         ([id, label]) =>
-          `<button class="dialog-tab ${editorTab === id ? "active" : ""}" data-action="editor-tab" data-tab="${id}">${label}</button>`,
+          html`<button class="dialog-tab ${editorTab === id ? "active" : ""}" data-action="editor-tab" data-tab="${id}">${t(label)}</button>`,
       )
       .join("")}</div>`,
   );
@@ -1038,7 +1076,7 @@ function collectRule() {
 }
 function openList(id) {
   if (!canWrite() && !id) {
-    toast("Группа read: новые списки недоступны.", true);
+    toast(t("Группа read: новые списки недоступны."), true);
     return;
   }
   draftRevision = state.revision;
@@ -1050,17 +1088,17 @@ function openList(id) {
   };
   draft = structuredClone(list);
   dialogFrame(
-    list.name ? "Редактировать Address List" : "Новый Address List",
-    "Один адрес или подсеть в каждой строке.",
-    `<form id="list-form"><div class="form-grid">${field("Имя списка", "name", list.name, "Например, trusted-hosts", "text", "wide")}<label class="field wide"><span>IPv4-адреса и подсети</span><textarea name="addresses" rows="7" placeholder="192.168.10.0/24&#10;10.8.0.5">${e(list.addresses.join("\n"))}</textarea><small>До 256 адресов. Повторяющиеся записи будут объединены.</small></label>${field("Комментарий", "comment", list.comment, "Назначение списка", "text", "wide")}</div></form>`,
-    `<button data-action="close">Отмена</button><button class="primary" data-action="save-list">${icon("check")}Сохранить список</button>`,
+    list.name ? t("Редактировать Address List") : t("Новый Address List"),
+    t("Один адрес или подсеть в каждой строке."),
+    html`<form id="list-form"><div class="form-grid">${field(t("Имя списка"), "name", list.name, t("Например, trusted-hosts"), "text", "wide")}<label class="field wide"><span>IPv4-адреса и подсети</span><textarea name="addresses" rows="7" placeholder="192.168.10.0/24&#10;10.8.0.5">${e(list.addresses.join("\n"))}</textarea><small>До 256 адресов. Повторяющиеся записи будут объединены.</small></label>${field(t("Комментарий"), "comment", list.comment, t("Назначение списка"), "text", "wide")}</div></form>`,
+    html`<button data-action="close">Отмена</button><button class="primary" data-action="save-list">${icon("check")}Сохранить список</button>`,
   );
 }
 function confirmDialog(
   title,
   message,
   action,
-  label = "Подтвердить",
+  label = t("Подтвердить"),
   danger = false,
   revision = state.revision,
 ) {
@@ -1068,20 +1106,20 @@ function confirmDialog(
   dialogFrame(
     title,
     "",
-    `<p class="preview-note">${e(message)}</p>`,
-    `<button data-action="close">Отмена</button><button class="${danger ? "danger" : "primary"}" data-action="${action}">${e(label)}</button>`,
+    html`<p class="preview-note">${e(message)}</p>`,
+    html`<button data-action="close">Отмена</button><button class="${danger ? "danger" : "primary"}" data-action="${action}">${e(t(label))}</button>`,
   );
 }
 function showHelp() {
   dialogFrame(
-    "OpenMikroRout · справка",
-    "Лёгкий Linux-роутер с привычной логикой WinBox.",
-    `<div class="help-content"><h3>Настройка локальной сети</h3><p>Создайте bridge и выберите LAN-порты. Для отдельных сетей создайте VLAN на нужном parent-интерфейсе. Затем назначьте IPv4-адрес в IP Addresses, создайте IP Pool и DHCP Server на этом интерфейсе.</p><h3>Интернет и защита</h3><p>Задайте default route 0.0.0.0/0, включите forwarding в DNS & Forwarding и создайте srcnat / masquerade для WAN. В Firewall Filter настройте разрешения input и forward. Списки адресов и интерфейсов позволяют применять правила сразу к группам.</p><h3>Работа с правилами</h3><p>Двойной щелчок открывает свойства. В NAT перетаскивайте правила за ⋮⋮; стрелки тоже меняют порядок. Show Columns выбирает колонки и сохраняет выбор в браузере. OK сохраняет и закрывает редактор, Apply сохраняет без закрытия. Ctrl/Cmd+F — поиск; Insert — добавить; Delete — удалить; Ctrl/Cmd+E / D — включить / отключить; Ctrl/Cmd+M — комментарий.</p><h3>Сохранение и применение</h3><p>Все разделы используют общий черновик. Сохранение не меняет работающую сеть. Предпросмотр показывает команды и настройки служб. После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию. Ошибка восстановления отображается явно и требует проверки.</p><h3>Что сохраняется отдельно</h3><p>Приложение управляет собственными ресурсами. Чужие интерфейсы, адреса, маршруты и DHCP / DNS-службы не должны захватываться. Bridge и VLAN используют Linux networking, DHCP / DNS — отдельный dnsmasq, NAT / Filter — iptables. IPv4. Dummy — программный интерфейс, а не VPN. Это самостоятельный Linux-роутер, не полная реализация RouterOS.</p><h3>Деморежим</h3><p>Настройки и примеры сохраняются в отдельной базе. Сеть этого компьютера не изменяется; реальные службы, leases и счётчики доступны только в Linux-режиме.</p></div>`,
+    t("OpenMikroRout · справка"),
+    t("Лёгкий Linux-роутер с привычной логикой WinBox."),
+    html`<div class="help-content"><h3>Настройка локальной сети</h3><p>Создайте bridge и выберите LAN-порты. Для отдельных сетей создайте VLAN на нужном parent-интерфейсе. Затем назначьте IPv4-адрес в IP Addresses, создайте IP Pool и DHCP Server на этом интерфейсе.</p><h3>Интернет и защита</h3><p>Задайте default route 0.0.0.0/0, включите forwarding в DNS & Forwarding и создайте srcnat / masquerade для WAN. В Firewall Filter настройте разрешения input и forward. Списки адресов и интерфейсов позволяют применять правила сразу к группам.</p><h3>Работа с правилами</h3><p>Двойной щелчок открывает свойства. В NAT перетаскивайте правила за ⋮⋮; стрелки тоже меняют порядок. Show Columns выбирает колонки и сохраняет выбор в браузере. OK сохраняет и закрывает редактор, Apply сохраняет без закрытия. Ctrl/Cmd+F — поиск; Insert — добавить; Delete — удалить; Ctrl/Cmd+E / D — включить / отключить; Ctrl/Cmd+M — комментарий.</p><h3>Сохранение и применение</h3><p>Все разделы используют общий черновик. Сохранение не меняет работающую сеть. Предпросмотр показывает команды и настройки служб. После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию. Ошибка восстановления отображается явно и требует проверки.</p><h3>Что сохраняется отдельно</h3><p>Приложение управляет собственными ресурсами. Чужие интерфейсы, адреса, маршруты и DHCP / DNS-службы не должны захватываться. Bridge и VLAN используют Linux networking, DHCP / DNS — отдельный dnsmasq, NAT / Filter — iptables. IPv4. Dummy — программный интерфейс, а не VPN. Это самостоятельный Linux-роутер, не полная реализация RouterOS.</p><h3>Деморежим</h3><p>Настройки и примеры сохраняются в отдельной базе. Сеть этого компьютера не изменяется; реальные службы, leases и счётчики доступны только в Linux-режиме.</p></div>`,
   );
 }
 
 function renderLogin(error = "") {
-  document.title = "OpenMikroRout · Вход";
+  document.title = t("OpenMikroRout · Вход");
   root.innerHTML = loginMarkup({
     brand: brandMarkup(),
     icon,
@@ -1104,7 +1142,7 @@ function updateRuleCounters() {
     : fmtBytes(counts.bytes);
   dialog.querySelector('[data-counter="packets"]').textContent = isDemo()
     ? "—"
-    : counts.packets.toLocaleString("ru-RU");
+    : counts.packets.toLocaleString(locale());
 }
 function updateTelemetry() {
   const container = document.querySelector("#telemetry-overview");
@@ -1145,7 +1183,7 @@ async function refreshTelemetryHistory(replace = false) {
     )
       return;
     if (!result.available)
-      throw new Error(result.error || "История недоступна");
+      throw new Error(result.error || t("История недоступна"));
     if (historyCursor !== null && result.timestamp < historyCursor) {
       // The server clock moved backwards; restart the cursor on the next poll.
       historyCursor = null;
@@ -1168,7 +1206,8 @@ async function refreshTelemetryHistory(replace = false) {
     telemetryHistoryError = "";
   } catch (failure) {
     if (!controller.signal.aborted && generation === authGeneration)
-      telemetryHistoryError = failure.message || "Не удалось загрузить историю";
+      telemetryHistoryError =
+        failure.message || t("Не удалось загрузить историю");
   } finally {
     if (historyController === controller) historyController = null;
     if (!controller.signal.aborted && generation === authGeneration)
@@ -1201,7 +1240,8 @@ async function refreshTelemetry(fast = false) {
         telemetrySelection = "all";
     } catch (error) {
       if (!alive || controller.signal.aborted || !state) return;
-      telemetryError = error.message || "Не удалось получить сетевые метрики.";
+      telemetryError =
+        error.message || t("Не удалось получить сетевые метрики.");
     } finally {
       if (fast && fastTelemetryController === controller) {
         fastTelemetryController = null;
@@ -1235,6 +1275,8 @@ async function refresh(manual = false) {
     JSON.stringify(next.current_user) !== JSON.stringify(state.current_user) ||
     offline;
   state = next;
+  const languageChanged =
+    state.current_user && setLanguage(state.current_user.language);
   if (!canWrite()) users = [];
   const ids = new Set(next.config.rules.map((rule) => rule.id));
   selected = new Set([...selected].filter((id) => ids.has(id)));
@@ -1256,7 +1298,7 @@ async function refresh(manual = false) {
     applyAccessControls();
     return;
   }
-  if (manual || changed) {
+  if (manual || changed || languageChanged) {
     const results = await Promise.allSettled([
       api("interfaces"),
       api("audit"),
@@ -1297,8 +1339,9 @@ async function refresh(manual = false) {
       applyAccessControls();
     }
   } else if (view === "users") {
+    const before = JSON.stringify(users);
     await refreshUsers();
-    render();
+    if (before !== JSON.stringify(users) && !dialog.open) render();
   }
   await Promise.all([refreshTelemetry(), refreshTelemetryHistory()]);
   await refreshProtection(routerContext());
@@ -1315,7 +1358,7 @@ async function handleAction(button) {
     id = button.dataset.id;
   if (button.disabled || busy) return;
   if (state && !canWrite() && !isReadAction(action)) {
-    toast("Группа read: доступен только просмотр.", true);
+    toast(t("Группа read: доступен только просмотр."), true);
     return;
   }
   if (action === "rule-protection-open") {
@@ -1370,7 +1413,12 @@ async function handleAction(button) {
     if (!navigationGroupIds.has(group)) return;
     if (expandedGroups.has(group)) expandedGroups.delete(group);
     else expandedGroups.add(group);
-    render();
+    const navigation = document.querySelector(".sidebar-navigation");
+    if (navigation) {
+      const scroll = navigation.scrollTop;
+      navigation.innerHTML = renderNavigation();
+      navigation.scrollTop = scroll;
+    }
     document
       .querySelector(`[data-action="nav-group"][data-group="${group}"]`)
       ?.focus({ preventScroll: true });
@@ -1402,10 +1450,10 @@ async function handleAction(button) {
   }
   if (action === "columns") {
     dialogFrame(
-      "Show Columns",
-      "Выберите нужные поля. Порядок выполнения правил не меняется.",
-      `<div class="column-options">${ruleColumns.map(([key, label]) => `<label class="checkbox-label"><input type="checkbox" name="column" value="${key}" ${visibleColumns.has(key) ? "checked" : ""} ${key === "name" ? "disabled" : ""}>${label}</label>`).join("")}</div>`,
-      '<button data-action="columns-reset">По умолчанию</button><button data-action="close">Cancel</button><button class="primary" data-action="columns-save">OK</button>',
+      t("Show Columns"),
+      t("Выберите нужные поля. Порядок выполнения правил не меняется."),
+      html`<div class="column-options">${ruleColumns.map(([key, label]) => html`<label class="checkbox-label"><input type="checkbox" name="column" value="${key}" ${visibleColumns.has(key) ? "checked" : ""} ${key === "name" ? "disabled" : ""}>${t(label)}</label>`).join("")}</div>`,
+      html`<button data-action="columns-reset">По умолчанию</button><button data-action="close">Cancel</button><button class="primary" data-action="columns-save">OK</button>`,
     );
     return;
   }
@@ -1428,7 +1476,7 @@ async function handleAction(button) {
         JSON.stringify([...visibleColumns]),
       );
     } catch {
-      toast("Выбор колонок сохранён только до закрытия вкладки.", true);
+      toast(t("Выбор колонок сохранён только до закрытия вкладки."), true);
     }
     dialog.close();
     render();
@@ -1450,6 +1498,7 @@ async function handleAction(button) {
       setNavigationOpen(false);
     selected.clear();
     render();
+    window.scrollTo(0, 0);
     await refreshProtection(routerContext());
     await refreshDiscovery(routerContext());
     if (["wireguard", "wireguard_peers"].includes(view))
@@ -1481,7 +1530,7 @@ async function handleAction(button) {
   }
   if (action === "comment") {
     if (selected.size !== 1) {
-      toast("Для комментария выберите одно правило.", true);
+      toast(t("Для комментария выберите одно правило."), true);
       return;
     }
     openEditor([...selected][0]);
@@ -1523,10 +1572,10 @@ async function handleAction(button) {
   if (action === "editor-remove") {
     selected = new Set([draft.id]);
     confirmDialog(
-      "Удалить правило?",
-      "Правило будет удалено из черновика. Применение к сети — отдельно.",
+      t("Удалить правило?"),
+      t("Правило будет удалено из черновика. Применение к сети — отдельно."),
       "delete-confirm",
-      "Удалить",
+      t("Удалить"),
       true,
       draftRevision,
     );
@@ -1538,7 +1587,7 @@ async function handleAction(button) {
   }
   if (action === "duplicate") {
     if (selected.size !== 1) {
-      toast("Для копирования выберите одно правило.", true);
+      toast(t("Для копирования выберите одно правило."), true);
       return;
     }
     openEditor([...selected][0], true);
@@ -1556,10 +1605,10 @@ async function handleAction(button) {
   }
   if (action === "delete") {
     confirmDialog(
-      "Удалить выбранные правила?",
-      `Из черновика будут удалены ${selected.size} правил. Для изменения работающей сети потребуется применить конфигурацию.`,
+      t("Удалить выбранные правила?"),
+      html`Из черновика будут удалены ${selected.size} правил. Для изменения работающей сети потребуется применить конфигурацию.`,
       "delete-confirm",
-      "Удалить",
+      t("Удалить"),
       true,
     );
     return;
@@ -1567,32 +1616,40 @@ async function handleAction(button) {
   if (action === "delete-list") {
     draft = { id };
     confirmDialog(
-      "Удалить список адресов?",
-      "Список будет удалён из черновика. Используемые в правилах списки удалить нельзя.",
+      t("Удалить список адресов?"),
+      t(
+        "Список будет удалён из черновика. Используемые в правилах списки удалить нельзя.",
+      ),
       "delete-list-confirm",
-      "Удалить",
+      t("Удалить"),
       true,
     );
     return;
   }
   if (action === "discard") {
     confirmDialog(
-      "Отменить изменения?",
-      "Черновик будет заменён последней подтверждённой конфигурацией.",
+      t("Отменить изменения?"),
+      t("Черновик будет заменён последней подтверждённой конфигурацией."),
       "discard-confirm",
-      "Отменить изменения",
+      t("Отменить изменения"),
       true,
     );
     return;
   }
   if (action === "apply") {
     confirmDialog(
-      isDemo() ? "Применить в деморежиме?" : "Применить настройки роутера?",
       isDemo()
-        ? "Будет запущена симуляция применения. Подтвердите её в течение 60 секунд. Настройки сети не изменятся."
-        : "Будут применены интерфейсы, IP, DHCP / DNS, маршруты и Firewall из черновика. После применения подтвердите доступ за 60 секунд. Без подтверждения сервер попытается восстановить предыдущие настройки.",
+        ? t("Применить в деморежиме?")
+        : t("Применить настройки роутера?"),
+      isDemo()
+        ? t(
+            "Будет запущена симуляция применения. Подтвердите её в течение 60 секунд. Настройки сети не изменятся.",
+          )
+        : t(
+            "Будут применены интерфейсы, IP, DHCP / DNS, маршруты и Firewall из черновика. После применения подтвердите доступ за 60 секунд. Без подтверждения сервер попытается восстановить предыдущие настройки.",
+          ),
       "apply-confirm",
-      "Применить",
+      t("Применить"),
     );
     if (state.security_dirty && state.auth_enabled) {
       dialog
@@ -1602,7 +1659,7 @@ async function handleAction(button) {
           proofForm(
             routerContext(),
             "apply-security-proof",
-            "Изменяется защита роутера. Подтвердите учётные данные.",
+            t("Изменяется защита роутера. Подтвердите учётные данные."),
           ),
         );
     }
@@ -1611,7 +1668,7 @@ async function handleAction(button) {
   await run(async () => {
     if (action === "refresh") {
       await refresh(true);
-      toast("Данные обновлены");
+      toast(t("Данные обновлены"));
       return;
     }
     if (action === "logout") {
@@ -1623,16 +1680,16 @@ async function handleAction(button) {
     if (action === "preview") {
       const result = await api("preview", { method: "POST" });
       dialogFrame(
-        "Предпросмотр конфигурации",
-        "Проверка не изменяет правила хоста.",
-        `<p class="preview-note">${isDemo() ? "Синтаксис конфигурации проверен приложением. Проверка ядром доступна только в Linux." : "Проверка iptables-restore --test успешно пройдена."} Ниже — NAT, Firewall Filter, виртуальные интерфейсы и настройки IP / DHCP / DNS из общего черновика.</p><pre class="code-preview">${e(result.script)}</pre>${result.router ? `<h3 class="preview-section-title">Firewall Filter</h3><pre class="code-preview">${e(result.router.filter_script || "")}</pre><h3 class="preview-section-title">Links · Bridge / VLAN / Virtual</h3><pre class="code-preview">${e(JSON.stringify(result.router.links || {}, null, 2))}</pre><h3 class="preview-section-title">IP · DHCP · DNS · Routes</h3><pre class="code-preview">${e(JSON.stringify(result.router.network || {}, null, 2))}</pre>${result.router.wireguard ? `<h3 class="preview-section-title">WireGuard · interfaces / peers</h3><pre class="code-preview">${e(JSON.stringify(result.router.wireguard, null, 2))}</pre>` : ""}${result.router.system_lists ? `<h3 class="preview-section-title">System address lists · GeoIP / Fail2ban</h3><pre class="code-preview">${e(JSON.stringify(result.router.system_lists, null, 2))}</pre>` : ""}${result.router.fail2ban ? `<h3 class="preview-section-title">Fail2ban</h3><pre class="code-preview">${e(JSON.stringify(result.router.fail2ban, null, 2))}</pre>` : ""}${result.router.vpn_routes ? `<h3 class="preview-section-title">WireGuard · source routing</h3><pre class="code-preview">${e(JSON.stringify(result.router.vpn_routes, null, 2))}</pre>` : ""}` : result.network ? `<h3 class="preview-section-title">Network configuration</h3><pre class="code-preview">${e(JSON.stringify(result.network, null, 2))}</pre>` : ""}`,
+        t("Предпросмотр конфигурации"),
+        t("Проверка не изменяет правила хоста."),
+        html`<p class="preview-note">${isDemo() ? t("Синтаксис конфигурации проверен приложением. Проверка ядром доступна только в Linux.") : t("Проверка iptables-restore --test успешно пройдена.")} Ниже — NAT, Firewall Filter, виртуальные интерфейсы и настройки IP / DHCP / DNS из общего черновика.</p><pre class="code-preview">${e(result.script)}</pre>${result.router ? html`<h3 class="preview-section-title">Firewall Filter</h3><pre class="code-preview">${e(result.router.filter_script || "")}</pre><h3 class="preview-section-title">Links · Bridge / VLAN / Virtual</h3><pre class="code-preview">${e(JSON.stringify(result.router.links || {}, null, 2))}</pre><h3 class="preview-section-title">IP · DHCP · DNS · Routes</h3><pre class="code-preview">${e(JSON.stringify(result.router.network || {}, null, 2))}</pre>${result.router.wireguard ? html`<h3 class="preview-section-title">WireGuard · interfaces / peers</h3><pre class="code-preview">${e(JSON.stringify(result.router.wireguard, null, 2))}</pre>` : ""}${result.router.system_lists ? html`<h3 class="preview-section-title">System address lists · GeoIP / Fail2ban</h3><pre class="code-preview">${e(JSON.stringify(result.router.system_lists, null, 2))}</pre>` : ""}${result.router.fail2ban ? html`<h3 class="preview-section-title">Fail2ban</h3><pre class="code-preview">${e(JSON.stringify(result.router.fail2ban, null, 2))}</pre>` : ""}${result.router.vpn_routes ? html`<h3 class="preview-section-title">WireGuard · source routing</h3><pre class="code-preview">${e(JSON.stringify(result.router.vpn_routes, null, 2))}</pre>` : ""}` : result.network ? html`<h3 class="preview-section-title">Network configuration</h3><pre class="code-preview">${e(JSON.stringify(result.network, null, 2))}</pre>` : ""}`,
       );
       return;
     }
     if (action === "save-rule" || action === "save-rule-open") {
       if (!dialog.querySelector("#rule-form").reportValidity()) return;
       collectRule();
-      if (!draft.name) throw new Error("Укажите имя правила.");
+      if (!draft.name) throw new Error(t("Укажите имя правила."));
       const cfg = configCopy(),
         index = cfg.rules.findIndex((r) => r.id === draft.id);
       if (index >= 0) cfg.rules[index] = draft;
@@ -1644,7 +1701,7 @@ async function handleAction(button) {
       );
       if (action === "save-rule") dialog.close();
       else if (dialog.open) renderEditor();
-      toast("Правило сохранено в черновик");
+      toast(t("Правило сохранено в черновик"));
       return;
     }
     if (action === "save-list") {
@@ -1672,7 +1729,7 @@ async function handleAction(button) {
       } else cfg.address_lists.push(item);
       await saveConfig(cfg, draftRevision);
       dialog.close();
-      toast("Список адресов сохранён");
+      toast(t("Список адресов сохранён"));
       return;
     }
     if (
@@ -1694,14 +1751,14 @@ async function handleAction(button) {
       dialog.close();
       toast(
         action === "delete-confirm"
-          ? "Правила удалены из черновика"
-          : "Состояние правил сохранено",
+          ? t("Правила удалены из черновика")
+          : t("Состояние правил сохранено"),
       );
       return;
     }
     if (action === "move-up" || action === "move-down") {
       if (selected.size !== 1)
-        throw new Error("Для перемещения выберите одно правило.");
+        throw new Error(t("Для перемещения выберите одно правило."));
       const cfg = configCopy(),
         i = cfg.rules.findIndex((r) => selected.has(r.id)),
         j = i + (action === "move-up" ? -1 : 1);
@@ -1715,7 +1772,7 @@ async function handleAction(button) {
       cfg.address_lists = cfg.address_lists.filter((l) => l.id !== draft.id);
       await saveConfig(cfg, confirmationRevision);
       dialog.close();
-      toast("Список удалён");
+      toast(t("Список удалён"));
       return;
     }
     if (action === "discard-confirm") {
@@ -1727,7 +1784,7 @@ async function handleAction(button) {
         }),
       );
       dialog.close();
-      toast("Черновик отменён");
+      toast(t("Черновик отменён"));
       return;
     }
     if (action === "apply-confirm") {
@@ -1748,7 +1805,7 @@ async function handleAction(button) {
       );
       clearProof(routerContext());
       dialog.close();
-      toast("Подтвердите связь до истечения таймера");
+      toast(t("Подтвердите связь до истечения таймера"));
       return;
     }
     if (action === "confirm") {
@@ -1760,17 +1817,19 @@ async function handleAction(button) {
         clearSession();
         renderLogin();
         toast(
-          "Восстановление подтверждено. Войдите с учётными данными из копии.",
+          t(
+            "Восстановление подтверждено. Войдите с учётными данными из копии.",
+          ),
         );
         return;
       }
       acceptState(result);
-      toast("Применение подтверждено");
+      toast(t("Применение подтверждено"));
       return;
     }
     if (action === "rollback") {
       acceptState(await api("rollback", { method: "POST" }));
-      toast("Предыдущие правила восстановлены. Черновик сохранён.");
+      toast(t("Предыдущие правила восстановлены. Черновик сохранён."));
       return;
     }
   });
@@ -1792,7 +1851,7 @@ function updateSelection() {
   const footer = document.querySelector(".panel-footer");
   if (footer) {
     footer.querySelector("span").textContent =
-      `${filteredRules().length} из ${state.config.rules.length} правил${selected.size ? ` · выбрано ${selected.size}` : ""}`;
+      html`${filteredRules().length} из ${state.config.rules.length} правил${selected.size ? html` · выбрано ${selected.size}` : ""}`;
     if (selected.size === 1)
       footer.insertAdjacentHTML(
         "beforebegin",
@@ -1891,7 +1950,7 @@ document.addEventListener("drop", (event) => {
     config.rules = reordered;
     selected = new Set([sourceId]);
     await saveConfig(config);
-    toast("Порядок правил сохранён в черновик");
+    toast(t("Порядок правил сохранён в черновик"));
   });
 });
 document.addEventListener("dragend", endDrag);
@@ -1990,6 +2049,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("input", (event) => {
+  if (event.target.matches("[data-checkbox-search]")) return;
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
   if (handleProtectionInput(event, routerContext())) return;
@@ -2000,14 +2060,24 @@ document.addEventListener("input", (event) => {
   if (settingsForm && canWrite()) settingsForm.dataset.dirty = "true";
   if (event.target.id === "rule-search") {
     search = event.target.value;
-    const pos = event.target.selectionStart;
-    render();
-    const node = document.querySelector("#rule-search");
-    node.focus();
-    node.setSelectionRange(pos, pos);
+    updateRuleTable();
   }
 });
 document.addEventListener("change", (event) => {
+  if (event.target.id === "login-language") {
+    const form =
+      event.target.closest("form") || document.querySelector("#login-form");
+    const fields = form ? new FormData(form) : null;
+    setLanguage(event.target.value);
+    renderLogin();
+    for (const name of ["username", "password", "code"])
+      if (fields)
+        document.querySelector(`#login-form [name="${name}"]`).value = String(
+          fields.get(name) || "",
+        );
+    document.querySelector("#login-language")?.focus({ preventScroll: true });
+    return;
+  }
   handleBackupInput(event);
   const backupForm = event.target.closest("#backup-import-form");
   if (backupForm && canWrite()) backupForm.dataset.dirty = "true";
@@ -2057,11 +2127,11 @@ document.addEventListener("change", (event) => {
   }
   if (node.id === "chain-filter") {
     chainFilter = node.value;
-    render();
+    updateRuleTable();
   }
   if (node.id === "protocol-filter") {
     protocolFilter = node.value;
-    render();
+    updateRuleTable();
   }
   if (node.id === "rule-enabled" && draft && canWrite())
     draft.enabled = node.checked;
@@ -2102,7 +2172,7 @@ document.addEventListener("change", (event) => {
     draft = { ...defaultRule(), id, name };
     if (node.value === "masquerade")
       Object.assign(draft, {
-        name: name || "Internet access",
+        name: name || t("Internet access"),
         chain: "srcnat",
         action: "masquerade",
         protocol: "any",
@@ -2123,7 +2193,7 @@ document.addEventListener("change", (event) => {
       });
     if (node.value === "snat")
       Object.assign(draft, {
-        name: name || "Source NAT",
+        name: name || t("Source NAT"),
         chain: "srcnat",
         action: "src-nat",
         protocol: "any",
@@ -2135,8 +2205,17 @@ document.addEventListener("focusout", (event) => {
   if (event.target.id === "telemetry-interface")
     queueMicrotask(updateTelemetry);
 });
+installCheckboxSelectEvents(document);
 document.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (event.target.id === "preferences-form") {
+    const button = event.target.querySelector(
+      '[data-action="preferences-save"]',
+    );
+    if (button)
+      void handleAction(button).catch((error) => toast(error.message, true));
+    return;
+  }
   if (
     event.target.matches(
       "#f2b-settings,#geo-settings,#f2b-profile-form,#geo-lookup,#system-list-search,[data-protection-search],#protection-proof,#apply-security-proof,[data-discovery-form]",
@@ -2252,7 +2331,7 @@ async function boot() {
       offline = true;
       render();
     } else if (!document.querySelector("#login-form"))
-      root.innerHTML = `<div class="empty"><p>Сервер недоступен</p><small>${e(error.message)}</small><button data-action="refresh">Повторить</button></div>`;
+      root.innerHTML = html`<div class="empty"><p>Сервер недоступен</p><small>${e(error.message)}</small><button data-action="refresh">Повторить</button></div>`;
   }
 }
 installRouterEvents(routerContext);
@@ -2266,7 +2345,7 @@ async function poll() {
     if (state && !offline) {
       offline = true;
       render();
-      toast(`Данные сервера недоступны. ${error.message}`, true);
+      toast(html`Данные сервера недоступны. ${error.message}`, true);
     }
   } finally {
     pollInFlight = false;

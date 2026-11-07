@@ -31,6 +31,7 @@ from app.auth import (
     PublicUser,
     SessionResponse,
     UserList,
+    UserPreferences,
     normalize_username,
 )
 from app.backup_api import backup_router
@@ -52,7 +53,7 @@ from app.telemetry_history import HistoryResponse, TelemetryHistory
 from app.totp import CredentialProof, TotpEnrollment, TotpRecovery, TotpStatus
 from app.updates import UpdateApply, UpdateError, UpdateJob, UpdateService, UpdateStatus
 from app.version import VERSION
-from app.web_assets import WebAssets
+from app.web_assets import StaticTextCompression, WebAssets
 from app.web_domain import PanelHostMiddleware
 from app.wireguard_api import wireguard_router
 from app.wireguard_vault import WireGuardVault
@@ -299,6 +300,7 @@ def create_app(
                 "/api/me/totp/setup",
                 "/api/me/totp/confirm",
                 "/api/me/totp/disable",
+                "/api/me/preferences",
             )
         ):
             user = request.state.current_user
@@ -383,6 +385,7 @@ def create_app(
                 "/api/me/totp/setup",
                 "/api/me/totp/confirm",
                 "/api/me/totp/disable",
+                "/api/me/preferences",
             )
         ):
             raise HTTPException(403, "This account has read-only access")
@@ -495,6 +498,15 @@ def create_app(
     @app.get("/api/me/totp")
     def totp_status(request: Request) -> TotpStatus:
         return auth.totp_status(account_actor(request))
+
+    @app.get("/api/me/preferences")
+    def user_preferences(request: Request) -> UserPreferences:
+        return UserPreferences(language=account_actor(request).language)
+
+    @app.put("/api/me/preferences")
+    def save_user_preferences(body: UserPreferences, request: Request) -> UserPreferences:
+        account_actor(request)
+        return auth.set_preferences(request.cookies.get("nat_session", ""), body)
 
     @app.post("/api/me/totp/setup")
     def totp_setup(body: CredentialProof, request: Request) -> TotpEnrollment:
@@ -743,5 +755,13 @@ def create_app(
         forwarding = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip() == "1"
         return {"interfaces": items, "forwarding": forwarding, "demo": False}
 
-    app.mount("/", WebAssets(directory=STATIC, html=True), name="web")
+    # Static files contain no account data. Compress this mount only; authenticated
+    # API bodies (including key/2FA exports) deliberately keep their existing transport.
+    app.mount(
+        "/",
+        StaticTextCompression(
+            WebAssets(directory=STATIC, html=True), minimum_size=1024, compresslevel=6
+        ),
+        name="web",
+    )
     return app

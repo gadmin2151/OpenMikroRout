@@ -89,8 +89,8 @@ test("anonymous demo identifies the local administrator but offers no session or
   const ctx = context({ auth_enabled: false, current_user: null });
   ctx.isDemo = () => true;
   const html = renderHeaderControls(ctx);
-  assert.match(html, /Инстанс: Demo Router/);
-  assert.match(html, /Demo engine/);
+  assert.match(html, /Инстанс: Демонстрационный роутер/);
+  assert.match(html, /Демонстрационный режим/);
   assert.match(html, /Сеть хоста не изменяется/);
   assert.match(html, /Локальный администратор/);
   assert.match(html, /Авторизация отключена/);
@@ -117,7 +117,7 @@ test("offline state remains explicit and absent version is not replaced with a f
   assert.match(html, /Нет соединения/);
   assert.ok(!html.includes("Сервер подключён"));
   assert.match(html, /<dt>Версия<\/dt><dd>—<\/dd>/);
-  assert.match(html, /Инстанс: Router/);
+  assert.match(html, /Инстанс: Роутер/);
 });
 
 function headerFixture() {

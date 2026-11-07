@@ -3,9 +3,24 @@
 import os
 from pathlib import Path
 
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
-from starlette.types import Scope
+from starlette.types import Receive, Scope, Send
+
+
+class StaticTextCompression(GZipMiddleware):
+    """Compress text, while already compressed images keep their native bytes."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = scope.get("path", "")
+        if scope["type"] == "http" and (
+            path.endswith("/")
+            or Path(path).suffix.lower() in {".html", ".js", ".mjs", ".css", ".svg"}
+        ):
+            await super().__call__(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
 
 
 class WebAssets(StaticFiles):

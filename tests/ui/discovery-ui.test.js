@@ -238,3 +238,49 @@ test("switching hosts to scan aborts stale requests and loads the new view immed
     resetDiscovery();
   }
 });
+
+test("scan actions have a separate content-sized row instead of occupying a nested tools grid", () => {
+  resetDiscovery();
+  for (const view of ["network_scan", "port_scan"]) {
+    const html = renderDiscovery(view, context());
+    assert.match(html, /id="scan-start" class="scan-start-form"/);
+    assert.match(html, /class="scan-fields"/);
+    assert.match(html, /class="scan-actions"/);
+    assert.doesNotMatch(html, /id="scan-start" class="tools-form"/);
+    assert.match(
+      html,
+      /type="button" class="primary" data-discovery-form data-action="scan-start"/,
+    );
+  }
+});
+
+test("unchanged discovery polling preserves result DOM instead of resetting rows and focus", async () => {
+  resetDiscovery();
+  let writes = 0;
+  const region = {
+    set innerHTML(_value) {
+      writes++;
+    },
+  };
+  const oldDocument = globalThis.document;
+  globalThis.document = { querySelector: () => region };
+  const ctx = context();
+  ctx.api = async (path) =>
+    path === "discovery/status"
+      ? { settings: { enabled: true }, errors: {} }
+      : { items: [], total: 0 };
+  try {
+    await refreshDiscovery(ctx);
+    await refreshDiscovery(ctx);
+    assert.equal(writes, 1);
+    ctx.api = async (path) =>
+      path === "discovery/status"
+        ? { settings: { enabled: false }, errors: {} }
+        : { items: [], total: 0 };
+    await refreshDiscovery(ctx);
+    assert.equal(writes, 2);
+  } finally {
+    globalThis.document = oldDocument;
+    resetDiscovery();
+  }
+});

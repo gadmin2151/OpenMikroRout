@@ -359,6 +359,6 @@ test("deleting a VPN interface requires removing its peers and IP references fir
   };
   assert.throws(
     () => assertLinkRemoval(config, "wireguard_interfaces", "one"),
-    /WireGuard Peer: Phone/,
+    /Участник WireGuard: Phone/,
   );
 });

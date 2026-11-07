@@ -31,7 +31,7 @@ function context() {
 test("read users may export public configuration but cannot create backups or stage imports", async () => {
   const ctx = { ...context(), canWrite: () => false };
   const html = renderBackups(ctx);
-  assert.match(html, /Export \.rsc/);
+  assert.match(html, /data-action="backup-export-rsc"[^>]*>Экспорт \.rsc/);
   assert.match(html, /data-action="backup-create-open" disabled/);
   for (const action of [
     "backup-create-open",

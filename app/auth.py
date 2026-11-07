@@ -37,6 +37,7 @@ from app.totp import (
 )
 
 Role = Literal["read", "full"]
+Language = Literal["ru", "en"]
 HASH_ITERATIONS = 600_000
 SESSION_SECONDS = 28_800
 MAX_USERS = 128
@@ -110,6 +111,14 @@ class PublicUser(BaseModel):
     username: str
     role: Role
     totp_enabled: bool = False
+    language: Language = "ru"
+
+
+class UserPreferences(BaseModel):
+    """Non-security account settings that either role may change for itself."""
+
+    model_config = ConfigDict(extra="forbid")
+    language: Language
 
 
 class ManagedUser(PublicUser):
@@ -199,6 +208,7 @@ class UserRecord:
     created_at: float
     version: int
     password: str = field(repr=False)
+    language: Language = "ru"
     totp_secret: str | None = field(default=None, repr=False)
     totp_pending: str | None = field(default=None, repr=False)
     totp_pending_at: float | None = None
@@ -207,7 +217,11 @@ class UserRecord:
 
     def public(self) -> PublicUser:
         return PublicUser(
-            id=self.id, username=self.username, role=self.role, totp_enabled=bool(self.totp_secret)
+            id=self.id,
+            username=self.username,
+            role=self.role,
+            totp_enabled=bool(self.totp_secret),
+            language=self.language,
         )
 
     def managed(self) -> ManagedUser:
@@ -225,6 +239,7 @@ def record(row: sqlite3.Row) -> UserRecord:
         created_at=float(row["created_at"]),
         version=int(row["version"]),
         password=str(row["password_hash"]),
+        language=cast(Language, row["language"]),
         totp_secret=row["totp_secret"],
         totp_pending=row["totp_pending"],
         totp_pending_at=row["totp_pending_at"],
@@ -280,6 +295,7 @@ class AuthStore:
             )""")
             columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
             additions = {
+                "language": "TEXT NOT NULL DEFAULT 'ru' CHECK(language IN ('ru','en'))",
                 "totp_secret": "TEXT",
                 "totp_pending": "TEXT",
                 "totp_pending_at": "REAL",
@@ -351,6 +367,18 @@ class AuthStore:
                 "SELECT * FROM users ORDER BY username LIMIT ?", (MAX_USERS,)
             ).fetchall()
         return [record(row).managed() for row in rows]
+
+    def set_preferences(self, actor: UserRecord, body: UserPreferences) -> UserPreferences:
+        with self.connection(write=True) as db:
+            # Only the original enabled identity/version may change its preferences.
+            # Account-security changes use a different path and invalidate sessions.
+            cursor = db.execute(
+                "UPDATE users SET language=? WHERE id=? AND enabled=1 AND version=?",
+                (body.language, actor.id, actor.version),
+            )
+            if cursor.rowcount != 1:
+                raise AuthError(401, "Account changed; sign in again")
+        return body
 
     @staticmethod
     def guard_actor(db: sqlite3.Connection, actor: UserRecord | None) -> None:
@@ -517,6 +545,13 @@ class AuthService:
         current = self.authorize(token, role)
         if current.id != actor.id or current.version != actor.version:
             raise AuthError(401, "Account changed; sign in again")
+
+    def set_preferences(self, token: str, body: UserPreferences) -> UserPreferences:
+        # Serialize with logout, session revocation and account mutations. A harmless
+        # preference must not consume an authenticator code or terminate sessions.
+        with self.lock:
+            actor = self.authorize(token)
+            return self.require_store().set_preferences(actor, body)
 
     def _attempt(
         self, client: str, identity: str, *, known: bool = True

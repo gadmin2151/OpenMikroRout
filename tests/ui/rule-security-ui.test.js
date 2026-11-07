@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { URL } from "node:url";
+import { setLanguage } from "../../app/static/i18n.js";
 import {
   countryField,
   countryOptions,
@@ -36,6 +37,8 @@ const config = {
 };
 const ctx = { e, state: { config: { fail2ban: config } } };
 
+test.afterEach(() => setLanguage("ru"));
+
 test("country selector is independent of downloaded GeoIP data and matches backend country contract", () => {
   const backend = readFileSync(
     new URL("../../app/system_lists.py", import.meta.url),
@@ -53,10 +56,28 @@ test("country selector is independent of downloaded GeoIP data and matches backe
     backendCodes,
   );
   const html = countryField(ctx, "src_country", "MD");
-  assert.match(html, /Src\. Country/);
+  assert.match(html, /Страна источника/);
   assert.match(html, /value="MD" selected/);
   assert.match(html, /Любая страна/);
   assert.ok(!countryField(ctx, "dst_country", "<img src=x>").includes("<img"));
+});
+
+test("country names follow the profile language while country codes and saved selections remain stable", () => {
+  setLanguage("ru");
+  const russian = countryOptions();
+  const russianCodes = russian.map(([code]) => code).sort();
+  assert.match(russian.find(([code]) => code === "MD")[1], /Молдова/);
+  assert.match(countryField(ctx, "src_country", "MD"), /value="MD" selected/);
+  setLanguage("en");
+  const english = countryOptions();
+  assert.match(english.find(([code]) => code === "MD")[1], /Moldova/);
+  assert.match(countryField(ctx, "src_country", "MD"), /Src\. country/);
+  assert.match(countryField(ctx, "src_country", "MD"), /value="MD" selected/);
+  assert.deepEqual(english.map(([code]) => code).sort(), russianCodes);
+  english[0][1] = "MUTATED";
+  assert.ok(!countryOptions().some(([, label]) => label === "MUTATED"));
+  setLanguage("ru");
+  assert.deepEqual(countryOptions(), russian);
 });
 
 test("inline Fail2ban derives its service from the rule without asking for a profile or duplicate port", () => {

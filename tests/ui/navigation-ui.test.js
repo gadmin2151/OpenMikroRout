@@ -51,20 +51,20 @@ test("menu has one logical destination per view and Firewall is grouped under IP
   const views = nodes.flatMap((item) => item.views || []);
   assert.equal(new Set(views).size, views.length);
   assert.deepEqual(
-    navigationPath(items, "rules").map((item) => item.label),
-    ["IP", "Firewall", "NAT"],
+    navigationPath(items, "rules").map((item) => item.id || item.view),
+    ["ip", "firewall", "rules"],
   );
   assert.deepEqual(
-    navigationPath(items, "connections").map((item) => item.label),
-    ["IP", "Firewall", "Connections"],
+    navigationPath(items, "connections").map((item) => item.id || item.view),
+    ["ip", "firewall", "connections"],
   );
   assert.deepEqual(
-    navigationPath(items, "fail2ban").map((item) => item.label),
-    ["Security", "Fail2ban"],
+    navigationPath(items, "fail2ban").map((item) => item.id || item.view),
+    ["protection", "fail2ban"],
   );
   assert.deepEqual(
-    navigationPath(items, "security").map((item) => item.label),
-    ["System", "My Account · 2FA"],
+    navigationPath(items, "security").map((item) => item.id || item.view),
+    ["system", "security"],
   );
   assert.equal(navigationPath(items, "audit").length, 1);
   assert.deepEqual(
@@ -137,11 +137,11 @@ test("nested current location and breadcrumbs are accessible while closed groups
   assert.match(html, /data-view="rules" aria-current="page"/);
   assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
   assert.match(
-    renderNavigationBreadcrumbs(ctx, "NAT Rules"),
-    /IP.*Firewall.*NAT Rules/,
+    renderNavigationBreadcrumbs(ctx, "Правила NAT"),
+    /IP.*Межсетевой экран.*Правила NAT/,
   );
   ctx.view = "vlans";
-  assert.match(renderNavigationBreadcrumbs(ctx, "VLAN"), /Interfaces.*VLAN/);
+  assert.match(renderNavigationBreadcrumbs(ctx, "VLAN"), /Интерфейсы.*VLAN/);
   assert.ok(
     !renderNavigationBreadcrumbs(ctx, '<img src=x onerror="bad">').includes(
       "<img",

@@ -1,3 +1,4 @@
+import gzip
 from pathlib import Path
 from unittest.mock import patch
 
@@ -34,6 +35,30 @@ def test_images_keep_normal_caching_and_api_data_is_never_cached(tmp_path: Path)
         assert "etag" in image.headers
         assert "no-store" not in image.headers.get("cache-control", "")
         assert client.get("/api/state").headers["cache-control"] == "no-store"
+
+
+def test_static_compression_preserves_revalidation_and_keeps_api_uncompressed(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
+        plain = client.get("/app.js", headers={"Accept-Encoding": "identity"})
+        compressed = client.get("/app.js", headers={"Accept-Encoding": "gzip"})
+        assert compressed.content == plain.content
+        assert compressed.headers["content-encoding"] == "gzip"
+        assert "Accept-Encoding" in compressed.headers["vary"]
+        assert compressed.headers["cache-control"] == "no-cache, must-revalidate"
+        # Static files stream in production, so Content-Length may be absent.
+        with client.stream("GET", "/app.js", headers={"Accept-Encoding": "gzip"}) as raw:
+            encoded = b"".join(raw.iter_raw())
+        assert gzip.decompress(encoded) == plain.content
+        assert len(encoded) < len(plain.content) // 2
+        unchanged = client.get(
+            "/app.js",
+            headers={"Accept-Encoding": "gzip", "If-None-Match": compressed.headers["etag"]},
+        )
+        assert unchanged.status_code == 304
+        assert "content-encoding" not in client.get("/api/state").headers
+        assert "content-encoding" not in client.get("/logo.png").headers
 
 
 def test_health_reports_only_public_release_progress_after_session_expires(tmp_path: Path) -> None:

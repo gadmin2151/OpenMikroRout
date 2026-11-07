@@ -1,3 +1,5 @@
+import { t, html, locale } from "./i18n.js";
+import { checkboxSelect } from "./checkbox-select.js";
 import { addressListChoices } from "./protection-ui.js?v=3";
 import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
@@ -13,295 +15,325 @@ import {
 /** Router configuration views. All writes use the existing revisioned draft API. */
 
 export const routerViews = {
-  web_settings: ["Web Interface", "Домен для доступа к панели OpenMikroRout."],
+  web_settings: [
+    t("Web Interface"),
+    t("Домен для доступа к панели OpenMikroRout."),
+  ],
   bridge_ports: [
-    "Bridge Ports",
-    "Участники bridge и принадлежность физических / виртуальных интерфейсов.",
+    t("Bridge Ports"),
+    t(
+      "Участники bridge и принадлежность физических / виртуальных интерфейсов.",
+    ),
   ],
   dhcp_networks: [
-    "DHCP Networks",
-    "Сетевые параметры DHCP-серверов: network, gateway и DNS.",
+    t("DHCP Networks"),
+    t("Сетевые параметры DHCP-серверов: network, gateway и DNS."),
   ],
   overview: [
-    "Обзор роутера",
-    "Состояние сети и основные настройки OpenMikroRout.",
+    t("Обзор роутера"),
+    t("Состояние сети и основные настройки OpenMikroRout."),
   ],
   addresses: [
-    "IP Addresses",
-    "Назначайте IPv4-адреса физическим, bridge и VLAN-интерфейсам.",
+    t("IP Addresses"),
+    t("Назначайте IPv4-адреса физическим, bridge и VLAN-интерфейсам."),
   ],
-  bridges: ["Bridge", "Объединяйте интерфейсы в общую локальную сеть."],
+  bridges: [t("Bridge"), t("Объединяйте интерфейсы в общую локальную сеть.")],
   vlans: [
-    "VLAN",
-    "Создавайте изолированные сети 802.1Q на выбранном интерфейсе.",
+    t("VLAN"),
+    t("Создавайте изолированные сети 802.1Q на выбранном интерфейсе."),
   ],
   virtual_interfaces: [
-    "Virtual Interfaces",
-    "Программные dummy-интерфейсы для локальных адресов и маршрутизации.",
+    t("Virtual Interfaces"),
+    t("Программные dummy-интерфейсы для локальных адресов и маршрутизации."),
   ],
-  routes: ["IP Routes", "Статические маршруты и шлюз по умолчанию."],
+  routes: [t("IP Routes"), t("Статические маршруты и шлюз по умолчанию.")],
   dhcp_servers: [
-    "DHCP Server",
-    "Выдавайте адреса клиентам на нужном интерфейсе.",
+    t("DHCP Server"),
+    t("Выдавайте адреса клиентам на нужном интерфейсе."),
   ],
-  pools: ["IP Pools", "Пулы IPv4-адресов для DHCP-серверов."],
+  pools: [t("IP Pools"), t("Пулы IPv4-адресов для DHCP-серверов.")],
   leases: [
-    "DHCP Leases",
-    "Активные аренды и постоянные привязки IP к MAC-адресам.",
+    t("DHCP Leases"),
+    t("Активные аренды и постоянные привязки IP к MAC-адресам."),
   ],
-  dns: ["DNS & Routing", "Кэширующий DNS, upstream-серверы и IPv4 forwarding."],
+  dns: [
+    t("DNS & Routing"),
+    t("Кэширующий DNS, upstream-серверы и IPv4 forwarding."),
+  ],
   dns_static: [
-    "DNS Static",
-    "Локальные IPv4 A-записи для устройств и сервисов.",
+    t("DNS Static"),
+    t("Локальные IPv4 A-записи для устройств и сервисов."),
   ],
   interface_lists: [
-    "Interface Lists",
-    "Группы WAN, LAN и других интерфейсов для правил Firewall.",
+    t("Interface Lists"),
+    t("Группы WAN, LAN и других интерфейсов для правил Firewall."),
   ],
   filter: [
     "Firewall Filter",
-    "Правила input, forward и output для защиты Linux-роутера.",
+    t("Правила input, forward и output для защиты Linux-роутера."),
   ],
 };
 
 const itemSchemas = {
   dns_static: {
-    title: "Static DNS Record",
-    label: "Добавить запись",
+    title: t("Static DNS Record"),
+    label: t("Добавить запись"),
     icon: "list",
     fields: [
-      ["name", "DNS Name", "text", "nas.home", true],
-      ["address", "IPv4 Address", "text", "192.168.10.20", true],
-      ["ttl", "TTL · seconds", "number", 300, true],
-      ["enabled", "Enabled", "bool", true],
-      ["comment", "Comment", "text", ""],
+      ["name", t("DNS Name"), "text", "nas.home", true],
+      ["address", t("IPv4 Address"), "text", "192.168.10.20", true],
+      ["ttl", t("TTL · seconds"), "number", 300, true],
+      ["enabled", t("Enabled"), "bool", true],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["name", "Name"],
-      ["address", "Address"],
-      ["ttl", "TTL"],
-      ["enabled", "Status"],
-      ["comment", "Comment"],
+      ["name", t("Name")],
+      ["address", t("Address")],
+      ["ttl", t("TTL")],
+      ["enabled", t("Status")],
+      ["comment", t("Comment")],
     ],
-    note: "Записи обслуживаются локальным DNS OpenMikroRout. Включите DNS в Settings и настройте адрес роутера как DNS у клиентов. Допускается несколько A-записей с одним именем.",
+    note: t(
+      "Записи обслуживаются локальным DNS OpenMikroRout. Включите DNS в Settings и настройте адрес роутера как DNS у клиентов. Допускается несколько A-записей с одним именем.",
+    ),
   },
   addresses: {
-    title: "IP Address",
-    label: "Назначить IP",
+    title: t("IP Address"),
+    label: t("Назначить IP"),
     icon: "network",
     fields: [
-      ["interface", "Interface", "interface", "", true],
-      ["address", "Address / Prefix", "text", "192.168.10.1/24", true],
-      ["enabled", "Enabled", "bool", true],
-      ["comment", "Comment", "text", ""],
+      ["interface", t("Interface"), "interface", "", true],
+      ["address", t("Address / Prefix"), "text", "192.168.10.1/24", true],
+      ["enabled", t("Enabled"), "bool", true],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["address", "Address"],
-      ["interface", "Interface"],
-      ["enabled", "Status"],
-      ["comment", "Comment"],
+      ["address", t("Address")],
+      ["interface", t("Interface")],
+      ["enabled", t("Status")],
+      ["comment", t("Comment")],
     ],
-    note: "Укажите адрес с длиной префикса. Например, 192.168.10.1/24. Сначала создайте bridge / VLAN, если адрес должен находиться на нём.",
+    note: t(
+      "Укажите адрес с длиной префикса. Например, 192.168.10.1/24. Сначала создайте bridge / VLAN, если адрес должен находиться на нём.",
+    ),
   },
   bridges: {
-    title: "Bridge",
-    label: "Создать bridge",
+    title: t("Bridge"),
+    label: t("Создать bridge"),
     icon: "network",
     fields: [
-      ["name", "Name", "text", "bridge-lan", true],
-      ["members", "Ports", "interfaces", []],
-      ["stp", "Spanning Tree", "bool", true],
-      ["mtu", "MTU", "number", 1500],
-      ["enabled", "Enabled", "bool", true],
-      ["comment", "Comment", "text", ""],
+      ["name", t("Name"), "text", "bridge-lan", true],
+      ["members", t("Ports"), "interfaces", []],
+      ["stp", t("Spanning Tree"), "bool", true],
+      ["mtu", t("MTU"), "number", 1500],
+      ["enabled", t("Enabled"), "bool", true],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["name", "Name"],
-      ["members", "Ports"],
-      ["stp", "STP"],
-      ["mtu", "MTU"],
-      ["enabled", "Status"],
+      ["name", t("Name")],
+      ["members", t("Ports")],
+      ["stp", t("STP")],
+      ["mtu", t("MTU")],
+      ["enabled", t("Status")],
     ],
-    note: "Ports — интерфейсы, которые станут участниками bridge. IP и DHCP обычно назначаются на сам bridge. Интерфейс, уже включённый в чужой bridge, не будет захвачен автоматически.",
+    note: t(
+      "Ports — интерфейсы, которые станут участниками bridge. IP и DHCP обычно назначаются на сам bridge. Интерфейс, уже включённый в чужой bridge, не будет захвачен автоматически.",
+    ),
   },
   vlans: {
-    title: "VLAN Interface",
-    label: "Создать VLAN",
+    title: t("VLAN Interface"),
+    label: t("Создать VLAN"),
     icon: "network",
     fields: [
-      ["name", "Name", "text", "vlan20", true],
-      ["parent", "Parent Interface", "interface", "", true],
-      ["vlan_id", "VLAN ID", "number", 20, true],
-      ["mtu", "MTU", "number", 1500],
-      ["enabled", "Enabled", "bool", true],
-      ["comment", "Comment", "text", ""],
+      ["name", t("Name"), "text", "vlan20", true],
+      ["parent", t("Parent Interface"), "interface", "", true],
+      ["vlan_id", t("VLAN ID"), "number", 20, true],
+      ["mtu", t("MTU"), "number", 1500],
+      ["enabled", t("Enabled"), "bool", true],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["name", "Name"],
-      ["parent", "Parent"],
-      ["vlan_id", "VLAN ID"],
-      ["mtu", "MTU"],
-      ["enabled", "Status"],
+      ["name", t("Name")],
+      ["parent", t("Parent")],
+      ["vlan_id", t("VLAN ID")],
+      ["mtu", t("MTU")],
+      ["enabled", t("Status")],
     ],
-    note: "Тег 802.1Q: VLAN ID от 1 до 4094. После создания назначьте IP-адрес и при необходимости DHCP на новый VLAN-интерфейс.",
+    note: t(
+      "Тег 802.1Q: VLAN ID от 1 до 4094. После создания назначьте IP-адрес и при необходимости DHCP на новый VLAN-интерфейс.",
+    ),
   },
   virtual_interfaces: {
-    title: "Virtual Interface",
-    label: "Создать интерфейс",
+    title: t("Virtual Interface"),
+    label: t("Создать интерфейс"),
     icon: "network",
     fields: [
-      ["name", "Name", "text", "dummy0", true],
-      ["kind", "Type", "dummy", "dummy"],
-      ["mtu", "MTU", "number", 1500],
-      ["enabled", "Enabled", "bool", true],
-      ["comment", "Comment", "text", ""],
+      ["name", t("Name"), "text", "dummy0", true],
+      ["kind", t("Type"), "dummy", "dummy"],
+      ["mtu", t("MTU"), "number", 1500],
+      ["enabled", t("Enabled"), "bool", true],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["name", "Name"],
-      ["kind", "Type"],
-      ["mtu", "MTU"],
-      ["enabled", "Status"],
-      ["comment", "Comment"],
+      ["name", t("Name")],
+      ["kind", t("Type")],
+      ["mtu", t("MTU")],
+      ["enabled", t("Status")],
+      ["comment", t("Comment")],
     ],
-    note: "Dummy — программный интерфейс без физического порта. Подходит для локальных адресов и маршрутизации; это не VPN-туннель.",
+    note: t(
+      "Dummy — программный интерфейс без физического порта. Подходит для локальных адресов и маршрутизации; это не VPN-туннель.",
+    ),
   },
   routes: {
-    title: "Static Route",
-    label: "Добавить маршрут",
+    title: t("Static Route"),
+    label: t("Добавить маршрут"),
     icon: "arrow",
     fields: [
-      ["destination", "Dst. Address", "text", "0.0.0.0/0", true],
-      ["gateway", "Gateway", "text", ""],
-      ["interface", "Interface", "interface", ""],
+      ["destination", t("Dst. Address"), "text", "0.0.0.0/0", true],
+      ["gateway", t("Gateway"), "text", ""],
+      ["interface", t("Interface"), "interface", ""],
       ["metric", "Metric", "number", 100],
-      ["enabled", "Enabled", "bool", true],
-      ["comment", "Comment", "text", ""],
+      ["enabled", t("Enabled"), "bool", true],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["destination", "Dst. Address"],
-      ["gateway", "Gateway"],
-      ["interface", "Interface"],
+      ["destination", t("Dst. Address")],
+      ["gateway", t("Gateway")],
+      ["interface", t("Interface")],
       ["metric", "Metric"],
-      ["enabled", "Status"],
+      ["enabled", t("Status")],
     ],
-    note: "0.0.0.0/0 — маршрут по умолчанию. Укажите gateway и / или интерфейс. Системные маршруты показаны ниже отдельно и не редактируются этой таблицей.",
+    note: t(
+      "0.0.0.0/0 — маршрут по умолчанию. Укажите gateway и / или интерфейс. Системные маршруты показаны ниже отдельно и не редактируются этой таблицей.",
+    ),
   },
   pools: {
-    title: "IP Pool",
-    label: "Создать пул",
+    title: t("IP Pool"),
+    label: t("Создать пул"),
     icon: "list",
     fields: [
-      ["name", "Name", "text", "pool-lan", true],
-      ["start", "From Address", "text", "192.168.10.100", true],
-      ["end", "To Address", "text", "192.168.10.200", true],
+      ["name", t("Name"), "text", "pool-lan", true],
+      ["start", t("From Address"), "text", "192.168.10.100", true],
+      ["end", t("To Address"), "text", "192.168.10.200", true],
     ],
     columns: [
-      ["name", "Name"],
-      ["start", "From Address"],
-      ["end", "To Address"],
+      ["name", t("Name")],
+      ["start", t("From Address")],
+      ["end", t("To Address")],
     ],
-    note: "Начальный и конечный адрес включены в диапазон. Не включайте адрес самого роутера, network и broadcast. Пул выбирается в настройках DHCP Server.",
+    note: t(
+      "Начальный и конечный адрес включены в диапазон. Не включайте адрес самого роутера, network и broadcast. Пул выбирается в настройках DHCP Server.",
+    ),
   },
   dhcp_servers: {
-    title: "DHCP Server",
-    label: "Создать DHCP",
+    title: t("DHCP Server"),
+    label: t("Создать DHCP"),
     icon: "server",
     fields: [
-      ["name", "Name", "text", "dhcp-lan", true],
-      ["interface", "Interface", "interface", "", true],
-      ["pool", "Address Pool", "pool", "", true],
-      ["network", "Network", "text", "192.168.10.0/24", true],
-      ["gateway", "Gateway", "text", "192.168.10.1", true],
-      ["dns_servers", "DNS Servers", "lines", []],
-      ["lease_minutes", "Lease Time (min)", "number", 720],
-      ["enabled", "Enabled", "bool", true],
-      ["comment", "Comment", "text", ""],
+      ["name", t("Name"), "text", "dhcp-lan", true],
+      ["interface", t("Interface"), "interface", "", true],
+      ["pool", t("Address Pool"), "pool", "", true],
+      ["network", t("Network"), "text", "192.168.10.0/24", true],
+      ["gateway", t("Gateway"), "text", "192.168.10.1", true],
+      ["dns_servers", t("DNS Servers"), "lines", []],
+      ["lease_minutes", t("Lease Time (min)"), "number", 720],
+      ["enabled", t("Enabled"), "bool", true],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["name", "Name"],
-      ["interface", "Interface"],
-      ["pool", "Address Pool"],
-      ["network", "Network"],
+      ["name", t("Name")],
+      ["interface", t("Interface")],
+      ["pool", t("Address Pool")],
+      ["network", t("Network")],
       ["lease_minutes", "Lease, min"],
-      ["enabled", "Status"],
+      ["enabled", t("Status")],
     ],
-    note: "Назначьте статический IP выбранному интерфейсу и создайте пул. Укажите DNS Servers либо включите локальный DNS на этом интерфейсе. На одном интерфейсе должен работать один DHCP-сервер; существующие системные DHCP-службы приложение не останавливает.",
+    note: t(
+      "Назначьте статический IP выбранному интерфейсу и создайте пул. Укажите DNS Servers либо включите локальный DNS на этом интерфейсе. На одном интерфейсе должен работать один DHCP-сервер; существующие системные DHCP-службы приложение не останавливает.",
+    ),
   },
   dhcp_reservations: {
-    title: "Static DHCP Lease",
-    label: "Добавить привязку",
+    title: t("Static DHCP Lease"),
+    label: t("Добавить привязку"),
     icon: "lock",
     fields: [
-      ["server", "DHCP Server", "server", "", true],
-      ["mac", "MAC Address", "text", "", true],
-      ["address", "IP Address", "text", "", true],
-      ["hostname", "Hostname", "text", ""],
-      ["enabled", "Enabled", "bool", true],
-      ["comment", "Comment", "text", ""],
+      ["server", t("DHCP Server"), "server", "", true],
+      ["mac", t("MAC Address"), "text", "", true],
+      ["address", t("IP Address"), "text", "", true],
+      ["hostname", t("Hostname"), "text", ""],
+      ["enabled", t("Enabled"), "bool", true],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["address", "IP Address"],
-      ["mac", "MAC Address"],
-      ["hostname", "Hostname"],
+      ["address", t("IP Address")],
+      ["mac", t("MAC Address")],
+      ["hostname", t("Hostname")],
       ["server", "Server"],
-      ["enabled", "Status"],
+      ["enabled", t("Status")],
     ],
-    note: "Клиент с этим MAC-адресом будет получать постоянный IP в сети указанного DHCP-сервера.",
+    note: t(
+      "Клиент с этим MAC-адресом будет получать постоянный IP в сети указанного DHCP-сервера.",
+    ),
   },
   interface_lists: {
-    title: "Interface List",
-    label: "Создать список",
+    title: t("Interface List"),
+    label: t("Создать список"),
     icon: "list",
     fields: [
-      ["name", "Name", "text", "LAN", true],
-      ["members", "Interfaces", "interfaces", []],
-      ["comment", "Comment", "text", ""],
+      ["name", t("Name"), "text", t("LAN"), true],
+      ["members", t("Interfaces"), "interfaces", []],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["name", "Name"],
-      ["members", "Interfaces"],
-      ["comment", "Comment"],
+      ["name", t("Name")],
+      ["members", t("Interfaces")],
+      ["comment", t("Comment")],
     ],
-    note: "Список объединяет интерфейсы логически и не соединяет их в bridge. Используйте WAN / LAN в условиях Firewall и NAT.",
+    note: t(
+      "Список объединяет интерфейсы логически и не соединяет их в bridge. Используйте WAN / LAN в условиях Firewall и NAT.",
+    ),
   },
   filter: {
-    title: "Filter Rule",
-    label: "Добавить правило",
+    title: t("Filter Rule"),
+    label: t("Добавить правило"),
     icon: "shield",
     fields: [
-      ["name", "Name", "text", "", true],
-      ["chain", "Chain", "chain", "forward"],
-      ["action", "Action", "filter-action", "accept"],
-      ["protocol", "Protocol", "protocol", "any"],
-      ["src_address", "Src. Address", "text", ""],
-      ["dst_address", "Dst. Address", "text", ""],
-      ["src_list", "Src. Address List", "address-list", ""],
-      ["dst_list", "Dst. Address List", "address-list", ""],
-      ["src_country", "Src. Country", "country", ""],
-      ["dst_country", "Dst. Country", "country", ""],
-      ["f2b_profile", "Ban list · профиль", "text", ""],
+      ["name", t("Name"), "text", "", true],
+      ["chain", t("Chain"), "chain", "forward"],
+      ["action", t("Action"), "filter-action", "accept"],
+      ["protocol", t("Protocol"), "protocol", "any"],
+      ["src_address", t("Src. Address"), "text", ""],
+      ["dst_address", t("Dst. Address"), "text", ""],
+      ["src_list", t("Src. Address List"), "address-list", ""],
+      ["dst_list", t("Dst. Address List"), "address-list", ""],
+      ["src_country", t("Src. Country"), "country", ""],
+      ["dst_country", t("Dst. Country"), "country", ""],
+      ["f2b_profile", t("Ban list · профиль"), "text", ""],
       ["f2b_match", "Source IP", "f2b-match", "not_banned"],
-      ["src_ports", "Src. Port", "text", ""],
-      ["dst_ports", "Dst. Port", "text", ""],
-      ["in_interface", "In. Interface", "interface", ""],
-      ["out_interface", "Out. Interface", "interface", ""],
-      ["in_interface_list", "In. Interface List", "interface-list", ""],
-      ["out_interface_list", "Out. Interface List", "interface-list", ""],
-      ["connection_states", "Connection State", "states", []],
-      ["enabled", "Enabled", "bool", true],
-      ["comment", "Comment", "text", ""],
+      ["src_ports", t("Src. Port"), "text", ""],
+      ["dst_ports", t("Dst. Port"), "text", ""],
+      ["in_interface", t("In. Interface"), "interface", ""],
+      ["out_interface", t("Out. Interface"), "interface", ""],
+      ["in_interface_list", t("In. Interface List"), "interface-list", ""],
+      ["out_interface_list", t("Out. Interface List"), "interface-list", ""],
+      ["connection_states", t("Connection State"), "states", []],
+      ["enabled", t("Enabled"), "bool", true],
+      ["comment", t("Comment"), "text", ""],
     ],
     columns: [
-      ["name", "Name"],
-      ["chain", "Chain"],
-      ["action", "Action"],
-      ["protocol", "Protocol"],
-      ["src_address", "Source"],
-      ["dst_address", "Destination"],
-      ["dst_ports", "Dst. Port"],
-      ["enabled", "Status"],
+      ["name", t("Name")],
+      ["chain", t("Chain")],
+      ["action", t("Action")],
+      ["protocol", t("Protocol")],
+      ["src_address", t("Source")],
+      ["dst_address", t("Destination")],
+      ["dst_ports", t("Dst. Port")],
+      ["enabled", t("Status")],
     ],
-    note: "Input — к самому роутеру; Forward — транзитный трафик; Output — от роутера. Правила работают сверху вниз. Не блокируйте доступ к панели и SSH без разрешающего правила выше.",
+    note: t(
+      "Input — к самому роутеру; Forward — транзитный трафик; Output — от роутера. Правила работают сверху вниз. Не блокируйте доступ к панели и SSH без разрешающего правила выше.",
+    ),
   },
 };
 
@@ -381,7 +413,7 @@ function optionsFor(ctx, type, item) {
     ]);
   return (
     {
-      dummy: [["dummy", "dummy · программный интерфейс"]],
+      dummy: [["dummy", t("dummy · программный интерфейс")]],
       chain: [
         ["input", "input"],
         ["forward", "forward"],
@@ -408,29 +440,38 @@ function renderField(ctx, definition, item) {
   const value = item[key] ?? fallback;
   if (type === "country") return countryField(ctx, key, value);
   if (type === "bool")
-    return `<div class="field router-checkbox"><span>${e(label)}</span><label class="checkbox-label"><input type="checkbox" name="${key}" ${value ? "checked" : ""}>${key === "stp" ? "Защита от петель" : "Включено"}</label></div>`;
+    return html`<div class="field router-checkbox"><span>${e(t(label))}</span><label class="checkbox-label"><input type="checkbox" name="${key}" ${value ? "checked" : ""}>${key === "stp" ? t("Защита от петель") : t("Включено")}</label></div>`;
   if (type === "lines")
-    return `<label class="field"><span>${e(label)}</span><textarea name="${key}" rows="3" placeholder="1.1.1.1&#10;9.9.9.9">${e(value.join("\n"))}</textarea><small>Один IPv4-адрес в строке.</small></label>`;
+    return html`<label class="field"><span>${e(t(label))}</span><textarea name="${key}" rows="3" placeholder="1.1.1.1&#10;9.9.9.9">${e(value.join("\n"))}</textarea><small>Один IPv4-адрес в строке.</small></label>`;
   const options = optionsFor(ctx, type, item);
   if (options.length || !["text", "number"].includes(type)) {
     const multiple = ["interfaces", "states"].includes(type);
     const values = multiple ? value : [value];
     const known = new Set(options.map(([id]) => id));
     for (const id of values)
-      if (id && !known.has(id)) options.push([id, `${id} · из конфигурации`]);
-    return `<label class="field"><span>${e(label)}</span><select name="${key}" ${multiple ? 'multiple size="5"' : ""} ${required ? "required" : ""}>${multiple ? "" : '<option value="">—</option>'}${options.map(([id, text]) => `<option value="${e(id)}" ${values.includes(id) ? "selected" : ""}>${e(text)}</option>`).join("")}</select>${multiple ? "<small>Ctrl / Cmd — выбрать несколько.</small>" : ""}</label>`;
+      if (id && !known.has(id))
+        options.push([id, html`${id} · из конфигурации`]);
+    if (multiple)
+      return checkboxSelect({
+        name: key,
+        label: t(label),
+        options,
+        selected: values,
+        required,
+      });
+    return html`<label class="field"><span>${e(t(label))}</span><select name="${key}" ${required ? "required" : ""}><option value="">—</option>${options.map(([id, text]) => html`<option value="${e(id)}" ${values.includes(id) ? "selected" : ""}>${e(text)}</option>`).join("")}</select></label>`;
   }
-  return `<label class="field"><span>${e(label)}</span><input name="${key}" value="${e(value)}" type="${type}" placeholder="${e(type === "text" ? fallback : "")}" ${required ? "required" : ""} ${type === "number" ? 'step="1" min="0"' : 'maxlength="200"'}></label>`;
+  return html`<label class="field"><span>${e(t(label))}</span><input name="${key}" value="${e(value)}" type="${type}" placeholder="${e(type === "text" ? fallback : "")}" ${required ? "required" : ""} ${type === "number" ? 'step="1" min="0"' : 'maxlength="200"'}></label>`;
 }
 
 function toolbar(ctx, kind) {
-  return `<div class="toolbar"><button class="primary add" data-action="router-new" data-kind="${kind}" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("plus")}${itemSchemas[kind].label}</button><span class="muted">${collection(ctx, kind).length} записей · черновик</span><button class="small" data-action="refresh">${ctx.icon("refresh")}Обновить</button></div>`;
+  return html`<div class="toolbar"><button class="primary add" data-action="router-new" data-kind="${kind}" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("plus")}${t(itemSchemas[kind].label)}</button><span class="muted">${collection(ctx, kind).length} записей · черновик</span><button class="small" data-action="refresh">${ctx.icon("refresh")}Обновить</button></div>`;
 }
 
 function valueCell(ctx, key, item) {
   const value = item[key];
   if (key === "enabled")
-    return `<span class="status-tag ${value ? "on" : "off"}"><i class="dot ${value ? "" : "off"}"></i>${value ? "enabled" : "disabled"}</span>`;
+    return html`<span class="status-tag ${value ? "on" : "off"}"><i class="dot ${value ? "" : "off"}"></i>${value ? t("enabled") : t("disabled")}</span>`;
   if (key === "stp") return value ? "on" : "off";
   if (key === "action") return ctx.actionBadge(value);
   if (key === "src_address" || key === "dst_address") {
@@ -439,12 +480,12 @@ function valueCell(ctx, key, item) {
     const list = item[source ? "src_list" : "dst_list"];
     const details = [];
     if (country) details.push(`Country: ${country}`);
-    if (source && item.protection?.enabled) details.push("Fail2ban · авто");
+    if (source && item.protection?.enabled) details.push(t("Fail2ban · авто"));
     if (source && item.f2b_profile)
       details.push(
         `${item.f2b_match === "banned" ? "∈" : "∉"} f2b_${item.f2b_profile}`,
       );
-    return `${ctx.e(list || value || "any")}${details.length ? `<small class="cell-note">${ctx.e(details.join(" · "))}</small>` : ""}`;
+    return `${ctx.e(list || value || "any")}${details.length ? html`<small class="cell-note">${ctx.e(details.join(" · "))}</small>` : ""}`;
   }
   return ctx.e(Array.isArray(value) ? value.join(", ") || "—" : (value ?? "—"));
 }
@@ -453,18 +494,18 @@ function entityTable(ctx, kind) {
   const schema = itemSchemas[kind];
   const rows = collection(ctx, kind);
   const locked = ctx.state.pending || ctx.offline;
-  return `${toolbar(ctx, kind)}<div class="table-scroll router-table-scroll"><table class="rules-table router-table"><thead><tr><th>#</th>${schema.columns.map(([, label]) => `<th>${ctx.e(label)}</th>`).join("")}<th></th></tr></thead><tbody>${rows.map((item, index) => `<tr data-router-id="${ctx.e(item.id)}" data-kind="${kind}" tabindex="0" class="${item.enabled === false ? "disabled" : ""}"><td class="row-number">${kind === "filter" ? `<button class="drag-handle" draggable="${!locked}" data-filter-drag="${ctx.e(item.id)}" aria-label="Перетащить ${ctx.e(item.name)}" title="Перетащить правило" ${locked ? "disabled" : ""}>${ctx.icon("grip")}</button>` : ""}${index}</td>${schema.columns.map(([key]) => `<td>${valueCell(ctx, key, item)}</td>`).join("")}<td><div class="row-actions">${kind === "filter" ? `<button class="icon ghost" data-action="router-move" data-kind="filter" data-id="${ctx.e(item.id)}" data-direction="-1" title="Выше" aria-label="Выше ${ctx.e(item.name)}" ${index === 0 || locked ? "disabled" : ""}>${ctx.icon("up")}</button><button class="icon ghost" data-action="router-move" data-kind="filter" data-id="${ctx.e(item.id)}" data-direction="1" title="Ниже" aria-label="Ниже ${ctx.e(item.name)}" ${index === rows.length - 1 || locked ? "disabled" : ""}>${ctx.icon("arrowdown")}</button>` : ""}${"enabled" in item ? `<button class="icon ghost" data-action="router-toggle" data-kind="${kind}" data-id="${ctx.e(item.id)}" title="${item.enabled ? "Отключить" : "Включить"}" aria-label="${item.enabled ? "Отключить" : "Включить"} ${ctx.e(item.name || item.address || item.destination)}" ${locked ? "disabled" : ""}>${ctx.icon(item.enabled ? "x" : "check")}</button>` : ""}<button class="icon ghost" data-action="router-edit" data-kind="${kind}" data-id="${ctx.e(item.id)}" title="Редактировать" aria-label="Редактировать ${ctx.e(item.name || item.address || item.destination)}" ${locked ? "disabled" : ""}>${ctx.icon("edit")}</button><button class="icon ghost danger" data-action="router-remove" data-kind="${kind}" data-id="${ctx.e(item.id)}" title="Удалить из черновика" aria-label="Удалить ${ctx.e(item.name || item.address || item.destination)}" ${locked ? "disabled" : ""}>${ctx.icon("minus")}</button></div></td></tr>`).join("")}</tbody></table>${rows.length ? "" : ctx.empty(schema.icon, "Пока нет записей", schema.note)}</div><div class="router-section-note">${ctx.icon("info")}<span>${ctx.e(schema.note)}</span></div>`;
+  return html`${toolbar(ctx, kind)}<div class="table-scroll router-table-scroll"><table class="rules-table router-table"><thead><tr><th>#</th>${schema.columns.map(([, label]) => html`<th>${ctx.e(t(label))}</th>`).join("")}<th></th></tr></thead><tbody>${rows.map((item, index) => html`<tr data-router-id="${ctx.e(item.id)}" data-kind="${kind}" tabindex="0" class="${item.enabled === false ? "disabled" : ""}"><td class="row-number">${kind === "filter" ? html`<button class="drag-handle" draggable="${!locked}" data-filter-drag="${ctx.e(item.id)}" aria-label="Перетащить ${ctx.e(item.name)}" title="Перетащить правило" ${locked ? "disabled" : ""}>${ctx.icon("grip")}</button>` : ""}${index}</td>${schema.columns.map(([key]) => html`<td>${valueCell(ctx, key, item)}</td>`).join("")}<td><div class="row-actions">${kind === "filter" ? html`<button class="icon ghost" data-action="router-move" data-kind="filter" data-id="${ctx.e(item.id)}" data-direction="-1" title="Выше" aria-label="Выше ${ctx.e(item.name)}" ${index === 0 || locked ? "disabled" : ""}>${ctx.icon("up")}</button><button class="icon ghost" data-action="router-move" data-kind="filter" data-id="${ctx.e(item.id)}" data-direction="1" title="Ниже" aria-label="Ниже ${ctx.e(item.name)}" ${index === rows.length - 1 || locked ? "disabled" : ""}>${ctx.icon("arrowdown")}</button>` : ""}${"enabled" in item ? html`<button class="icon ghost" data-action="router-toggle" data-kind="${kind}" data-id="${ctx.e(item.id)}" title="${item.enabled ? t("Отключить") : t("Включить")}" aria-label="${item.enabled ? t("Отключить") : t("Включить")} ${ctx.e(item.name || item.address || item.destination)}" ${locked ? "disabled" : ""}>${ctx.icon(item.enabled ? "x" : "check")}</button>` : ""}<button class="icon ghost" data-action="router-edit" data-kind="${kind}" data-id="${ctx.e(item.id)}" title="Редактировать" aria-label="Редактировать ${ctx.e(item.name || item.address || item.destination)}" ${locked ? "disabled" : ""}>${ctx.icon("edit")}</button><button class="icon ghost danger" data-action="router-remove" data-kind="${kind}" data-id="${ctx.e(item.id)}" title="Удалить из черновика" aria-label="Удалить ${ctx.e(item.name || item.address || item.destination)}" ${locked ? "disabled" : ""}>${ctx.icon("minus")}</button></div></td></tr>`).join("")}</tbody></table>${rows.length ? "" : ctx.empty(schema.icon, t("Пока нет записей"), t(schema.note))}</div><div class="router-section-note">${ctx.icon("info")}<span>${ctx.e(t(schema.note))}</span></div>`;
 }
 
 function actualRoutes(ctx) {
   const rows = ctx.networkStatus?.routes || [];
   if (!rows.length) return "";
-  return `<div class="router-subheading"><h3>Таблица маршрутизации хоста</h3><span>Только чтение${ctx.isDemo() ? " · пример" : ""}</span></div><div class="table-scroll router-table-scroll"><table class="rules-table"><thead><tr><th>Destination</th><th>Gateway</th><th>Interface</th><th>Metric</th><th>Owner</th></tr></thead><tbody>${rows.map((route) => `<tr><td class="mono">${ctx.e(route.destination || route.dst || "default")}</td><td class="mono">${ctx.e(route.gateway || "—")}</td><td>${ctx.e(route.interface || route.dev || "—")}</td><td>${ctx.e(route.metric ?? "—")}</td><td>${route.managed ? "OpenMikroRout" : "system"}</td></tr>`).join("")}</tbody></table></div>`;
+  return html`<div class="router-subheading"><h3>Таблица маршрутизации хоста</h3><span>Только чтение${ctx.isDemo() ? t(" · пример") : ""}</span></div><div class="table-scroll router-table-scroll"><table class="rules-table"><thead><tr><th>Destination</th><th>Gateway</th><th>Interface</th><th>Metric</th><th>Owner</th></tr></thead><tbody>${rows.map((route) => html`<tr><td class="mono">${ctx.e(route.destination || route.dst || "default")}</td><td class="mono">${ctx.e(route.gateway || "—")}</td><td>${ctx.e(route.interface || route.dev || "—")}</td><td>${ctx.e(route.metric ?? "—")}</td><td>${route.managed ? "OpenMikroRout" : "system"}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderLeases(ctx) {
   const leases = ctx.networkStatus?.leases || [];
-  return `<div class="router-subheading"><h3>Dynamic Leases</h3><button class="small" data-action="refresh">${ctx.icon("refresh")}Обновить</button></div><div class="table-scroll router-table-scroll"><table class="rules-table"><thead><tr><th>IP Address</th><th>MAC Address</th><th>Hostname</th><th>Expires</th></tr></thead><tbody>${leases.map((lease) => `<tr><td class="mono">${ctx.e(lease.address)}</td><td class="mono">${ctx.e(lease.mac)}</td><td>${ctx.e(lease.hostname || "—")}</td><td>${Number(lease.expires) > 0 ? ctx.e(new Date(Number(lease.expires) * 1000).toLocaleString("ru-RU")) : "unlimited"}</td></tr>`).join("")}</tbody></table>${leases.length ? "" : ctx.empty("server", "Нет активных аренд", "Здесь появятся адреса, выданные DHCP-серверами OpenMikroRout.")}</div><div class="router-subheading"><h3>Static Leases</h3><span>Постоянные привязки IP ↔ MAC</span></div>${entityTable(ctx, "dhcp_reservations")}`;
+  return html`<div class="router-subheading"><h3>Dynamic Leases</h3><button class="small" data-action="refresh">${ctx.icon("refresh")}Обновить</button></div><div class="table-scroll router-table-scroll"><table class="rules-table"><thead><tr><th>IP Address</th><th>MAC Address</th><th>Hostname</th><th>Expires</th></tr></thead><tbody>${leases.map((lease) => html`<tr><td class="mono">${ctx.e(lease.address)}</td><td class="mono">${ctx.e(lease.mac)}</td><td>${ctx.e(lease.hostname || "—")}</td><td>${Number(lease.expires) > 0 ? ctx.e(new Date(Number(lease.expires) * 1000).toLocaleString(locale())) : "unlimited"}</td></tr>`).join("")}</tbody></table>${leases.length ? "" : ctx.empty("server", t("Нет активных аренд"), t("Здесь появятся адреса, выданные DHCP-серверами OpenMikroRout."))}</div><div class="router-subheading"><h3>Static Leases</h3><span>Постоянные привязки IP ↔ MAC</span></div>${entityTable(ctx, "dhcp_reservations")}`;
 }
 
 function renderDns(ctx) {
@@ -480,21 +521,21 @@ function renderDns(ctx) {
   const item = { ...dns, forwarding: network.forwarding ?? null };
   const daemon =
     ctx.networkStatus?.dnsmasq?.dns || ctx.networkStatus?.dnsmasq || {};
-  return `<div class="toolbar"><span class="muted">DNS cache / forwarder</span><span class="status-tag ${daemon.running ? "on" : "off"}">${ctx.isDemo() ? "DEMO" : daemon.running ? "Running" : "Stopped"}</span><button class="small" data-action="router-reload-dns">Загрузить черновик</button></div><div class="view-panel router-settings"><form id="router-dns-form" class="form-grid" data-revision="${ctx.state.revision}">${[
-    ["enabled", "DNS Service", "bool", false],
-    ["listen_interfaces", "Listen Interfaces", "interfaces", []],
-    ["servers", "Upstream Servers", "lines", []],
-    ["cache_size", "Cache Size", "number", 1000],
-    ["local_domain", "Local Domain", "text", ""],
+  return html`<div class="toolbar"><span class="muted">DNS cache / forwarder</span><span class="status-tag ${daemon.running ? "on" : "off"}">${ctx.isDemo() ? "DEMO" : daemon.running ? t("Running") : t("Stopped")}</span><button class="small" data-action="router-reload-dns">Загрузить черновик</button></div><div class="view-panel router-settings"><form id="router-dns-form" class="form-grid" data-revision="${ctx.state.revision}">${[
+    ["enabled", t("DNS Service"), "bool", false],
+    ["listen_interfaces", t("Listen Interfaces"), "interfaces", []],
+    ["servers", t("Upstream Servers"), "lines", []],
+    ["cache_size", t("Cache Size"), "number", 1000],
+    ["local_domain", t("Local Domain"), "text", ""],
   ]
     .map((field) => renderField(ctx, field, item))
     .join(
       "",
-    )}<label class="field"><span>IPv4 Forwarding</span><select name="forwarding"><option value="preserve" ${item.forwarding === null ? "selected" : ""}>Не менять настройку хоста</option><option value="on" ${item.forwarding === true ? "selected" : ""}>Включить маршрутизацию</option><option value="off" ${item.forwarding === false ? "selected" : ""}>Выключить маршрутизацию</option></select><small>Для транзита между интерфейсами и NAT необходимо включить forwarding.</small></label><div class="field-note wide">DNS слушает только выбранные интерфейсы. Разрешите TCP / UDP 53 в Firewall для доверенной LAN. Системный resolv.conf и сторонние DNS-службы не заменяются.</div>${daemon.error ? `<div class="connection-error wide">${ctx.e(daemon.error)}</div>` : ""}<div class="wide settings-actions"><button type="button" class="primary" data-action="router-save-dns" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("check")}Сохранить в черновик</button></div></form></div>`;
+    )}<label class="field"><span>IPv4 Forwarding</span><select name="forwarding"><option value="preserve" ${item.forwarding === null ? "selected" : ""}>Не менять настройку хоста</option><option value="on" ${item.forwarding === true ? "selected" : ""}>Включить маршрутизацию</option><option value="off" ${item.forwarding === false ? "selected" : ""}>Выключить маршрутизацию</option></select><small>Для транзита между интерфейсами и NAT необходимо включить forwarding.</small></label><div class="field-note wide">DNS слушает только выбранные интерфейсы. Разрешите TCP / UDP 53 в Firewall для доверенной LAN. Системный resolv.conf и сторонние DNS-службы не заменяются.</div>${daemon.error ? html`<div class="connection-error wide">${ctx.e(daemon.error)}</div>` : ""}<div class="wide settings-actions"><button type="button" class="primary" data-action="router-save-dns" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("check")}Сохранить в черновик</button></div></form></div>`;
 }
 
 function renderWebSettings(ctx) {
-  return `<div class="view-panel router-settings"><form id="router-domain-form" class="form-grid" data-revision="${ctx.state.revision}"><label class="field wide"><span>Домен панели</span><input name="web_domain" type="text" value="${ctx.e(ctx.state.config.web_domain || "")}" placeholder="router.example.com" maxlength="254" autocomplete="off" autocapitalize="none" spellcheck="false"><small>Имя без протокола, порта и пути. Оставьте пустым, чтобы убрать дополнительный домен.</small></label><div class="field-note wide">Создайте DNS A-запись домена на IPv4-адрес роутера. Панель будет доступна по домену на текущем порту. Сохраните черновик, затем нажмите «Применить» и подтвердите связь.</div><div class="wide settings-actions"><button type="button" class="primary" data-action="router-save-domain" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("check")}Сохранить в черновик</button></div></form></div>`;
+  return html`<div class="view-panel router-settings"><form id="router-domain-form" class="form-grid" data-revision="${ctx.state.revision}"><label class="field wide"><span>Домен панели</span><input name="web_domain" type="text" value="${ctx.e(ctx.state.config.web_domain || "")}" placeholder="router.example.com" maxlength="254" autocomplete="off" autocapitalize="none" spellcheck="false"><small>Имя без протокола, порта и пути. Оставьте пустым, чтобы убрать дополнительный домен.</small></label><div class="field-note wide">Создайте DNS A-запись домена на IPv4-адрес роутера. Панель будет доступна по домену на текущем порту. Сохраните черновик, затем нажмите «Применить» и подтвердите связь.</div><div class="wide settings-actions"><button type="button" class="primary" data-action="router-save-domain" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("check")}Сохранить в черновик</button></div></form></div>`;
 }
 
 function renderOverview(ctx) {
@@ -504,41 +545,41 @@ function renderOverview(ctx) {
     [
       "addresses",
       "network",
-      "IP-адреса",
+      t("IP-адреса"),
       count("addresses"),
-      "Адреса на интерфейсах",
+      t("Адреса на интерфейсах"),
     ],
     [
       "bridges",
       "network",
-      "Bridge",
+      t("Bridge"),
       count("bridges"),
-      "Объединение LAN-портов",
+      t("Объединение LAN-портов"),
     ],
-    ["vlans", "swap", "VLAN", count("vlans"), "Сети с тегами 802.1Q"],
+    ["vlans", "swap", t("VLAN"), count("vlans"), t("Сети с тегами 802.1Q")],
     [
       "dhcp_servers",
       "server",
-      "DHCP Server",
+      t("DHCP Server"),
       count("dhcp_servers"),
-      "Автоматическая выдача IP",
+      t("Автоматическая выдача IP"),
     ],
     [
       "routes",
       "arrow",
-      "Маршруты",
+      t("Маршруты"),
       count("routes"),
-      "Шлюзы и статические сети",
+      t("Шлюзы и статические сети"),
     ],
     [
       "filter",
       "shield",
-      "Firewall",
+      t("Firewall"),
       (ctx.state.config.filter_rules || []).length,
-      "Фильтрация входящего и транзитного трафика",
+      t("Фильтрация входящего и транзитного трафика"),
     ],
   ];
-  return `<section id="telemetry-overview" aria-label="Мониторинг сети">${renderTelemetry(ctx)}</section><div class="overview-grid">${cards.map(([key, icon, title, total, description]) => `<button class="overview-card" data-action="view" data-view="${key}"><div class="overview-card-top"><span>${ctx.icon(icon)}${title}</span><b>${total}</b></div><p>${description}</p><span class="overview-card-link">Настроить ${ctx.icon("arrow")}</span></button>`).join("")}</div><div class="router-quick-start"><h3>Быстрая настройка LAN</h3><ol><li><button data-action="view" data-view="bridges">Создайте bridge</button> и включите LAN-порты.</li><li><button data-action="view" data-view="addresses">Назначьте IP</button> bridge / VLAN-интерфейсу.</li><li><button data-action="view" data-view="pools">Создайте пул</button>, затем <button data-action="view" data-view="dhcp_servers">DHCP-сервер</button>.</li><li>Настройте <button data-action="view" data-view="routes">маршрут</button>, <button data-action="view" data-view="rules">NAT</button> и <button data-action="view" data-view="filter">Firewall</button>.</li></ol><p>Сохранение создаёт черновик. Работающая сеть изменится после применения и подтверждения связи.</p></div>`;
+  return html`<section id="telemetry-overview" aria-label="Мониторинг сети">${renderTelemetry(ctx)}</section><div class="overview-grid">${cards.map(([key, icon, title, total, description]) => html`<button class="overview-card" data-action="view" data-view="${key}"><div class="overview-card-top"><span>${ctx.icon(icon)}${t(title)}</span><b>${total}</b></div><p>${t(description)}</p><span class="overview-card-link">Настроить ${ctx.icon("arrow")}</span></button>`).join("")}</div><div class="router-quick-start"><h3>Быстрая настройка LAN</h3><ol><li><button data-action="view" data-view="bridges">Создайте bridge</button> и включите LAN-порты.</li><li><button data-action="view" data-view="addresses">Назначьте IP</button> bridge / VLAN-интерфейсу.</li><li><button data-action="view" data-view="pools">Создайте пул</button>, затем <button data-action="view" data-view="dhcp_servers">DHCP-сервер</button>.</li><li>Настройте <button data-action="view" data-view="routes">маршрут</button>, <button data-action="view" data-view="rules">NAT</button> и <button data-action="view" data-view="filter">Firewall</button>.</li></ol><p>Сохранение создаёт черновик. Работающая сеть изменится после применения и подтверждения связи.</p></div>`;
 }
 
 function renderBridgePorts(ctx) {
@@ -547,17 +588,17 @@ function renderBridgePorts(ctx) {
     (bridge.members || []).map((member) => ({ bridge, member })),
   );
   const locked = ctx.state.pending || ctx.offline;
-  return `<div class="toolbar"><button class="primary add" data-action="router-port-new" ${locked ? "disabled" : ""}>${ctx.icon("plus")}Добавить порт</button><span class="muted">${ports.length} участников bridge</span></div><div class="table-scroll router-table-scroll"><table class="rules-table"><thead><tr><th>#</th><th>Interface</th><th>Bridge</th><th>Status</th><th></th></tr></thead><tbody>${ports.map(({ bridge, member }, index) => `<tr><td class="row-number">${index}</td><td class="mono">${ctx.e(member)}</td><td class="mono">${ctx.e(bridge.name)}</td><td>${bridge.enabled ? "enabled" : "disabled"}</td><td><div class="row-actions"><button class="icon ghost" data-action="router-port-edit" data-id="${ctx.e(bridge.id)}" data-member="${ctx.e(member)}" aria-label="Изменить порт ${ctx.e(member)}" ${locked ? "disabled" : ""}>${ctx.icon("edit")}</button><button class="icon ghost danger" data-action="router-port-remove" data-id="${ctx.e(bridge.id)}" data-member="${ctx.e(member)}" aria-label="Убрать порт ${ctx.e(member)}" ${locked ? "disabled" : ""}>${ctx.icon("minus")}</button></div></td></tr>`).join("")}</tbody></table>${ports.length ? "" : ctx.empty("network", "В bridge пока нет портов", "Создайте bridge, затем добавьте физические или виртуальные интерфейсы.")}</div><div class="router-section-note">${ctx.icon("info")}<span>Добавление / удаление порта меняет members выбранного bridge в черновике. Сам интерфейс при удалении из bridge не удаляется.</span></div>`;
+  return html`<div class="toolbar"><button class="primary add" data-action="router-port-new" ${locked ? "disabled" : ""}>${ctx.icon("plus")}Добавить порт</button><span class="muted">${ports.length} участников bridge</span></div><div class="table-scroll router-table-scroll"><table class="rules-table"><thead><tr><th>#</th><th>Interface</th><th>Bridge</th><th>Status</th><th></th></tr></thead><tbody>${ports.map(({ bridge, member }, index) => html`<tr><td class="row-number">${index}</td><td class="mono">${ctx.e(member)}</td><td class="mono">${ctx.e(bridge.name)}</td><td>${bridge.enabled ? t("enabled") : t("disabled")}</td><td><div class="row-actions"><button class="icon ghost" data-action="router-port-edit" data-id="${ctx.e(bridge.id)}" data-member="${ctx.e(member)}" aria-label="Изменить порт ${ctx.e(member)}" ${locked ? "disabled" : ""}>${ctx.icon("edit")}</button><button class="icon ghost danger" data-action="router-port-remove" data-id="${ctx.e(bridge.id)}" data-member="${ctx.e(member)}" aria-label="Убрать порт ${ctx.e(member)}" ${locked ? "disabled" : ""}>${ctx.icon("minus")}</button></div></td></tr>`).join("")}</tbody></table>${ports.length ? "" : ctx.empty("network", t("В bridge пока нет портов"), t("Создайте bridge, затем добавьте физические или виртуальные интерфейсы."))}</div><div class="router-section-note">${ctx.icon("info")}<span>Добавление / удаление порта меняет members выбранного bridge в черновике. Сам интерфейс при удалении из bridge не удаляется.</span></div>`;
 }
 function renderDhcpNetworks(ctx) {
   const servers = configNetwork(ctx).dhcp_servers || [];
-  return `<div class="toolbar"><span class="muted">Параметры сетей берутся из DHCP Server</span><button class="small" data-action="view" data-view="dhcp_servers">${ctx.icon("server")}DHCP Server</button></div><div class="table-scroll router-table-scroll"><table class="rules-table"><thead><tr><th>Network</th><th>Gateway</th><th>DNS Servers</th><th>Interface</th><th>Server</th><th></th></tr></thead><tbody>${servers.map((server) => `<tr data-router-id="${ctx.e(server.id)}" data-kind="dhcp_servers" tabindex="0"><td class="mono">${ctx.e(server.network)}</td><td class="mono">${ctx.e(server.gateway)}</td><td class="mono">${ctx.e((server.dns_servers || []).join(", ") || "Local DNS")}</td><td>${ctx.e(server.interface)}</td><td>${ctx.e(server.name)}</td><td><button class="icon ghost" data-action="router-edit" data-kind="dhcp_servers" data-id="${ctx.e(server.id)}" aria-label="Изменить сеть ${ctx.e(server.network)}" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("edit")}</button></td></tr>`).join("")}</tbody></table>${servers.length ? "" : ctx.empty("server", "Нет DHCP-сетей", "Создайте DHCP Server на нужном интерфейсе и задайте сеть, gateway и DNS.")}</div>`;
+  return html`<div class="toolbar"><span class="muted">Параметры сетей берутся из DHCP Server</span><button class="small" data-action="view" data-view="dhcp_servers">${ctx.icon("server")}DHCP Server</button></div><div class="table-scroll router-table-scroll"><table class="rules-table"><thead><tr><th>Network</th><th>Gateway</th><th>DNS Servers</th><th>Interface</th><th>Server</th><th></th></tr></thead><tbody>${servers.map((server) => html`<tr data-router-id="${ctx.e(server.id)}" data-kind="dhcp_servers" tabindex="0"><td class="mono">${ctx.e(server.network)}</td><td class="mono">${ctx.e(server.gateway)}</td><td class="mono">${ctx.e((server.dns_servers || []).join(", ") || t("Local DNS"))}</td><td>${ctx.e(server.interface)}</td><td>${ctx.e(server.name)}</td><td><button class="icon ghost" data-action="router-edit" data-kind="dhcp_servers" data-id="${ctx.e(server.id)}" aria-label="Изменить сеть ${ctx.e(server.network)}" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("edit")}</button></td></tr>`).join("")}</tbody></table>${servers.length ? "" : ctx.empty("server", t("Нет DHCP-сетей"), t("Создайте DHCP Server на нужном интерфейсе и задайте сеть, gateway и DNS."))}</div>`;
 }
 function openPortEditor(ctx, bridgeId, member = "") {
   if (ctx.busy || ctx.state.pending || ctx.offline) return;
   const bridges = configNetwork(ctx).bridges || [];
   if (!bridges.length) {
-    ctx.toast("Сначала создайте bridge.", true);
+    ctx.toast(t("Сначала создайте bridge."), true);
     return;
   }
   editing = {
@@ -573,14 +614,14 @@ function openPortEditor(ctx, bridgeId, member = "") {
   const bridgeOptions = bridges
     .map(
       (bridge) =>
-        `<option value="${ctx.e(bridge.id)}" ${bridge.id === bridgeId ? "selected" : ""}>${ctx.e(bridge.name)}</option>`,
+        html`<option value="${ctx.e(bridge.id)}" ${bridge.id === bridgeId ? "selected" : ""}>${ctx.e(bridge.name)}</option>`,
     )
     .join("");
   ctx.dialogFrame(
-    member ? "Edit Bridge Port" : "New Bridge Port",
-    "Назначение интерфейса bridge сохраняется в черновик.",
-    `<div class="rule-editor-layout"><form id="router-port-form" class="winbox-form"><label class="field"><span>Bridge</span><select name="bridge_id" required>${bridgeOptions}</select></label>${renderField(ctx, ["interface", "Interface", "interface", "", true], item)}<div class="field-note">Один интерфейс может входить только в один bridge. Стороннее bridge-подключение не перехватывается.</div></form><aside class="rule-actions"><button class="primary" data-action="router-port-save">OK</button><button data-action="close">Cancel</button></aside></div>`,
-    '<span class="muted">Изменение портов bridge</span>',
+    member ? t("Edit Bridge Port") : t("New Bridge Port"),
+    t("Назначение интерфейса bridge сохраняется в черновик."),
+    html`<div class="rule-editor-layout"><form id="router-port-form" class="winbox-form"><label class="field"><span>Bridge</span><select name="bridge_id" required>${bridgeOptions}</select></label>${renderField(ctx, ["interface", t("Interface"), "interface", "", true], item)}<div class="field-note">Один интерфейс может входить только в один bridge. Стороннее bridge-подключение не перехватывается.</div></form><aside class="rule-actions"><button class="primary" data-action="router-port-save">OK</button><button data-action="close">Cancel</button></aside></div>`,
+    html`<span class="muted">Изменение портов bridge</span>`,
   );
   ctx.dialog.classList.add("winbox-editor");
 }
@@ -634,10 +675,10 @@ function showEntityEditor(
 ) {
   editing = { kind, id: item.id, item, revision, tab, existing };
   const tabs = [
-    ["general", "General"],
-    ["advanced", "Advanced"],
+    ["general", t("General")],
+    ["advanced", t("Advanced")],
     ["fail2ban", "Fail2ban"],
-    ["action", "Action"],
+    ["action", t("Action")],
   ];
   const advanced = new Set([
     "src_list",
@@ -661,18 +702,20 @@ function showEntityEditor(
       ? renderRuleFail2ban(ctx, item)
       : fields.map((field) => renderField(ctx, field, item)).join("");
   if (kind === "filter" && tab === "advanced")
-    content += `<details class="rule-condition-help" ${item.f2b_profile ? "open" : ""}><summary>Дополнительное условие по списку Fail2ban</summary>${renderLegacyBanMatch(ctx, item)}</details>`;
+    content += html`<details class="rule-condition-help" ${item.f2b_profile ? "open" : ""}><summary>Дополнительное условие по списку Fail2ban</summary>${renderLegacyBanMatch(ctx, item)}</details>`;
   const note =
     kind === "filter" && tab === "advanced"
-      ? "Страна проверяется вместе с адресом или Address List (AND). GeoIP-список создаётся автоматически при применении. Требуется база GeoIP в Security → GeoIP. Для private IP страна неизвестна."
+      ? t(
+          "Страна проверяется вместе с адресом или Address List (AND). GeoIP-список создаётся автоматически при применении. Требуется база GeoIP в Security → GeoIP. Для private IP страна неизвестна.",
+        )
       : itemSchemas[kind].note;
   ctx.dialogFrame(
-    `${existing ? "Edit" : "New"} ${itemSchemas[kind].title}`,
-    "OK / Apply сохраняют настройки в общий черновик роутера.",
-    `<div class="rule-editor-layout"><form id="router-form" class="winbox-form" data-kind="${kind}" data-revision="${revision}">${content}${kind === "filter" && tab === "fail2ban" ? "" : `<div class="field-note">${ctx.e(note)}</div>`}</form><aside class="rule-actions"><button class="primary" data-action="router-save">OK</button><button data-action="close">Cancel</button><button data-action="router-apply">Apply</button><div class="form-divider"></div><button data-action="router-editor-copy">${ctx.icon("copy")}Copy</button></aside></div>`,
-    '<span class="muted">Черновик · применение к сети отдельно</span>',
+    `${existing ? t("Изменить") : t("Создать")}: ${t(itemSchemas[kind].title)}`,
+    t("OK / Apply сохраняют настройки в общий черновик роутера."),
+    html`<div class="rule-editor-layout"><form id="router-form" class="winbox-form" data-kind="${kind}" data-revision="${revision}">${content}${kind === "filter" && tab === "fail2ban" ? "" : html`<div class="field-note">${ctx.e(t(note))}</div>`}</form><aside class="rule-actions"><button class="primary" data-action="router-save">OK</button><button data-action="close">Cancel</button><button data-action="router-apply">Apply</button><div class="form-divider"></div><button data-action="router-editor-copy">${ctx.icon("copy")}Copy</button></aside></div>`,
+    html`<span class="muted">Черновик · применение к сети отдельно</span>`,
     kind === "filter"
-      ? `<div class="dialog-tabs">${tabs.map(([key, label]) => `<button class="dialog-tab ${tab === key ? "active" : ""}" data-action="router-editor-tab" data-tab="${key}">${label}</button>`).join("")}</div>`
+      ? html`<div class="dialog-tabs">${tabs.map(([key, label]) => html`<button class="dialog-tab ${tab === key ? "active" : ""}" data-action="router-editor-tab" data-tab="${key}">${t(label)}</button>`).join("")}</div>`
       : "",
   );
   ctx.dialog.classList.add("winbox-editor", "router-editor");
@@ -681,7 +724,7 @@ function openEditor(ctx, kind, id) {
   if (ctx.busy) return;
   if (ctx.state.pending || ctx.offline) {
     ctx.toast(
-      "Сначала завершите применение и восстановите связь с сервером.",
+      t("Сначала завершите применение и восстановите связь с сервером."),
       true,
     );
     return;
@@ -783,7 +826,7 @@ export async function handleRouterAction(button, ctx) {
     return true;
   }
   if (action === "router-save-domain") {
-    if (!ctx.canWrite()) throw new Error("Нужна учётная запись full.");
+    if (!ctx.canWrite()) throw new Error(t("Нужна учётная запись full."));
     const form = document.querySelector("#router-domain-form");
     if (!form?.reportValidity()) return true;
     const expectedRevision = Number(form.dataset.revision);
@@ -794,7 +837,7 @@ export async function handleRouterAction(button, ctx) {
     ).trim();
     await ctx.run(async () => {
       await ctx.saveConfig(config, expectedRevision);
-      ctx.toast("Домен сохранён в черновик");
+      ctx.toast(t("Домен сохранён в черновик"));
     });
     return true;
   }
@@ -814,10 +857,10 @@ export async function handleRouterAction(button, ctx) {
       revision: ctx.state.revision,
     };
     ctx.dialogFrame(
-      "Убрать порт из bridge?",
-      "Сам интерфейс не будет удалён.",
-      `<p class="preview-note">${ctx.e(button.dataset.member)} будет исключён из members выбранного bridge в черновике.</p>`,
-      '<button data-action="close">Cancel</button><button class="danger" data-action="router-port-remove-confirm">Убрать</button>',
+      t("Убрать порт из bridge?"),
+      t("Сам интерфейс не будет удалён."),
+      html`<p class="preview-note">${ctx.e(button.dataset.member)} будет исключён из members выбранного bridge в черновике.</p>`,
+      html`<button data-action="close">Cancel</button><button class="danger" data-action="router-port-remove-confirm">Убрать</button>`,
     );
     return true;
   }
@@ -835,7 +878,7 @@ export async function handleRouterAction(button, ctx) {
             (bridge) => bridge.id === values.get("bridge_id"),
           );
         if (!target)
-          throw new Error("Bridge не найден. Обновите конфигурацию.");
+          throw new Error(t("Bridge не найден. Обновите конфигурацию."));
         const name = String(values.get("interface"));
         if (old && editing.member)
           old.members = old.members.filter(
@@ -846,7 +889,7 @@ export async function handleRouterAction(button, ctx) {
         old.members = old.members.filter((member) => member !== editing.member);
       await ctx.saveConfig(config, editing.revision);
       ctx.dialog.close();
-      ctx.toast("Порты bridge сохранены в черновик");
+      ctx.toast(t("Порты bridge сохранены в черновик"));
     });
     return true;
   }
@@ -883,10 +926,10 @@ export async function handleRouterAction(button, ctx) {
     assertLinkRemoval(ctx.state.config, kind, id);
     editing = { kind, id, revision: ctx.state.revision };
     ctx.dialogFrame(
-      "Удалить запись?",
-      "Работающая сеть изменится только после применения.",
-      `<p class="preview-note">Запись будет удалена из черновика. Если она используется другими настройками, сервер не разрешит удаление.</p>`,
-      `<button data-action="close">Cancel</button><button class="danger" data-action="router-remove-confirm">Удалить</button>`,
+      t("Удалить запись?"),
+      t("Работающая сеть изменится только после применения."),
+      html`<p class="preview-note">Запись будет удалена из черновика. Если она используется другими настройками, сервер не разрешит удаление.</p>`,
+      html`<button data-action="close">Cancel</button><button class="danger" data-action="router-remove-confirm">Удалить</button>`,
     );
     return true;
   }
@@ -975,7 +1018,7 @@ export async function handleRouterAction(button, ctx) {
       const form = ctx.dialog.querySelector("#router-form");
       if (form) form.dataset.revision = String(saved.revision);
     } else ctx.dialog.close();
-    ctx.toast("Изменения роутера сохранены в черновик");
+    ctx.toast(t("Изменения роутера сохранены в черновик"));
   });
   return true;
 }
@@ -991,12 +1034,12 @@ export function handleRouterChange(event, ctx) {
     const select = portForm.querySelector('[name="interface"]'),
       previous = select.value;
     select.innerHTML =
-      '<option value="">—</option>' +
+      html`<option value="">—</option>` +
       interfaceNames(ctx)
         .filter((name) => name !== bridge?.name)
         .map(
           (name) =>
-            `<option value="${ctx.e(name)}" ${name === previous ? "selected" : ""}>${ctx.e(name)}</option>`,
+            html`<option value="${ctx.e(name)}" ${name === previous ? "selected" : ""}>${ctx.e(name)}</option>`,
         )
         .join("");
     return;
@@ -1109,7 +1152,7 @@ export function installRouterEvents(getContext) {
       if (reordered.every((rule, index) => rule.id === rows[index].id)) return;
       config.filter_rules = reordered;
       await ctx.saveConfig(config);
-      ctx.toast("Порядок Filter Rules сохранён в черновик");
+      ctx.toast(t("Порядок Filter Rules сохранён в черновик"));
     });
   });
   document.addEventListener("dragend", clear);

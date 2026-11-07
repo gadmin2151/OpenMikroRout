@@ -1,3 +1,4 @@
+import { html, t, locale } from "./i18n.js";
 /** Read-only network telemetry presentation. Rates are bits/s, byte counters are bytes. */
 import {
   advanceTelemetryNumber,
@@ -11,17 +12,28 @@ const PERIODS = [60, 300, 900, 3600];
 const HISTORY_LIMIT = HISTORY_SECONDS + 1;
 const INTERFACE_LIMIT = 128;
 const MAX_GRAPH_GAP_SECONDS = 15;
-const nf = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
-const decimal = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
-const liveDecimal = new Intl.NumberFormat("ru-RU", {
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-});
-const compactCount = new Intl.NumberFormat("ru-RU", {
-  notation: "compact",
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-});
+const numberFormats = new Map();
+function formats() {
+  const language = locale();
+  let cached = numberFormats.get(language);
+  if (!cached) {
+    cached = {
+      count: new Intl.NumberFormat(language, { maximumFractionDigits: 0 }),
+      decimal: new Intl.NumberFormat(language, { maximumFractionDigits: 1 }),
+      liveDecimal: new Intl.NumberFormat(language, {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      }),
+      compact: new Intl.NumberFormat(language, {
+        notation: "compact",
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      }),
+    };
+    numberFormats.set(language, cached);
+  }
+  return cached;
+}
 
 function finite(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -39,17 +51,23 @@ function scaled(value, units) {
     number /= 1000;
     unit++;
   }
-  return `${decimal.format(number)} ${units[unit]}`;
+  return `${formats().decimal.format(number)} ${units[unit]}`;
 }
 export function formatRate(value) {
-  return scaled(value, ["бит/с", "Кбит/с", "Мбит/с", "Гбит/с", "Тбит/с"]);
+  return scaled(value, [
+    t("бит/с"),
+    t("Кбит/с"),
+    t("Мбит/с"),
+    t("Гбит/с"),
+    t("Тбит/с"),
+  ]);
 }
 export function formatBytes(value) {
-  return scaled(value, ["Б", "КБ", "МБ", "ГБ", "ТБ"]);
+  return scaled(value, [t("Б"), t("КБ"), t("МБ"), t("ГБ"), t("ТБ")]);
 }
 function count(value) {
   const number = finite(value);
-  return number === null ? "—" : nf.format(number);
+  return number === null ? "—" : formats().count.format(number);
 }
 function sum(left, right) {
   const a = finite(left),
@@ -369,24 +387,26 @@ function numberAttributes(key, value, format, e, cumulative = false) {
   return `data-live-number="${e(key)}" data-live-value="${finite(value) ?? ""}" data-live-format="${format}"${cumulative ? ' data-live-counter="true"' : ""} `;
 }
 function liveNumber(key, value, format, e, cumulative = false) {
-  return `<span ${numberAttributes(key, value, format, e, cumulative)}>${e(formatLiveNumber(value, format))}</span>`;
+  return html`<span ${numberAttributes(key, value, format, e, cumulative)}
+    >${e(formatLiveNumber(value, format))}</span
+  >`;
 }
 function formatLiveNumber(value, format, unit) {
   if (finite(value) === null) return "—";
   if (format === "rate" || format === "bytes") {
     const units =
       format === "rate"
-        ? ["бит/с", "Кбит/с", "Мбит/с", "Гбит/с", "Тбит/с"]
-        : ["Б", "КБ", "МБ", "ГБ", "ТБ", "ПБ", "ЭБ"];
+        ? [t("бит/с"), t("Кбит/с"), t("Мбит/с"), t("Гбит/с"), t("Тбит/с")]
+        : [t("Б"), t("КБ"), t("МБ"), t("ГБ"), t("ТБ"), t("ПБ"), t("ЭБ")];
     const index = unit ?? telemetryUnit(value, undefined, units.length - 1);
-    return `${(index ? liveDecimal : decimal).format(value / 1000 ** index)} ${units[index]}`;
+    return `${(index ? formats().liveDecimal : formats().decimal).format(value / 1000 ** index)} ${units[index]}`;
   }
   if (format === "compact")
-    return value < 100000 ? count(value) : compactCount.format(value);
+    return value < 100000 ? count(value) : formats().compact.format(value);
   if (format === "short")
-    return value < 1000 ? count(value) : compactCount.format(value);
-  if (format === "pps") return `${count(value)} пак/с`;
-  if (format === "percent") return `${decimal.format(value)}%`;
+    return value < 1000 ? count(value) : formats().compact.format(value);
+  if (format === "pps") return html`${count(value)} пак/с`;
+  if (format === "percent") return `${formats().decimal.format(value)}%`;
   return count(value);
 }
 
@@ -445,26 +465,213 @@ export function stopTelemetryAnimation(container) {
   animations.delete(container);
 }
 
-/** Samples update targets at 5 Hz; a single frame loop follows them continuously. */
+/** Only UI structure and slow inventory belong in this signature. Fast counters
+ * deliberately do not: changing one reading must not rebuild the dashboard. */
+export function telemetryRenderSignature(ctx) {
+  const snapshot = ctx.telemetry;
+  const found = snapshot?.devices || {};
+  const top = snapshot?.top_destinations || {};
+  return JSON.stringify([
+    locale(),
+    ctx.telemetrySelection || "all",
+    ctx.telemetryExpanded?.kind || "",
+    ctx.telemetryExpanded?.period || "",
+    ctx.telemetryError || "",
+    ctx.telemetryHistoryError || "",
+    !!snapshot,
+    snapshot?.demo,
+    snapshot?.sample_seconds === null,
+    snapshot?.traffic?.scope,
+    snapshot?.traffic?.partial,
+    values(snapshot?.interfaces)
+      .slice(0, INTERFACE_LIMIT)
+      .map((item) => [item.name, item.state, item.physical]),
+    [
+      found.available,
+      found.partial,
+      found.count,
+      found.dhcp_leases,
+      values(found.items).length > 12,
+      values(found.items).slice(0, 12),
+    ],
+    [top.available, top.partial, top.basis, values(top.items).slice(0, 10)],
+  ]);
+}
+
+function effectiveTelemetrySelection(ctx) {
+  const selection = ctx.telemetrySelection || "all";
+  return selection === "all" ||
+    values(ctx.telemetry?.interfaces)
+      .slice(0, INTERFACE_LIMIT)
+      .some((item) => item.name === selection)
+    ? selection
+    : "all";
+}
+
+/** Same names as data-live-number, keeping collected values separate from paint. */
+export function telemetryLiveTargets(ctx) {
+  const snapshot = ctx.telemetry;
+  const stats = selectedMetrics(snapshot, effectiveTelemetrySelection(ctx));
+  const result = new Map([
+    ["summary-rx", stats.rx_bps],
+    ["summary-tx", stats.tx_bps],
+    ["summary-rx-bytes", stats.rx_bytes],
+    ["summary-tx-bytes", stats.tx_bytes],
+    ["summary-packets", sum(stats.rx_pps, stats.tx_pps)],
+    ["summary-rx-packets", stats.rx_packets],
+    ["summary-tx-packets", stats.tx_packets],
+    ["summary-connections", snapshot?.connections?.active],
+    ["summary-connection-limit", snapshot?.connections?.limit],
+    ["summary-devices", snapshot?.devices?.count],
+    ["summary-leases", snapshot?.devices?.dhcp_leases],
+    ["summary-bytes", sum(stats.rx_bytes, stats.tx_bytes)],
+  ]);
+  for (const item of values(snapshot?.interfaces).slice(0, INTERFACE_LIMIT))
+    for (const key of [
+      "rx_bps",
+      "tx_bps",
+      "rx_bytes",
+      "tx_bytes",
+      "rx_packets",
+      "tx_packets",
+    ])
+      result.set(`${item.name}:${key}`, item[key]);
+  return result;
+}
+
+function updateTelemetryTargets(container, ctx, state) {
+  const targets = telemetryLiveTargets(ctx);
+  for (const node of state.numberNodes) {
+    const key = node.dataset.liveNumber;
+    if (!targets.has(key)) continue; // Chart legends are patched with the chart.
+    const value = String(finite(targets.get(key)) ?? "");
+    if (node.dataset.liveValue !== value) node.dataset.liveValue = value;
+  }
+  const selection = effectiveTelemetrySelection(ctx);
+  const stats = selectedMetrics(ctx.telemetry, selection);
+  const titles = [
+    [formatRate(stats.rx_bps), html`Получено: ${formatBytes(stats.rx_bytes)}`],
+    [
+      formatRate(stats.tx_bps),
+      html`Отправлено: ${formatBytes(stats.tx_bytes)}`,
+    ],
+    [
+      count(sum(stats.rx_pps, stats.tx_pps)),
+      html`Всего RX / TX: ${count(stats.rx_packets)} /
+      ${count(stats.tx_packets)}`,
+    ],
+    [
+      count(ctx.telemetry?.connections?.active),
+      html`Лимит таблицы: ${count(ctx.telemetry?.connections?.limit)}`,
+    ],
+    [
+      count(ctx.telemetry?.devices?.count),
+      html`Действующих аренд DHCP: ${count(ctx.telemetry?.devices?.dhcp_leases)}`,
+    ],
+    [
+      formatBytes(sum(stats.rx_bytes, stats.tx_bytes)),
+      selection === "all"
+        ? scopeLabel(ctx.telemetry?.traffic?.scope)
+        : selection,
+    ],
+  ];
+  for (const [index, [value, meta]] of titles.entries()) {
+    const card = state.metricNodes[index];
+    card?.querySelector(".telemetry-value")?.setAttribute("title", value);
+    card?.querySelector(".telemetry-meta")?.setAttribute("title", meta);
+  }
+  const system = ctx.telemetry?.system || {};
+  const memoryPercent =
+    finite(system.memory_total_bytes) > 0 &&
+    finite(system.memory_used_bytes) !== null
+      ? (system.memory_used_bytes / system.memory_total_bytes) * 100
+      : null;
+  const labels = [
+    duration(system.uptime_seconds),
+    finite(system.cpu_percent) === null
+      ? "—"
+      : `${formats().decimal.format(system.cpu_percent)}%`,
+    `${formatBytes(system.memory_used_bytes)} / ${formatBytes(system.memory_total_bytes)}${memoryPercent === null ? "" : ` · ${formats().decimal.format(memoryPercent)}%`}`,
+  ];
+  for (const [index, label] of labels.entries()) {
+    const node = state.systemNodes[index];
+    if (node && node.textContent !== label) node.textContent = label;
+  }
+  for (const [kind, period, expanded] of [
+    ["speed", OVERVIEW_SECONDS, false],
+    ["packets", OVERVIEW_SECONDS, false],
+    ...(ctx.telemetryExpanded
+      ? [
+          [
+            ctx.telemetryExpanded.kind,
+            PERIODS.includes(ctx.telemetryExpanded.period)
+              ? ctx.telemetryExpanded.period
+              : OVERVIEW_SECONDS,
+            true,
+          ],
+        ]
+      : []),
+  ]) {
+    const prefix = `${expanded ? "expanded-" : ""}${kind}`;
+    const current = container.querySelector(
+      `[data-telemetry-chart="${prefix}"]`,
+    );
+    if (!current) continue;
+    state.template.innerHTML = chart(
+      ctx.telemetryHistory,
+      selection,
+      kind,
+      ctx.e,
+      period,
+      expanded,
+    );
+    const next = state.template.content.firstElementChild;
+    if (next) patchTelemetryNode(current, next);
+  }
+}
+
+/** Samples update targets at 5 Hz; unchanged inventory never regenerates table HTML.
+ * A single animation frame loop keeps the existing number and path followers. */
 export function updateTelemetryView(container, ctx) {
   const owner = container.ownerDocument;
   const browser = owner.defaultView;
   const previous = animations.get(container);
+  const state = previous || {
+    frame: null,
+    values: new Map(),
+    paths: new Map(),
+    template: owner.createElement("template"),
+    canvas: owner.createElement("canvas").getContext("2d"),
+  };
   const oldPaths = new Map(
     [...container.querySelectorAll("[data-live-path]")].map((node) => [
       node.dataset.livePath,
       node.getAttribute("d"),
     ]),
   );
-  const template = owner.createElement("template");
-  template.innerHTML = renderTelemetry(ctx);
-  const next = template.content.firstElementChild;
-  if (container.firstElementChild && next)
-    patchTelemetryNode(container.firstElementChild, next);
-  else container.replaceChildren(template.content);
+  const signature = telemetryRenderSignature(ctx);
+  if (
+    previous?.signature === signature &&
+    previous.root === container.firstElementChild
+  ) {
+    updateTelemetryTargets(container, ctx, state);
+  } else {
+    state.template.innerHTML = renderTelemetry(ctx);
+    const next = state.template.content.firstElementChild;
+    if (container.firstElementChild && next)
+      patchTelemetryNode(container.firstElementChild, next);
+    else container.replaceChildren(state.template.content);
+    state.numberNodes = [...container.querySelectorAll("[data-live-number]")];
+    state.metricNodes = [...container.querySelectorAll(".telemetry-metric")];
+    state.systemNodes = [
+      ...container.querySelectorAll(".telemetry-system strong"),
+    ];
+    state.root = container.firstElementChild;
+    state.signature = signature;
+  }
 
   const snapshot = ctx.telemetry;
-  const selection = `${ctx.telemetrySelection || "all"}:${ctx.telemetryExpanded?.kind || ""}:${ctx.telemetryExpanded?.period || ""}`;
+  const selection = `${locale()}:${ctx.telemetrySelection || "all"}:${ctx.telemetryExpanded?.kind || ""}:${ctx.telemetryExpanded?.period || ""}`;
   const reduced = browser.matchMedia(
     "(prefers-reduced-motion: reduce)",
   ).matches;
@@ -480,15 +687,10 @@ export function updateTelemetryView(container, ctx) {
     !owner.hidden &&
     !reduced,
   );
-  const state = previous || {
-    frame: null,
-    values: new Map(),
-    paths: new Map(),
-  };
   const numbers = new Map();
   const paths = new Map();
-  const canvas = owner.createElement("canvas").getContext("2d");
-  for (const node of container.querySelectorAll("[data-live-number]")) {
+  const canvas = state.canvas;
+  for (const node of state.numberNodes) {
     const key = node.dataset.liveNumber;
     const format = node.dataset.liveFormat;
     const target =
@@ -625,10 +827,18 @@ function selectedMetrics(snapshot, selection) {
   );
 }
 function metric(label, value, meta, e, animation = "", details = "") {
-  return `<article class="telemetry-metric"><span class="telemetry-label">${e(label)}</span><strong ${animation}title="${e(value)}" class="telemetry-value">${e(value)}</strong><small title="${e(meta)}" class="telemetry-meta">${details || e(meta)}</small></article>`;
+  return html`<article class="telemetry-metric">
+    <span class="telemetry-label">${e(label)}</span
+    ><strong ${animation}title="${e(value)}" class="telemetry-value"
+      >${e(value)}</strong
+    ><small title="${e(meta)}" class="telemetry-meta"
+      >${details || e(meta)}</small
+    >
+  </article>`;
 }
-function metricDetails(label, html, e) {
-  return `<span class="telemetry-meta-label">${e(label)}</span><span class="telemetry-meta-value">${html}</span>`;
+function metricDetails(label, content, e) {
+  return html`<span class="telemetry-meta-label">${e(label)}</span
+    ><span class="telemetry-meta-value">${content}</span>`;
 }
 function duration(value) {
   const seconds = finite(value);
@@ -636,19 +846,19 @@ function duration(value) {
   const days = Math.floor(seconds / 86400),
     hours = Math.floor((seconds % 86400) / 3600),
     minutes = Math.floor((seconds % 3600) / 60);
-  return `${days ? `${days} д ` : ""}${hours} ч ${minutes} мин`;
+  return html`${days ? html`${days} д ` : ""}${hours} ч ${minutes} мин`;
 }
 function scopeLabel(scope) {
   return (
     {
-      physical: "Физические интерфейсы",
-      physical_interfaces: "Физические интерфейсы",
-      non_loopback: "Все интерфейсы без loopback",
-      all_non_loopback: "Все интерфейсы без loopback",
-      fallback: "Доступные интерфейсы",
-      primary_interface_fallback: "Основной доступный интерфейс",
-      demo: "Демонстрационные интерфейсы",
-    }[scope] || "Группа интерфейсов"
+      physical: t("Физические интерфейсы"),
+      physical_interfaces: t("Физические интерфейсы"),
+      non_loopback: t("Все интерфейсы без loopback"),
+      all_non_loopback: t("Все интерфейсы без loopback"),
+      fallback: t("Доступные интерфейсы"),
+      primary_interface_fallback: t("Основной доступный интерфейс"),
+      demo: t("Демонстрационные интерфейсы"),
+    }[scope] || t("Группа интерфейсов")
   );
 }
 
@@ -676,8 +886,8 @@ function chart(
   const prefix = `${expanded ? "expanded-" : ""}${kind}`;
   const packet = kind === "packets";
   const keys = packet ? ["rx_pps", "tx_pps"] : ["rx_bps", "tx_bps"];
-  const title = packet ? "Пакеты в секунду" : "Скорость трафика";
-  const format = packet ? (value) => `${count(value)} пак/с` : formatRate;
+  const title = packet ? t("Пакеты в секунду") : t("Скорость трафика");
+  const format = packet ? (value) => html`${count(value)} пак/с` : formatRate;
   const available = values(history).filter(
     (point) => finite(point?.timestamp) !== null,
   );
@@ -729,14 +939,82 @@ function chart(
   const grid = [0, 0.5, 1]
     .map((fraction) => {
       const height = y(maximum * fraction);
-      return `<line class="telemetry-grid-line" x1="${left}" y1="${height}" x2="${right}" y2="${height}"/><text class="telemetry-axis" x="${left - 10}" y="${height + 4}" text-anchor="end">${e(packet ? count(maximum * fraction) : scaled(maximum * fraction, ["бит", "Кбит", "Мбит", "Гбит", "Тбит"]))}</text>`;
+      return html`<line
+          class="telemetry-grid-line"
+          x1="${left}"
+          y1="${height}"
+          x2="${right}"
+          y2="${height}"
+        /><text
+          class="telemetry-axis"
+          x="${left - 10}"
+          y="${height + 4}"
+          text-anchor="end"
+          >${e(packet ? count(maximum * fraction) : scaled(maximum * fraction, [t("бит"), t("Кбит"), t("Мбит"), t("Гбит"), t("Тбит")]))}</text
+        >`;
     })
     .join("");
   const picture = sufficient
-    ? `<svg class="telemetry-chart" viewBox="0 0 640 180" role="img" aria-labelledby="telemetry-${prefix}-title telemetry-${prefix}-description"><title id="telemetry-${prefix}-title">${title}</title><desc id="telemetry-${prefix}-description">История RX и TX за ${Math.round(span)} секунд. RX — входящий, TX — исходящий трафик.</desc>${grid}<path data-live-path="${prefix}-rx" class="telemetry-rx-line" d="${path(keys[0])}"/><path data-live-path="${prefix}-tx" class="telemetry-tx-line" d="${path(keys[1])}"/><text class="telemetry-axis" x="${left}" y="173">${period === 3600 ? "1 час" : `${period / 60} мин`} назад</text><text class="telemetry-axis" x="${right}" y="173" text-anchor="end">Сейчас</text></svg>`
-    : `<div class="telemetry-chart-empty">Собираем историю графика…<small>График появится после двух измерений.</small></div>`;
+    ? html`<svg
+        class="telemetry-chart"
+        viewBox="0 0 640 180"
+        role="img"
+        aria-labelledby="telemetry-${prefix}-title telemetry-${prefix}-description"
+      >
+        <title id="telemetry-${prefix}-title">${title}</title>
+        <desc id="telemetry-${prefix}-description">
+          История RX и TX за ${Math.round(span)} секунд. RX — входящий, TX —
+          исходящий трафик.
+        </desc>
+        ${grid}
+        <path
+          data-live-path="${prefix}-rx"
+          class="telemetry-rx-line"
+          d="${path(keys[0])}"
+        />
+        <path
+          data-live-path="${prefix}-tx"
+          class="telemetry-tx-line"
+          d="${path(keys[1])}"
+        />
+        <text class="telemetry-axis" x="${left}" y="173">
+          ${period === 3600 ? t("1 час") : html`${period / 60} мин`} назад
+        </text>
+        <text class="telemetry-axis" x="${right}" y="173" text-anchor="end">
+          Сейчас
+        </text>
+      </svg>`
+    : html`<div class="telemetry-chart-empty">
+        Собираем историю графика…<small
+          >График появится после двух измерений.</small
+        >
+      </div>`;
   const last = rows.at(-1) || {};
-  return `<article class="telemetry-panel"><div class="telemetry-panel-heading"><h3>${title}</h3><small>${packet ? "RX / TX · пак/с" : "RX / TX · бит/с"} · ${period === 3600 ? "1 час" : `${period / 60} мин`}</small>${expanded ? "" : `<button type="button" class="small telemetry-expand-button" data-action="telemetry-expand" data-kind="${kind}" aria-label="Развернуть график: ${title}">Развернуть</button>`}</div><div class="telemetry-chart-box">${picture}</div><div class="telemetry-legend"><span class="telemetry-rx-key">RX <b ${numberAttributes(`${prefix}-rx`, last[keys[0]], packet ? "pps" : "rate", e)}>${e(format(last[keys[0]]))}</b></span><span class="telemetry-tx-key">TX <b ${numberAttributes(`${prefix}-tx`, last[keys[1]], packet ? "pps" : "rate", e)}>${e(format(last[keys[1]]))}</b></span></div></article>`;
+  return html`<article class="telemetry-panel" data-telemetry-chart="${prefix}">
+    <div class="telemetry-panel-heading">
+      <h3>${title}</h3>
+      <small
+        >${packet ? t("RX / TX · пак/с") : t("RX / TX · бит/с")} ·
+        ${period === 3600 ? t("1 час") : html`${period / 60} мин`}</small
+      >${expanded ? "" : html`<button type="button" class="small telemetry-expand-button" data-action="telemetry-expand" data-kind="${kind}" aria-label="Развернуть график: ${title}">Развернуть</button>`}
+    </div>
+    <div class="telemetry-chart-box">${picture}</div>
+    <div class="telemetry-legend">
+      <span class="telemetry-rx-key"
+        >RX
+        <b
+          ${numberAttributes(`${prefix}-rx`, last[keys[0]], packet ? "pps" : "rate", e)}
+          >${e(format(last[keys[0]]))}</b
+        ></span
+      ><span class="telemetry-tx-key"
+        >TX
+        <b
+          ${numberAttributes(`${prefix}-tx`, last[keys[1]], packet ? "pps" : "rate", e)}
+          >${e(format(last[keys[1]]))}</b
+        ></span
+      >
+    </div>
+  </article>`;
 }
 
 export function renderExpandedTelemetry(ctx) {
@@ -746,27 +1024,222 @@ export function renderExpandedTelemetry(ctx) {
     ? expanded.period
     : OVERVIEW_SECONDS;
   const title =
-    expanded.kind === "packets" ? "Пакеты в секунду" : "Скорость трафика";
-  return `<div class="telemetry-expanded-backdrop"><section class="telemetry-expanded" role="dialog" aria-modal="true" aria-labelledby="telemetry-expanded-title" tabindex="-1"><header class="telemetry-expanded-heading"><div><h2 id="telemetry-expanded-title">${title}</h2><p>${ctx.e(ctx.telemetrySelection === "all" || !ctx.telemetrySelection ? "Все выбранные интерфейсы" : ctx.telemetrySelection)}</p></div><div class="telemetry-expanded-controls"><label for="telemetry-period">Период</label><select id="telemetry-period" aria-label="Период графика">${PERIODS.map((value) => `<option value="${value}"${period === value ? " selected" : ""}>${value === 3600 ? "1 час" : `${value / 60} мин`}</option>`).join("")}</select><button type="button" class="icon ghost" data-action="telemetry-collapse" aria-label="Закрыть график" title="Закрыть график">×</button></div></header>${chart(ctx.telemetryHistory, ctx.telemetrySelection || "all", expanded.kind, ctx.e, period, true)}<p class="telemetry-note">История хранится в базе данных роутера до 1 часа. Пустая область означает отсутствие сохранённых измерений.</p></section></div>`;
+    expanded.kind === "packets" ? t("Пакеты в секунду") : t("Скорость трафика");
+  return html`<div class="telemetry-expanded-backdrop">
+    <section
+      class="telemetry-expanded"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="telemetry-expanded-title"
+      tabindex="-1"
+    >
+      <header class="telemetry-expanded-heading">
+        <div>
+          <h2 id="telemetry-expanded-title">${title}</h2>
+          <p>
+            ${ctx.e(ctx.telemetrySelection === "all" || !ctx.telemetrySelection ? t("Все выбранные интерфейсы") : ctx.telemetrySelection)}
+          </p>
+        </div>
+        <div class="telemetry-expanded-controls">
+          <label for="telemetry-period">Период</label
+          ><select id="telemetry-period" aria-label="Период графика">
+            ${PERIODS.map((value) => html`<option value="${value}" ${period === value ? " selected" : ""}>${value === 3600 ? t("1 час") : html`${value / 60} мин`}</option>`).join("")}</select
+          ><button
+            type="button"
+            class="icon ghost"
+            data-action="telemetry-collapse"
+            aria-label="Закрыть график"
+            title="Закрыть график"
+          >
+            ×
+          </button>
+        </div>
+      </header>
+      ${chart(ctx.telemetryHistory, ctx.telemetrySelection || "all", expanded.kind, ctx.e, period, true)}
+      <p class="telemetry-note">
+        История хранится в базе данных роутера до 1 часа. Пустая область
+        означает отсутствие сохранённых измерений.
+      </p>
+    </section>
+  </div>`;
 }
 
 function interfaceTable(snapshot, e) {
   const rows = values(snapshot?.interfaces).slice(0, INTERFACE_LIMIT);
-  return `<article class="telemetry-panel"><div class="telemetry-panel-heading"><h3>Трафик по интерфейсам</h3><small>Скорость и накопленные счётчики</small></div><div class="telemetry-table-scroll"><table class="telemetry-table telemetry-interface-table"><thead><tr><th>Интерфейс</th><th>Статус</th><th class="numeric">RX · скорость</th><th class="numeric">TX · скорость</th><th class="numeric">Получено</th><th class="numeric">Отправлено</th><th class="numeric">Пакеты RX / TX</th></tr></thead><tbody>${rows.map((item) => `<tr><td><strong class="mono">${e(item.name)}</strong><small>${item.physical ? "Физический" : "Виртуальный / системный"}</small></td><td><span class="telemetry-status ${item.state === "UP" ? "" : "down"}">${e(item.state || "UNKNOWN")}</span></td><td class="numeric">${liveNumber(`${item.name}:rx_bps`, item.rx_bps, "rate", e)}</td><td class="numeric">${liveNumber(`${item.name}:tx_bps`, item.tx_bps, "rate", e)}</td><td class="numeric">${liveNumber(`${item.name}:rx_bytes`, item.rx_bytes, "bytes", e, true)}</td><td class="numeric">${liveNumber(`${item.name}:tx_bytes`, item.tx_bytes, "bytes", e, true)}</td><td class="numeric">${liveNumber(`${item.name}:rx_packets`, item.rx_packets, "count", e, true)} / ${liveNumber(`${item.name}:tx_packets`, item.tx_packets, "count", e, true)}</td></tr>`).join("") || '<tr><td colspan="7" class="telemetry-table-empty">Счётчики интерфейсов пока недоступны.</td></tr>'}</tbody></table></div></article>`;
+  return html`<article class="telemetry-panel">
+    <div class="telemetry-panel-heading">
+      <h3>Трафик по интерфейсам</h3>
+      <small>Скорость и накопленные счётчики</small>
+    </div>
+    <div class="telemetry-table-scroll">
+      <table class="telemetry-table telemetry-interface-table">
+        <thead>
+          <tr>
+            <th>Интерфейс</th>
+            <th>Статус</th>
+            <th class="numeric">RX · скорость</th>
+            <th class="numeric">TX · скорость</th>
+            <th class="numeric">Получено</th>
+            <th class="numeric">Отправлено</th>
+            <th class="numeric">Пакеты RX / TX</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${
+            rows
+              .map(
+                (item) =>
+                  html`<tr>
+                    <td>
+                      <strong class="mono">${e(item.name)}</strong
+                      ><small
+                        >${item.physical ? t("Физический") : t("Виртуальный / системный")}</small
+                      >
+                    </td>
+                    <td>
+                      <span
+                        class="telemetry-status ${item.state === "UP" ? "" : "down"}"
+                        >${e(item.state || "UNKNOWN")}</span
+                      >
+                    </td>
+                    <td class="numeric">
+                      ${liveNumber(`${item.name}:rx_bps`, item.rx_bps, "rate", e)}
+                    </td>
+                    <td class="numeric">
+                      ${liveNumber(`${item.name}:tx_bps`, item.tx_bps, "rate", e)}
+                    </td>
+                    <td class="numeric">
+                      ${liveNumber(`${item.name}:rx_bytes`, item.rx_bytes, "bytes", e, true)}
+                    </td>
+                    <td class="numeric">
+                      ${liveNumber(`${item.name}:tx_bytes`, item.tx_bytes, "bytes", e, true)}
+                    </td>
+                    <td class="numeric">
+                      ${liveNumber(`${item.name}:rx_packets`, item.rx_packets, "count", e, true)}
+                      /
+                      ${liveNumber(`${item.name}:tx_packets`, item.tx_packets, "count", e, true)}
+                    </td>
+                  </tr>`,
+              )
+              .join("") ||
+            html`<tr>
+              <td colspan="7" class="telemetry-table-empty">
+                Счётчики интерфейсов пока недоступны.
+              </td>
+            </tr>`
+          }
+        </tbody>
+      </table>
+    </div>
+  </article>`;
 }
 function destinations(snapshot, e) {
   const top = snapshot?.top_destinations || {};
   const rows = values(top.items).slice(0, 10);
   const basis =
     top.basis === "bytes"
-      ? "По байтам текущих соединений"
-      : "По числу текущих соединений";
-  return `<article class="telemetry-panel"><div class="telemetry-panel-heading"><h3>Топ назначений</h3><small>${basis}</small></div><div class="telemetry-table-scroll"><table class="telemetry-table"><thead><tr><th>Адрес / порт</th><th>Протокол</th><th class="numeric">Соединения</th><th class="numeric">Пакеты</th><th class="numeric">Трафик</th></tr></thead><tbody>${rows.map((item) => `<tr><td class="mono">${e(item.address)}${finite(item.port) === null ? "" : `:${e(item.port)}`}</td><td>${e(String(item.protocol || "—").toUpperCase())}</td><td class="numeric">${e(count(item.connections))}</td><td class="numeric">${e(count(item.packets))}</td><td class="numeric">${e(formatBytes(item.bytes))}</td></tr>`).join("") || `<tr><td colspan="5" class="telemetry-table-empty">${top.available ? "Текущих соединений нет." : "Список назначений недоступен на этом хосте."}</td></tr>`}</tbody></table></div><p class="telemetry-note">Срез активных IPv4-соединений.${top.partial ? " Показана ограниченная выборка." : ""} Пакеты и байты учитываются в направлении к назначению; значения зависят от доступности учёта соединений.</p></article>`;
+      ? t("По байтам текущих соединений")
+      : t("По числу текущих соединений");
+  return html`<article class="telemetry-panel">
+    <div class="telemetry-panel-heading">
+      <h3>Топ назначений</h3>
+      <small>${basis}</small>
+    </div>
+    <div class="telemetry-table-scroll">
+      <table class="telemetry-table">
+        <thead>
+          <tr>
+            <th>Адрес / порт</th>
+            <th>Протокол</th>
+            <th class="numeric">Соединения</th>
+            <th class="numeric">Пакеты</th>
+            <th class="numeric">Трафик</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${
+            rows
+              .map(
+                (item) =>
+                  html`<tr>
+                    <td class="mono">
+                      ${e(item.address)}${finite(item.port) === null ? "" : `:${e(item.port)}`}
+                    </td>
+                    <td>${e(String(item.protocol || "—").toUpperCase())}</td>
+                    <td class="numeric">${e(count(item.connections))}</td>
+                    <td class="numeric">${e(count(item.packets))}</td>
+                    <td class="numeric">${e(formatBytes(item.bytes))}</td>
+                  </tr>`,
+              )
+              .join("") ||
+            html`<tr>
+              <td colspan="5" class="telemetry-table-empty">
+                ${top.available ? t("Текущих соединений нет.") : t("Список назначений недоступен на этом хосте.")}
+              </td>
+            </tr>`
+          }
+        </tbody>
+      </table>
+    </div>
+    <p class="telemetry-note">
+      Срез активных
+      IPv4-соединений.${top.partial ? t(" Показана ограниченная выборка.") : ""}
+      Пакеты и байты учитываются в направлении к назначению; значения зависят от
+      доступности учёта соединений.
+    </p>
+  </article>`;
 }
 function devices(snapshot, e) {
   const found = snapshot?.devices || {};
   const rows = values(found.items).slice(0, 12);
-  return `<article class="telemetry-panel"><div class="telemetry-panel-heading"><h3>Устройства в сети</h3><small>Обнаружено: ${e(count(found.count))}</small></div><div class="telemetry-table-scroll"><table class="telemetry-table telemetry-device-table"><thead><tr><th>Устройство</th><th>IP-адрес</th><th>Интерфейс / источник</th></tr></thead><tbody>${rows.map((item) => `<tr><td><strong>${e(item.hostname || "Устройство")}</strong><small class="mono">${e(item.mac || "—")}</small></td><td class="mono">${e(item.address || "—")}</td><td>${e(item.interface || "—")}<small>${e(item.source || "—")}</small></td></tr>`).join("") || `<tr><td colspan="3" class="telemetry-table-empty">${found.available ? "Устройства пока не обнаружены." : "Данные об устройствах недоступны."}</td></tr>`}</tbody></table></div><p class="telemetry-note">Наблюдаемые соседи IPv4 и действующие аренды DHCP. Устройства без обмена с роутером могут ещё не отображаться.${found.partial ? " Источники данных охватывают ограниченную выборку устройств." : ""}${values(found.items).length > rows.length ? ` В таблице показаны первые ${rows.length} устройств.` : ""}</p></article>`;
+  return html`<article class="telemetry-panel">
+    <div class="telemetry-panel-heading">
+      <h3>Устройства в сети</h3>
+      <small>Обнаружено: ${e(count(found.count))}</small>
+    </div>
+    <div class="telemetry-table-scroll">
+      <table class="telemetry-table telemetry-device-table">
+        <thead>
+          <tr>
+            <th>Устройство</th>
+            <th>IP-адрес</th>
+            <th>Интерфейс / источник</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${
+            rows
+              .map(
+                (item) =>
+                  html`<tr>
+                    <td>
+                      <strong>${e(item.hostname || t("Устройство"))}</strong
+                      ><small class="mono">${e(item.mac || "—")}</small>
+                    </td>
+                    <td class="mono">${e(item.address || "—")}</td>
+                    <td>
+                      ${e(item.interface || "—")}<small
+                        >${e(item.source || "—")}</small
+                      >
+                    </td>
+                  </tr>`,
+              )
+              .join("") ||
+            html`<tr>
+              <td colspan="3" class="telemetry-table-empty">
+                ${found.available ? t("Устройства пока не обнаружены.") : t("Данные об устройствах недоступны.")}
+              </td>
+            </tr>`
+          }
+        </tbody>
+      </table>
+    </div>
+    <p class="telemetry-note">
+      Наблюдаемые соседи IPv4 и действующие аренды DHCP. Устройства без обмена с
+      роутером могут ещё не
+      отображаться.${found.partial ? t(" Источники данных охватывают ограниченную выборку устройств.") : ""}${values(found.items).length > rows.length ? html` В таблице показаны первые ${rows.length} устройств.` : ""}
+    </p>
+  </article>`;
 }
 
 export function renderTelemetry(ctx) {
@@ -786,97 +1259,176 @@ export function renderTelemetry(ctx) {
   const demo = snapshot?.demo === true;
   const scope = scopeLabel(snapshot?.traffic?.scope);
   const notice = ctx.telemetryError
-    ? `<p class="telemetry-notice" role="status">Мониторинг временно недоступен: ${e(ctx.telemetryError)}${snapshot ? " · Показаны последние полученные данные." : ""}</p>`
+    ? html`<p class="telemetry-notice" role="status">
+        Мониторинг временно недоступен:
+        ${e(ctx.telemetryError)}${snapshot ? t(" · Показаны последние полученные данные.") : ""}
+      </p>`
     : !snapshot
-      ? '<p class="telemetry-notice" role="status">Загружаем показатели сети…</p>'
+      ? html`<p class="telemetry-notice" role="status">
+          Загружаем показатели сети…
+        </p>`
       : snapshot.sample_seconds === null
-        ? '<p class="telemetry-notice" role="status">Первое измерение получено. Для вычисления скорости ждём следующий срез.</p>'
+        ? html`<p class="telemetry-notice" role="status">
+            Первое измерение получено. Для вычисления скорости ждём следующий
+            срез.
+          </p>`
         : "";
   const memoryPercent =
     finite(system.memory_total_bytes) > 0 &&
     finite(system.memory_used_bytes) !== null
       ? (system.memory_used_bytes / system.memory_total_bytes) * 100
       : null;
-  return `<div class="telemetry-dashboard"><div class="telemetry-heading"><div><h2>Мониторинг сети</h2><p>${demo ? "Демонстрационные показатели · сеть компьютера не измеряется" : "Скорости и счётчики · каждые 0,2 с · устройства и топ назначений · каждые 5 с"}</p></div><div class="telemetry-controls"><label for="telemetry-interface">Интерфейс графика</label><select id="telemetry-interface" aria-label="Интерфейс графика"><option value="all" ${effectiveSelection === "all" ? "selected" : ""}>${e(scope)}</option>${links.map((item) => `<option value="${e(item.name)}" ${item.name === effectiveSelection ? "selected" : ""}>${e(item.name)}</option>`).join("")}</select><span class="${demo ? "telemetry-demo" : ctx.telemetryError || !snapshot ? "telemetry-stale" : "telemetry-live"}">${demo ? "DEMO" : ctx.telemetryError ? "НЕТ СВЯЗИ" : !snapshot ? "ОЖИДАНИЕ" : "LIVE"}</span></div></div><div id="telemetry-content">${notice}${snapshot?.traffic?.partial ? '<p class="telemetry-note">Счётчики охватывают ограниченный набор интерфейсов.</p>' : ""}<div class="telemetry-metrics">${[
-    metric(
-      "Входящая скорость · RX",
-      formatRate(stats.rx_bps),
-      `Получено: ${formatBytes(stats.rx_bytes)}`,
-      e,
-      numberAttributes("summary-rx", stats.rx_bps, "rate", e),
-      metricDetails(
-        "Получено",
-        liveNumber("summary-rx-bytes", stats.rx_bytes, "bytes", e, true),
-        e,
-      ),
-    ),
-    metric(
-      "Исходящая скорость · TX",
-      formatRate(stats.tx_bps),
-      `Отправлено: ${formatBytes(stats.tx_bytes)}`,
-      e,
-      numberAttributes("summary-tx", stats.tx_bps, "rate", e),
-      metricDetails(
-        "Отправлено",
-        liveNumber("summary-tx-bytes", stats.tx_bytes, "bytes", e, true),
-        e,
-      ),
-    ),
-    metric(
-      "Пакеты / с",
-      count(packetRate),
-      `Всего RX / TX: ${count(stats.rx_packets)} / ${count(stats.tx_packets)}`,
-      e,
-      numberAttributes("summary-packets", packetRate, "short", e),
-      metricDetails(
-        "Всего RX / TX",
-        `${liveNumber("summary-rx-packets", stats.rx_packets, "compact", e, true)} / ${liveNumber("summary-tx-packets", stats.tx_packets, "compact", e, true)}`,
-        e,
-      ),
-    ),
-    metric(
-      "Активные соединения",
-      count(connections.active),
-      `Лимит таблицы: ${count(connections.limit)}`,
-      e,
-      numberAttributes("summary-connections", connections.active, "count", e),
-      metricDetails(
-        "Лимит таблицы",
-        liveNumber("summary-connection-limit", connections.limit, "count", e),
-        e,
-      ),
-    ),
-    metric(
-      "Устройства",
-      count(observed.count),
-      `Действующих аренд DHCP: ${count(observed.dhcp_leases)}`,
-      e,
-      numberAttributes("summary-devices", observed.count, "count", e),
-      metricDetails(
-        "Аренд DHCP",
-        liveNumber("summary-leases", observed.dhcp_leases, "count", e),
-        e,
-      ),
-    ),
-    metric(
-      "Накопленный трафик",
-      formatBytes(sum(stats.rx_bytes, stats.tx_bytes)),
-      effectiveSelection === "all" ? scope : effectiveSelection,
-      e,
-      numberAttributes(
-        "summary-bytes",
-        sum(stats.rx_bytes, stats.tx_bytes),
-        "bytes",
-        e,
-        true,
-      ),
-      metricDetails(
-        "Интерфейс",
-        e(effectiveSelection === "all" ? scope : effectiveSelection),
-        e,
-      ),
-    ),
-  ].join(
-    "",
-  )}</div><div class="telemetry-chart-grid">${chart(ctx.telemetryHistory, effectiveSelection, "speed", e)}${chart(ctx.telemetryHistory, effectiveSelection, "packets", e)}</div><p class="telemetry-chart-footer">RX — получено интерфейсом, TX — отправлено. В обзоре — последняя минута. Разверните график для выбора периода до 1 часа. История сохраняется в базе данных роутера, одна точка в секунду. Счётчики трафика накоплены с момента запуска / сброса интерфейса.<span class="telemetry-history-status" role="status">${ctx.telemetryHistoryError ? `История временно недоступна: ${e(ctx.telemetryHistoryError)}` : ""}</span></p>${interfaceTable(snapshot, e)}<div class="telemetry-detail-grid">${destinations(snapshot, e)}${devices(snapshot, e)}</div><div class="telemetry-system"><span>Время работы <strong>${e(duration(system.uptime_seconds))}</strong></span><span>CPU <strong>${finite(system.cpu_percent) === null ? "—" : `${e(decimal.format(system.cpu_percent))}%`}</strong></span><span>RAM <strong>${e(formatBytes(system.memory_used_bytes))} / ${e(formatBytes(system.memory_total_bytes))}${memoryPercent === null ? "" : ` · ${e(decimal.format(memoryPercent))}%`}</strong></span></div></div>${renderExpandedTelemetry(ctx)}</div>`;
+  return html`<div class="telemetry-dashboard">
+    <div class="telemetry-heading">
+      <div>
+        <h2>Мониторинг сети</h2>
+        <p>
+          ${demo ? t("Демонстрационные показатели · сеть компьютера не измеряется") : t("Скорости и счётчики · каждые 0,2 с · устройства и топ назначений · каждые 5 с")}
+        </p>
+      </div>
+      <div class="telemetry-controls">
+        <label for="telemetry-interface">Интерфейс графика</label
+        ><select id="telemetry-interface" aria-label="Интерфейс графика">
+          <option value="all" ${effectiveSelection === "all" ? "selected" : ""}>
+            ${e(scope)}
+          </option>
+          ${links.map((item) => html`<option value="${e(item.name)}" ${item.name === effectiveSelection ? "selected" : ""}>${e(item.name)}</option>`).join("")}</select
+        ><span
+          class="${demo ? "telemetry-demo" : ctx.telemetryError || !snapshot ? "telemetry-stale" : "telemetry-live"}"
+          >${demo ? "DEMO" : ctx.telemetryError ? t("НЕТ СВЯЗИ") : !snapshot ? t("ОЖИДАНИЕ") : "LIVE"}</span
+        >
+      </div>
+    </div>
+    <div id="telemetry-content">
+      ${notice}${snapshot?.traffic?.partial ? html`<p class="telemetry-note">Счётчики охватывают ограниченный набор интерфейсов.</p>` : ""}
+      <div class="telemetry-metrics">
+        ${[
+          metric(
+            t("Входящая скорость · RX"),
+            formatRate(stats.rx_bps),
+            html`Получено: ${formatBytes(stats.rx_bytes)}`,
+            e,
+            numberAttributes("summary-rx", stats.rx_bps, "rate", e),
+            metricDetails(
+              t("Получено"),
+              liveNumber("summary-rx-bytes", stats.rx_bytes, "bytes", e, true),
+              e,
+            ),
+          ),
+          metric(
+            t("Исходящая скорость · TX"),
+            formatRate(stats.tx_bps),
+            html`Отправлено: ${formatBytes(stats.tx_bytes)}`,
+            e,
+            numberAttributes("summary-tx", stats.tx_bps, "rate", e),
+            metricDetails(
+              t("Отправлено"),
+              liveNumber("summary-tx-bytes", stats.tx_bytes, "bytes", e, true),
+              e,
+            ),
+          ),
+          metric(
+            t("Пакеты / с"),
+            count(packetRate),
+            html`Всего RX / TX: ${count(stats.rx_packets)} /
+            ${count(stats.tx_packets)}`,
+            e,
+            numberAttributes("summary-packets", packetRate, "short", e),
+            metricDetails(
+              t("Всего RX / TX"),
+              `${liveNumber("summary-rx-packets", stats.rx_packets, "compact", e, true)} / ${liveNumber("summary-tx-packets", stats.tx_packets, "compact", e, true)}`,
+              e,
+            ),
+          ),
+          metric(
+            t("Активные соединения"),
+            count(connections.active),
+            html`Лимит таблицы: ${count(connections.limit)}`,
+            e,
+            numberAttributes(
+              "summary-connections",
+              connections.active,
+              "count",
+              e,
+            ),
+            metricDetails(
+              t("Лимит таблицы"),
+              liveNumber(
+                "summary-connection-limit",
+                connections.limit,
+                "count",
+                e,
+              ),
+              e,
+            ),
+          ),
+          metric(
+            t("Устройства"),
+            count(observed.count),
+            html`Действующих аренд DHCP: ${count(observed.dhcp_leases)}`,
+            e,
+            numberAttributes("summary-devices", observed.count, "count", e),
+            metricDetails(
+              t("Аренд DHCP"),
+              liveNumber("summary-leases", observed.dhcp_leases, "count", e),
+              e,
+            ),
+          ),
+          metric(
+            t("Накопленный трафик"),
+            formatBytes(sum(stats.rx_bytes, stats.tx_bytes)),
+            effectiveSelection === "all" ? scope : effectiveSelection,
+            e,
+            numberAttributes(
+              "summary-bytes",
+              sum(stats.rx_bytes, stats.tx_bytes),
+              "bytes",
+              e,
+              true,
+            ),
+            metricDetails(
+              t("Интерфейс"),
+              e(effectiveSelection === "all" ? scope : effectiveSelection),
+              e,
+            ),
+          ),
+        ].join("")}
+      </div>
+      <div class="telemetry-chart-grid">
+        ${chart(ctx.telemetryHistory, effectiveSelection, "speed", e)}${chart(ctx.telemetryHistory, effectiveSelection, "packets", e)}
+      </div>
+      <p class="telemetry-chart-footer">
+        RX — получено интерфейсом, TX — отправлено. В обзоре — последняя минута.
+        Разверните график для выбора периода до 1 часа. История сохраняется в
+        базе данных роутера, одна точка в секунду. Счётчики трафика накоплены с
+        момента запуска / сброса интерфейса.<span
+          class="telemetry-history-status"
+          role="status"
+          >${ctx.telemetryHistoryError ? html`История временно недоступна: ${e(ctx.telemetryHistoryError)}` : ""}</span
+        >
+      </p>
+      ${interfaceTable(snapshot, e)}
+      <div class="telemetry-detail-grid">
+        ${destinations(snapshot, e)}${devices(snapshot, e)}
+      </div>
+      <div class="telemetry-system">
+        <span
+          >Время работы
+          <strong>${e(duration(system.uptime_seconds))}</strong></span
+        ><span
+          >CPU
+          <strong
+            >${finite(system.cpu_percent) === null ? "—" : `${e(formats().decimal.format(system.cpu_percent))}%`}</strong
+          ></span
+        ><span
+          >RAM
+          <strong
+            >${e(formatBytes(system.memory_used_bytes))} /
+            ${e(formatBytes(system.memory_total_bytes))}${memoryPercent === null ? "" : ` · ${e(formats().decimal.format(memoryPercent))}%`}</strong
+          ></span
+        >
+      </div>
+    </div>
+    ${renderExpandedTelemetry(ctx)}
+  </div>`;
 }

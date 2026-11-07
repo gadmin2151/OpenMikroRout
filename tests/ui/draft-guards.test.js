@@ -245,7 +245,7 @@ test("link deletion reports all dependent resources, including disabled objects"
   assert.equal(refs.length, 8);
   assert.throws(
     () => assertLinkRemoval(cfg, "bridges", "bridge"),
-    /IP Address.*DHCP Server.*VLAN Parent.*Interface List.*NAT.*Filter.*переназначьте/,
+    /IP-адрес.*DHCP-сервер.*Родитель VLAN.*Список интерфейсов.*NAT.*Фильтр.*переназначьте/,
   );
   assert.doesNotThrow(() => assertLinkRemoval(config(), "bridges", "bridge"));
 });

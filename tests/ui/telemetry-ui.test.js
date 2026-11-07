@@ -123,22 +123,22 @@ test("interface selection controls the summary and both charts without changing 
   const history = [sample(100), sample(105)].reduce(appendTelemetryHistory, []);
   const html = render(sample(105), "eth0", { telemetryHistory: history });
   assert.ok(html.includes('<option value="eth0" selected>'));
-  assert.ok(html.includes('class="telemetry-value">4 Мбит/с'));
-  assert.ok(html.includes('class="telemetry-value">3 МБ'));
-  assert.ok(html.includes('class="telemetry-value">3</strong>'));
+  assert.match(html, /class="telemetry-value"\s*>\s*4 Мбит\/с\s*<\/strong/);
+  assert.match(html, /class="telemetry-value"\s*>\s*3 МБ\s*<\/strong/);
+  assert.match(html, /class="telemetry-value"\s*>\s*3\s*<\/strong/);
   assert.equal((html.match(/class="telemetry-chart"/g) || []).length, 2);
   assert.ok(!html.includes("NaN"));
   assert.ok(!html.includes("Infinity"));
   const removed = render(sample(105), "removed-interface");
   assert.ok(removed.includes('<option value="all" selected>'));
-  assert.ok(removed.includes('class="telemetry-value">8 Мбит/с'));
+  assert.match(removed, /class="telemetry-value"\s*>\s*8 Мбит\/с\s*<\/strong/);
 });
 
 test("unavailable and cold-start metrics have explicit states rather than fabricated zeros", () => {
   const loading = render(null);
   assert.ok(loading.includes("Загружаем показатели"));
   assert.ok(loading.includes("ОЖИДАНИЕ"));
-  assert.ok(!loading.includes('class="telemetry-value">0'));
+  assert.doesNotMatch(loading, /class="telemetry-value"\s*>\s*0(?:\s|<)/);
   const snapshot = sample();
   snapshot.sample_seconds = null;
   snapshot.traffic.rx_bps = null;
@@ -237,7 +237,7 @@ test("charts break their lines after missing polls instead of interpolating acro
   );
   const html = render(sample(135), "all", { telemetryHistory: history });
   const paths = [
-    ...html.matchAll(/class="telemetry-(?:rx|tx)-line" d="([^"]*)"/g),
+    ...html.matchAll(/class="telemetry-(?:rx|tx)-line"\s+d="([^"]*)"/g),
   ];
   assert.equal(paths.length, 4);
   for (const [, data] of paths) {
@@ -400,7 +400,7 @@ test("overview charts keep a fixed one minute viewport with unmeasured time left
   const history = [sample(100), sample(101)].reduce(appendTelemetryHistory, []);
   const html = render(sample(101), "all", { telemetryHistory: history });
   assert.ok(html.includes("1 мин назад"));
-  const [, path] = html.match(/class="telemetry-rx-line" d="([^"]+)"/);
+  const [, path] = html.match(/class="telemetry-rx-line"\s+d="([^"]+)"/);
   const firstX = Number(path.match(/^M([\d.]+)/)[1]);
   assert.ok(firstX > 612 && firstX < 613);
   assert.ok(html.includes('class="telemetry-table telemetry-interface-table"'));
@@ -413,11 +413,11 @@ test("expanded charts have independent paths and bounded selectable periods", ()
     telemetryHistory: history,
     telemetryExpanded: { kind: "speed", period: 900 },
   });
-  assert.ok(html.includes('data-action="telemetry-expand" data-kind="speed"'));
-  assert.ok(html.includes('role="dialog" aria-modal="true"'));
+  assert.match(html, /data-action="telemetry-expand"\s+data-kind="speed"/);
+  assert.match(html, /role="dialog"\s+aria-modal="true"/);
   assert.ok(html.includes('data-live-path="expanded-speed-rx"'));
   assert.ok(html.includes('data-live-path="speed-rx"'));
-  assert.ok(html.includes('value="900" selected'));
+  assert.match(html, /value="900"\s+selected(?:\s|>)/);
   assert.ok(html.includes("15 мин назад"));
   assert.ok(html.includes('data-action="telemetry-collapse"'));
   const invalidPeriod = renderExpandedTelemetry({
@@ -425,7 +425,7 @@ test("expanded charts have independent paths and bounded selectable periods", ()
     telemetryHistory: history,
     telemetryExpanded: { kind: "packets", period: -20 },
   });
-  assert.ok(invalidPeriod.includes('value="60" selected'));
+  assert.match(invalidPeriod, /value="60"\s+selected(?:\s|>)/);
   assert.equal(
     renderExpandedTelemetry({ telemetryExpanded: { kind: "<script>" } }),
     "",
@@ -490,7 +490,7 @@ test("hour-long chart downsampling keeps original peaks, troughs, and gaps", () 
     telemetryHistory: [],
     telemetryExpanded: { kind: "speed", period: 3600 },
   });
-  assert.ok(hour.includes('value="3600" selected>1 час</option>'));
+  assert.match(hour, /value="3600"\s+selected\s*>\s*1 час\s*<\/option>/);
 });
 
 test("stored history keeps demo and live modes isolated without dropping demo history", () => {

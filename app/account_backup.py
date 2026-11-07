@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.auth import HASH_ITERATIONS, MAX_USERS, AuthService, normalize_username
+from app.auth import HASH_ITERATIONS, MAX_USERS, AuthService, Language, normalize_username
 
 
 class AccountRow(BaseModel):
@@ -18,6 +18,7 @@ class AccountRow(BaseModel):
     username: str
     password_hash: str = Field(max_length=512, repr=False)
     role: Literal["read", "full"]
+    language: Language = "ru"
     enabled: bool
     created_at: float = Field(ge=0, allow_inf_nan=False)
     version: int = Field(ge=1, le=2**63 - 2)

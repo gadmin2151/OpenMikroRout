@@ -1,3 +1,4 @@
+import { t, html, getLanguage } from "./i18n.js";
 /** Login presentation shares the application brand and keeps credential handling in app.js. */
 const loginErrors = new Map([
   ["Incorrect username or password", "Неверное имя пользователя или пароль."],
@@ -13,7 +14,7 @@ const loginErrors = new Map([
 ]);
 
 export function loginMarkup({ brand, icon, e, username, error = "" }) {
-  return `<main class="login">
+  return html`<main class="login">
     <section class="login-identity" aria-label="OpenMikroRout">
       ${brand}
       <svg class="login-network-art" viewBox="0 0 480 340" aria-hidden="true">
@@ -37,6 +38,7 @@ export function loginMarkup({ brand, icon, e, username, error = "" }) {
     <section class="login-workspace" aria-labelledby="login-title">
       <div class="login-card">
         <div class="login-heading">
+          <label class="login-language"><span>Язык интерфейса</span><select id="login-language" aria-label="Язык интерфейса"><option value="ru" ${getLanguage() === "ru" ? "selected" : ""}>RU</option><option value="en" ${getLanguage() === "en" ? "selected" : ""}>EN</option></select></label>
           <span class="login-access-label">${icon("lock")}ПАНЕЛЬ УПРАВЛЕНИЯ</span>
           <h1 id="login-title">Вход в панель</h1>
           <p>Войдите в рабочее пространство вашего роутера.</p>
@@ -55,7 +57,7 @@ export function loginMarkup({ brand, icon, e, username, error = "" }) {
           </label>
           <p class="login-field-note" id="login-code-note">Оставьте пустым, если двухфакторная аутентификация выключена.</p>
           <button class="primary login-submit" type="submit"><span data-login-submit-label>Войти</span><span class="login-submit-arrow">${icon("arrow")}</span><span class="login-spinner" aria-hidden="true"></span></button>
-          <div class="login-feedback"><div class="login-alert" role="alert" ${error ? "" : "hidden"}>${icon("info")}<p>${e(loginErrors.get(error) || error)}</p></div></div>
+          <div class="login-feedback"><div class="login-alert" role="alert" ${error ? "" : "hidden"}>${icon("info")}<p>${e(t(loginErrors.get(error) || error))}</p></div></div>
         </form>
         <p class="login-access-note">${icon("shield")}Используйте учётную запись, выданную администратором.</p>
       </div>
@@ -65,7 +67,7 @@ export function loginMarkup({ brand, icon, e, username, error = "" }) {
 }
 
 function eyeMarkup(visible = false) {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>${visible ? '<path d="m3 3 18 18"/>' : ""}</svg>`;
+  return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>${visible ? html`<path d="m3 3 18 18"/>` : ""}</svg>`;
 }
 
 export function bindLoginControls(form, hasError = false) {
@@ -77,7 +79,7 @@ export function bindLoginControls(form, hasError = false) {
     toggle.setAttribute("aria-pressed", String(visible));
     toggle.setAttribute(
       "aria-label",
-      visible ? "Скрыть пароль" : "Показать пароль",
+      visible ? t("Скрыть пароль") : t("Показать пароль"),
     );
     toggle.innerHTML = eyeMarkup(visible);
   });
@@ -92,7 +94,7 @@ export function setLoginBusy(form, busy) {
   form.setAttribute("aria-busy", String(busy));
   form.querySelector('[type="submit"]').disabled = busy;
   form.querySelector("[data-login-submit-label]").textContent = busy
-    ? "Входим…"
-    : "Войти";
+    ? t("Входим…")
+    : t("Войти");
   form.querySelector(".login-password-toggle").disabled = busy;
 }

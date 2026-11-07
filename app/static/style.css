@@ -1155,7 +1155,7 @@ dialog::backdrop {
 }
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 21px 23px;
 }
 .field {
@@ -2484,14 +2484,6 @@ dialog::backdrop {
 .router-checkbox > .checkbox-label {
   min-height: 36px;
 }
-.field select[multiple] {
-  min-height: 114px;
-  line-height: 1.8;
-  padding: 6px;
-}
-.field select[multiple] option {
-  padding: 4px 7px;
-}
 .preview-section-title {
   margin: 20px 0 10px;
   font-size: 12px;
@@ -3770,7 +3762,8 @@ body.is-readonly .access-note > svg,
 }
 .monitor-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
   gap: 12px;
   padding: 18px;
   border: 1px solid #dce4e8;
@@ -3808,7 +3801,7 @@ body.is-readonly .access-note > svg,
 }
 @media (max-width: 1000px) {
   .monitor-filters {
-    grid-template-columns: repeat(2, minmax(140px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 480px) {
@@ -4377,5 +4370,264 @@ body.telemetry-expanded-open {
   }
   .security-settings fieldset {
     padding: 14px;
+  }
+}
+
+/* Checkable multi-selection keeps every value visible without modifier keys. */
+.checkbox-select {
+  min-width: 0;
+  border: 1px solid var(--control-line);
+  border-radius: 6px;
+  background: var(--field);
+  overflow: hidden;
+}
+.checkbox-select-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-alt);
+}
+.checkbox-select-toolbar button {
+  font-size: 11px;
+  padding: 4px 7px;
+  min-height: 28px;
+  white-space: normal;
+}
+.checkbox-select-count {
+  flex: 1;
+  min-width: 48px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.checkbox-select-search {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+.checkbox-select-options {
+  max-height: 210px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 5px;
+}
+.checkbox-select-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.checkbox-select-option:hover,
+.checkbox-select-option:focus-within {
+  background: var(--surface-hover);
+}
+.checkbox-select-option:has(:checked) {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.checkbox-select-option:has(:disabled) {
+  cursor: default;
+  color: var(--muted);
+}
+.checkbox-select-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  flex: 0 0 16px;
+  margin: 0;
+  padding: 0;
+}
+.checkbox-select-option span {
+  min-width: 0;
+  font-size: 13px;
+}
+.checkbox-select-empty {
+  display: block;
+  padding: 9px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.checkbox-select [hidden] {
+  display: none;
+}
+
+/* Forms must fit translated labels and their containing panel, not the viewport. */
+.feature-page,
+.view-panel,
+.security-card,
+.feature-heading > div,
+.discovery-settings-form,
+.scan-start-form,
+fieldset {
+  min-width: 0;
+}
+.feature-page button,
+.dialog-content button,
+.dialog-footer button,
+.settings-actions button,
+.rule-actions button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.checkbox-label input,
+.wg-check input {
+  flex-shrink: 0;
+}
+.discovery-page {
+  display: grid;
+  gap: 20px;
+}
+.discovery-page .configuration-help {
+  margin-top: 0;
+}
+.discovery-page .configuration-help > summary {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.discovery-settings-form > fieldset,
+.scan-start-form > fieldset {
+  display: grid;
+  gap: 18px;
+  margin: 10px 0 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+.discovery-settings-form > fieldset > button {
+  justify-self: start;
+}
+.discovery-settings-form .monitor-filters {
+  padding: 0;
+  border: 0;
+}
+.discovery-page .feature-note {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.discovery-page > button {
+  justify-self: start;
+}
+.scan-start-form > fieldset {
+  margin-top: 0;
+}
+.scan-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  align-items: start;
+  gap: 16px;
+}
+.scan-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.scan-actions button {
+  min-height: 40px;
+  margin-left: auto;
+  flex: 0 1 auto;
+}
+.scan-actions .wg-check {
+  flex: 1 1 220px;
+  align-items: center;
+}
+.discovery-page table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.discovery-page th,
+.discovery-page td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  font-size: 13px;
+}
+.discovery-page th {
+  background: var(--surface-alt);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.discovery-page td small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+.discovery-page td button + button {
+  margin-left: 6px;
+}
+.discovery-page .tools-result {
+  padding: 16px;
+  margin-top: 16px;
+}
+.discovery-page dl {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+  gap: 8px 16px;
+}
+@media (max-width: 680px) {
+  .discovery-settings-form > fieldset,
+  .scan-start-form > fieldset {
+    padding: 14px;
+  }
+  .scan-actions button {
+    flex-basis: 100%;
+  }
+  .security-search .field {
+    min-width: min(100%, 180px);
+  }
+  .checkbox-select-toolbar {
+    gap: 4px;
+  }
+}
+
+.login-language {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.login-language select {
+  width: auto;
+  min-width: 72px;
+  min-height: 36px;
+  padding: 6px 10px;
+}
+#preferences-form .field {
+  flex: 0 1 200px;
+  min-width: 160px;
+}
+#preferences-form > div:first-child {
+  flex: 1 1 320px;
+}
+#preferences-form button {
+  flex: 0 0 auto;
+  align-self: end;
+}
+@media (max-width: 680px) {
+  #preferences-form .field,
+  #preferences-form > div:first-child {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+  }
+  #preferences-form button {
+    width: 100%;
   }
 }
