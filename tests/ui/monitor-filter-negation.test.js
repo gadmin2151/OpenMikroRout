@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { URL } from "node:url";
 import { setLanguage } from "../../app/static/i18n.js";
+import {
+  handleQueryBuilderAction,
+  handleQueryBuilderInput,
+  getAppliedExpression,
+} from "../../app/static/query-builder.js";
 import { applyReadAccess, isReadAction } from "../../app/static/access-ui.js";
 import {
   handleConnectionsAction,
@@ -131,6 +136,181 @@ function context() {
 const action = (name, data = {}, mounted) => ({
   dataset: { action: name, ...data },
   closest: () => mounted,
+});
+function advancedCondition(scope, field, op, value) {
+  handleQueryBuilderAction({
+    dataset: {
+      action: "query-builder-add",
+      scope,
+      kind: "condition",
+      queryPath: "",
+    },
+  });
+  const element = {
+    dataset: { queryBuilder: scope },
+    querySelector: () => null,
+  };
+  for (const [part, entry] of [
+    ["field", field],
+    ["op", op],
+    ["value", value],
+  ])
+    handleQueryBuilderInput({
+      target: {
+        value: entry,
+        dataset: { queryPart: part, queryPath: "0" },
+        closest: () => element,
+      },
+    });
+}
+
+test("Connections applies advanced and quick criteria together and polling/kind changes never apply an unfinished builder draft", async (t) => {
+  mockForms(t);
+  const mounted = form("connections-filter", {
+    source: "192.0.2.1",
+    search: "needle",
+  });
+  const paths = [],
+    ctx = context();
+  ctx.render = () => {};
+  globalThis.document = {
+    querySelector: (selector) =>
+      selector === "#connections-filter" ? mounted : null,
+  };
+  ctx.api = async (path) => {
+    paths.push(path);
+    return { available: true, items: [], matched: 0, total: 0, timestamp: 1 };
+  };
+  renderConnections(ctx);
+  advancedCondition(
+    "connections",
+    "translated_destination",
+    "in",
+    "10.77.0.4/32",
+  );
+  await handleConnectionsAction(action("connections-filter"), ctx);
+  const applied = params(paths.at(-1)).get("expression");
+  assert.equal(JSON.parse(applied).children[0].field, "translated_destination");
+  assert.equal(params(paths.at(-1)).get("source"), "192.0.2.1");
+  handleQueryBuilderAction({
+    dataset: {
+      action: "query-builder-add",
+      scope: "connections",
+      kind: "condition",
+      queryPath: "",
+    },
+  });
+  await refreshConnections(ctx);
+  assert.equal(params(paths.at(-1)).get("expression"), applied);
+  await handleConnectionsAction(
+    action("connections-kind", { kind: "attempts" }),
+    ctx,
+  );
+  assert.equal(params(paths.at(-1)).get("expression"), applied);
+  const count = paths.length;
+  await assert.rejects(
+    handleConnectionsAction(action("connections-filter"), ctx),
+    /Завершите/,
+  );
+  assert.equal(paths.length, count);
+  assert.equal(getAppliedExpression("connections"), applied);
+  await handleConnectionsAction(action("connections-reset"), ctx);
+  assert.equal(params(paths.at(-1)).has("expression"), false);
+  assert.equal(getAppliedExpression("connections"), "");
+});
+
+test("Discovery and protection append only applied expressions and retain them through pagination", async (t) => {
+  mockForms(t);
+  const mounted = form("discovery-search", {
+    query: "printer",
+    interface: "eth0",
+  });
+  const ctx = context(),
+    paths = [];
+  let view = "hosts";
+  ctx.isCurrentView = (name) => name === view;
+  globalThis.document = {
+    querySelector: (selector) =>
+      selector === "#discovery-search" ? mounted : null,
+  };
+  ctx.api = async (path) => {
+    paths.push(path);
+    return path === "discovery/status"
+      ? { settings: { enabled: true }, errors: {} }
+      : path.includes("hosts?") || path.includes("bans?")
+        ? { items: [], total: 100 }
+        : { profiles: [], warnings: [] };
+  };
+  renderDiscovery("hosts", ctx);
+  advancedCondition("hosts", "address", "in", "192.0.2.10/24");
+  await handleDiscoveryAction(action("discovery-search"), ctx);
+  assert.equal(
+    JSON.parse(params(paths.at(-1)).get("expression")).children[0].value,
+    "192.0.2.0/24",
+  );
+  assert.equal(params(paths.at(-1)).get("query"), "printer");
+  await handleDiscoveryAction(action("discovery-page", { offset: "50" }), ctx);
+  assert.ok(params(paths.at(-1)).has("expression"));
+  view = "fail2ban";
+  renderProtection("fail2ban", ctx);
+  advancedCondition("protection-fail2ban", "remaining_seconds", "gt", "300");
+  const search = form(
+    "protection-search",
+    { query: "192.0.2" },
+    { protectionSearch: "fail2ban" },
+  );
+  await handleProtectionAction(
+    action("protection-search", { kind: "fail2ban" }, search),
+    ctx,
+  );
+  const applied = params(paths.at(-1)).get("expression");
+  assert.equal(JSON.parse(applied).children[0].value, "300");
+  assert.equal(params(paths.at(-1)).get("query"), "192.0.2");
+  await handleProtectionAction(
+    action("protection-page", { kind: "fail2ban", offset: "50" }),
+    ctx,
+  );
+  assert.equal(params(paths.at(-1)).get("expression"), applied);
+  resetProtection();
+  assert.equal(getAppliedExpression("protection-fail2ban"), "");
+});
+
+test("system-list builder uses typed resource fields and clears when another list opens", async (t) => {
+  mockForms(t);
+  const mounted = form("system-list-search", { query: "192.0.2" });
+  const paths = [],
+    ctx = context();
+  let body;
+  globalThis.document = { querySelector: () => null };
+  ctx.isCurrentView = (name) => name === "lists";
+  ctx.dialog = { open: true, querySelector: () => mounted };
+  ctx.dialogFrame = (_title, _subtitle, content) => {
+    body = content;
+  };
+  ctx.api = async (path) => {
+    paths.push(path);
+    return { items: [], total: 100 };
+  };
+  await handleProtectionAction(
+    action("system-list-open", { name: "geo_MD" }),
+    ctx,
+  );
+  assert.match(body, /data-query-builder="system-list"/);
+  advancedCondition("system-list", "address", "not_in", "192.0.2.0/24");
+  await handleProtectionAction(action("system-list-search"), ctx);
+  const applied = params(paths.at(-1)).get("expression");
+  assert.equal(JSON.parse(applied).children[0].op, "not_in");
+  await handleProtectionAction(
+    action("system-list-page", { offset: "50" }),
+    ctx,
+  );
+  assert.equal(params(paths.at(-1)).get("expression"), applied);
+  await handleProtectionAction(
+    action("system-list-open", { name: "f2b_web" }),
+    ctx,
+  );
+  assert.equal(params(paths.at(-1)).has("expression"), false);
+  assert.equal(getAppliedExpression("system-list"), "");
 });
 
 test("Connections sends all seven typed exclusions, keeps polling/sorting and pending input stable, and preserves them across kinds", async (t) => {

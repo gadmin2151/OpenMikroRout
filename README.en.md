@@ -30,6 +30,9 @@ except a selected IPv4 host or address list. [Examples and limits](docs/MATCH-NE
 The same **!** control is available in Connections and other list filters,
 as well as Packet Sniffer criteria. [Display-filter guide](docs/DISPLAY-FILTERS.md).
 
+A shared visual builder combines typed conditions with **AND / OR** and nested
+groups. [Boolean filter guide](docs/QUERY-BUILDER.md).
+
 Built for administrators of Linux gateways, office networks and labs, it keeps
 configuration on your own server and runs network operations locally using standard
 Linux tools. No cloud account is required.

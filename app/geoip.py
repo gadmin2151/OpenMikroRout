@@ -18,6 +18,8 @@ from typing import Any, BinaryIO
 
 from app.compiler import FirewallError
 from app.display_filters import validate_display_negation
+from app.list_filter_sql import SQLField, compile_list_expression, register_list_filter_functions
+from app.list_filters import FieldSpec
 from app.system_lists import country_code
 
 SOURCE = "DB-IP Country Lite"
@@ -47,6 +49,18 @@ SPECIAL_NETWORKS = tuple(
         "240.0.0.0/4",
     )
 )
+
+GEO_COUNTRY_FILTER_FIELDS = {
+    "query": SQLField(FieldSpec("text"), "country"),
+    "country": SQLField(FieldSpec("text"), "country"),
+    "ranges": SQLField(FieldSpec("number"), "ranges"),
+    "networks": SQLField(FieldSpec("number"), "networks"),
+}
+GEO_ENTRY_FILTER_FIELDS = {
+    "address": SQLField(FieldSpec("ipv4"), "first", ipv4_range=("first", "last")),
+    "first": SQLField(FieldSpec("ipv4"), "first", ipv4_range=("first", "first")),
+    "last": SQLField(FieldSpec("ipv4"), "last", ipv4_range=("last", "last")),
+}
 
 
 def public_ranges(first: int, last: int) -> Iterator[tuple[int, int]]:
@@ -120,6 +134,7 @@ class GeoIPService:
     def connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
+        register_list_filter_functions(db)
         db.execute("PRAGMA foreign_keys=ON")
         return db
 
@@ -199,6 +214,7 @@ class GeoIPService:
         limit: int = 50,
         *,
         negate: str | list[str] = "",
+        expression: str = "",
     ) -> dict[str, Any]:
         self._page(offset, limit)
         if len(search) > 32:
@@ -208,15 +224,16 @@ class GeoIPService:
         excluded = validate_display_negation(negate, {"query": cleaned})
         pattern = "%" + cleaned + "%"
         match = "country NOT LIKE ?" if "query" in excluded else "country LIKE ?"
+        advanced, parameters = compile_list_expression(expression, GEO_COUNTRY_FILTER_FIELDS)
         with self.connect() as db:
             total = db.execute(
-                f"SELECT count(*) FROM country_counts WHERE version=? AND {match}",
-                (version, pattern),
+                f"SELECT count(*) FROM country_counts WHERE version=? AND {match} AND {advanced}",
+                (version, pattern, *parameters),
             ).fetchone()[0]
             rows = db.execute(
                 "SELECT country,ranges,networks FROM country_counts WHERE version=? "
-                f"AND {match} ORDER BY country LIMIT ? OFFSET ?",
-                (version, pattern, limit, offset),
+                f"AND {match} AND {advanced} ORDER BY country LIMIT ? OFFSET ?",
+                (version, pattern, *parameters, limit, offset),
             ).fetchall()
         return {
             "items": [dict(row) for row in rows],
@@ -236,6 +253,7 @@ class GeoIPService:
         query: str = "",
         *,
         negate: str | list[str] = "",
+        expression: str = "",
     ) -> dict[str, Any]:
         self._page(offset, limit)
         country = country_code(country)
@@ -255,7 +273,9 @@ class GeoIPService:
         if "query" in excluded:
             match = f"NOT ({match})"
         where = f"version=? AND country=? AND ({match})"
-        parameters = (version, country, high, low)
+        advanced, advanced_parameters = compile_list_expression(expression, GEO_ENTRY_FILTER_FIELDS)
+        where += f" AND {advanced}"
+        parameters = (version, country, high, low, *advanced_parameters)
         with self.connect() as db:
             total = db.execute(f"SELECT count(*) FROM ranges WHERE {where}", parameters).fetchone()[
                 0

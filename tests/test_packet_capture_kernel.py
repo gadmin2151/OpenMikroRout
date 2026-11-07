@@ -136,6 +136,107 @@ def test_native_negated_bpf_selects_only_expected_synthetic_packets(tmp_path: Pa
             {3},
         ),
     ]
+
+    def term(field: str, op: str, value: str = "") -> dict[str, object]:
+        return {"kind": "condition", "field": field, "op": op, "value": value}
+
+    cases += [
+        (
+            {
+                "expression": {
+                    "kind": "group",
+                    "join": "or",
+                    "children": [
+                        term("source", "eq", "192.0.2.1"),
+                        term("port", "eq", "55"),
+                    ],
+                }
+            },
+            {0, 6, 7},
+        ),
+        (
+            {
+                "expression": {
+                    "kind": "group",
+                    "join": "or",
+                    "children": [
+                        term("protocol", "eq", "icmp"),
+                        term("port", "neq", "53"),
+                    ],
+                }
+            },
+            {3, 4, 5, 6},
+        ),
+        (
+            {
+                "expression": {
+                    "kind": "group",
+                    "join": "or",
+                    "children": [
+                        term("protocol", "eq", "icmp"),
+                        term("port", "gt", "41004"),
+                    ],
+                }
+            },
+            {4, 5, 6},
+        ),
+        (
+            {
+                "expression": {
+                    "kind": "group",
+                    "join": "or",
+                    "children": [
+                        term("protocol", "eq", "icmp"),
+                        term("port", "gt", "65535"),
+                    ],
+                }
+            },
+            {5},
+        ),
+        ({"expression": term("port", "empty")}, {5}),
+        ({"expression": term("port", "not_empty")}, {0, 1, 2, 3, 4, 6, 7}),
+        (
+            {
+                "protocol": "udp",
+                "expression": {
+                    "kind": "group",
+                    "join": "or",
+                    "children": [
+                        term("source", "eq", "192.0.2.1"),
+                        term("port", "gt", "41003"),
+                    ],
+                },
+            },
+            {0, 3},
+        ),
+        (
+            {
+                "expression": {
+                    "kind": "group",
+                    "join": "or",
+                    "children": [
+                        {
+                            "kind": "group",
+                            "join": "and",
+                            "children": [
+                                term("protocol", "eq", "tcp"),
+                                term("port", "gt", "41005"),
+                            ],
+                        },
+                        {
+                            "kind": "group",
+                            "join": "and",
+                            "children": [
+                                term("source", "eq", "192.0.2.1"),
+                                term("port", "neq", "53"),
+                            ],
+                        },
+                    ],
+                }
+            },
+            {6},
+        ),
+    ]
     for parameters, expected in cases:
         request = CaptureRequest.model_validate({"interface": "lo", **parameters})
         command = capture_command("tcpdump", request)
@@ -160,3 +261,63 @@ def test_native_negated_bpf_selects_only_expected_synthetic_packets(tmp_path: Pa
         actual = {index for index, pattern in enumerate(patterns) if pattern in result.stdout}
         assert actual == expected, (parameters, actual, expected, result.stdout)
         assert len(result.stdout.splitlines()) == len(expected), result.stdout
+
+
+def test_native_advanced_ports_include_zero_and_handle_missing_headers(tmp_path: Path) -> None:
+    data = bytearray(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 101))
+    for index, (protocol, fragment, transport) in enumerate(
+        [
+            (17, 0, struct.pack("!HHHH", 0, 0, 8, 0)),
+            (6, 0, struct.pack("!HHIIHHHH", 0, 0, 0, 0, (5 << 12) | 2, 0, 0, 0)),
+            (17, 0, b""),
+            (17, 1, b"fragment"),
+        ],
+        start=1,
+    ):
+        packet = (
+            struct.pack("!BBHHHBBH", 0x45, 0, 20 + len(transport), 0, fragment, 64, protocol, 0)
+            + socket.inet_aton(f"192.0.2.{index}")
+            + socket.inet_aton("203.0.113.1")
+            + transport
+        )
+        data += struct.pack("<IIII", 0, 0, len(packet), len(packet)) + packet
+    path = tmp_path / "ports-zero-or-missing.pcap"
+    path.write_bytes(data)
+    for operation, value, expected in [
+        ("lt", "1", {1, 2}),
+        ("lte", "1", {1, 2}),
+        ("empty", "", {3, 4}),
+        ("not_empty", "", {1, 2}),
+        ("neq", "1", {1, 2, 3, 4}),
+    ]:
+        request = CaptureRequest.model_validate(
+            {
+                "interface": "lo",
+                "expression": {
+                    "kind": "condition",
+                    "field": "port",
+                    "op": operation,
+                    "value": value,
+                },
+            }
+        )
+        args = capture_command("tcpdump", request)
+        result = subprocess.run(
+            [
+                "tcpdump",
+                "-nn",
+                "-q",
+                "-r",
+                str(path),
+                *(["-Z", "root"] if os.geteuid() == 0 else []),
+                "--",
+                *args[args.index("--") + 1 :],
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        assert result.returncode == 0, (operation, result.stderr)
+        actual = {index for index in range(1, 5) if f"192.0.2.{index}" in result.stdout}
+        assert actual == expected, (operation, actual, expected, result.stdout)

@@ -8,6 +8,10 @@ import {
   handleCaptureInput,
 } from "../../app/static/capture-ui.js";
 import { setLanguage } from "../../app/static/i18n.js";
+import {
+  handleQueryBuilderAction,
+  handleQueryBuilderInput,
+} from "../../app/static/query-builder.js";
 
 const originalDocument = globalThis.document;
 const originalFormData = globalThis.FormData;
@@ -112,6 +116,7 @@ function fixture() {
     "#capture-meta": { textContent: "" },
     "#capture-readiness": { textContent: "" },
     "#capture-error": { textContent: "", hidden: true },
+    "#capture-query-builder": { disabled: false },
   };
   globalThis.document = {
     querySelector: (selector) => nodes[selector] || null,
@@ -278,6 +283,7 @@ test("capture streams safely before completion, paints at most once per 100ms an
       destination: "198.51.100.20",
       port: 443,
       negate: [],
+      expression: null,
     });
     signal = options.signal;
     posts++;
@@ -474,6 +480,67 @@ test("capture ports become usable for !ICMP and are safely cleared from negation
     ],
     "false",
   );
+});
+
+test("capture submits the applied Boolean tree and locks its builder until the stream stops", async () => {
+  const f = fixture(),
+    wire = stream();
+  let body;
+  f.ctx.api = async (path, options) => {
+    if (path.endsWith("status")) return status;
+    body = JSON.parse(options.body);
+    return wire.response;
+  };
+  await refreshCapture(f.ctx);
+  renderCapture(f.ctx);
+  const scope = "packet-capture",
+    region = { dataset: { queryBuilder: scope }, querySelector: () => null };
+  const edit = (path, part, value) =>
+    handleQueryBuilderInput({
+      target: {
+        dataset: { queryPath: path, queryPart: part },
+        value,
+        closest: () => region,
+      },
+    });
+  for (let index = 0; index < 2; index++)
+    handleQueryBuilderAction({
+      dataset: {
+        action: "query-builder-add",
+        scope,
+        kind: "condition",
+        queryPath: "",
+      },
+    });
+  edit("", "join", "or");
+  edit("0", "field", "source");
+  edit("0", "op", "not_in");
+  edit("0", "value", "192.0.2.0/24");
+  edit("1", "field", "port");
+  edit("1", "op", "in");
+  edit("1", "value", "443,8000-8010");
+  const pending = action("capture-start", f.ctx);
+  await flush();
+  assert.equal(f.nodes["#capture-query-builder"].disabled, true);
+  assert.deepEqual(body.expression, {
+    kind: "group",
+    join: "or",
+    children: [
+      {
+        kind: "condition",
+        field: "source",
+        op: "not_in",
+        value: "192.0.2.0/24",
+      },
+      { kind: "condition", field: "port", op: "in", value: "443,8000-8010" },
+    ],
+  });
+  assert.equal(body.protocol, "tcp");
+  assert.equal(body.port, 443);
+  wire.send(completed("packet"));
+  wire.close();
+  await pending;
+  assert.equal(f.nodes["#capture-query-builder"].disabled, false);
 });
 
 test("reset/logout ignores late capture responses and aborts pending status requests", async () => {

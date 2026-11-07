@@ -1,0 +1,1145 @@
+{
+  "schema": {
+    "name": {
+      "kind": "text"
+    },
+    "protocol": {
+      "kind": "enum",
+      "options": [
+        "tcp",
+        "udp",
+        "icmp"
+      ]
+    },
+    "address": {
+      "kind": "ipv4"
+    },
+    "ports": {
+      "kind": "ports"
+    },
+    "bytes": {
+      "kind": "number"
+    }
+  },
+  "cases": [
+    {
+      "name": "nested groups and whole-array exclusion",
+      "expression": {
+        "kind": "group",
+        "join": "and",
+        "children": [
+          {
+            "kind": "group",
+            "join": "or",
+            "children": [
+              {
+                "kind": "condition",
+                "field": "name",
+                "op": "contains",
+                "value": "ALPHA"
+              },
+              {
+                "kind": "condition",
+                "field": "protocol",
+                "op": "eq",
+                "value": "UDP"
+              }
+            ]
+          },
+          {
+            "kind": "condition",
+            "field": "ports",
+            "op": "not_in",
+            "value": "53,1000-2000"
+          }
+        ]
+      },
+      "rows": [
+        {
+          "row": {
+            "name": "Alpha Router",
+            "protocol": "tcp",
+            "ports": [
+              443,
+              8443
+            ]
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "name": "Beta",
+            "protocol": "udp",
+            "ports": [
+              443
+            ]
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "name": "Beta",
+            "protocol": "tcp",
+            "ports": [
+              443
+            ]
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "name": "Alpha Router",
+            "ports": [
+              443,
+              1500
+            ]
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "name": "Alpha Router"
+          },
+          "matches": true
+        }
+      ]
+    },
+    {
+      "name": "full Unicode casefold",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "eq",
+        "value": "STRASSE"
+      },
+      "rows": [
+        {
+          "row": {
+            "name": "Straße"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "name": [
+              "else",
+              "STRASSE"
+            ]
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "name": "Strasbourg"
+          },
+          "matches": false
+        }
+      ]
+    },
+    {
+      "name": "Greek final sigma casefold",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "eq",
+        "value": "ΣΟΣ"
+      },
+      "rows": [
+        {
+          "row": {
+            "name": "σος"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "name": "σοσ"
+          },
+          "matches": true
+        }
+      ]
+    },
+    {
+      "name": "negative text complements missing",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "not_contains",
+        "value": "router"
+      },
+      "rows": [
+        {
+          "row": {},
+          "matches": true
+        },
+        {
+          "row": {
+            "name": null
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "name": [
+              "router",
+              "switch"
+            ]
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "name": [
+              "switch",
+              "bridge"
+            ]
+          },
+          "matches": true
+        }
+      ]
+    },
+    {
+      "name": "enum list normalization",
+      "expression": {
+        "kind": "condition",
+        "field": "protocol",
+        "op": "in",
+        "value": " UDP, TCP, udp "
+      },
+      "rows": [
+        {
+          "row": {
+            "protocol": "UDP"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "protocol": [
+              "icmp",
+              "tcp"
+            ]
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "protocol": "icmp"
+          },
+          "matches": false
+        },
+        {
+          "row": {},
+          "matches": false
+        }
+      ],
+      "canonical": {
+        "kind": "condition",
+        "field": "protocol",
+        "op": "in",
+        "value": "udp,tcp"
+      }
+    },
+    {
+      "name": "inverse enum is whole list",
+      "expression": {
+        "kind": "condition",
+        "field": "protocol",
+        "op": "not_in",
+        "value": "tcp,udp"
+      },
+      "rows": [
+        {
+          "row": {
+            "protocol": [
+              "icmp",
+              "udp"
+            ]
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "protocol": [
+              "icmp"
+            ]
+          },
+          "matches": true
+        },
+        {
+          "row": {},
+          "matches": true
+        }
+      ]
+    },
+    {
+      "name": "IPv4 equality tests membership of actual networks and ranges",
+      "expression": {
+        "kind": "condition",
+        "field": "address",
+        "op": "eq",
+        "value": "192.0.2.17/32"
+      },
+      "rows": [
+        {
+          "row": {
+            "address": "192.0.2.0/24"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "address": "192.0.2.10-192.0.2.20"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "address": [
+              "203.0.113.1",
+              "192.0.2.17"
+            ]
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "address": "192.0.3.0/24"
+          },
+          "matches": false
+        },
+        {
+          "row": {},
+          "matches": false
+        }
+      ],
+      "canonical": {
+        "kind": "condition",
+        "field": "address",
+        "op": "eq",
+        "value": "192.0.2.17"
+      }
+    },
+    {
+      "name": "IPv4 overlap and canonical CIDRs",
+      "expression": {
+        "kind": "condition",
+        "field": "address",
+        "op": "in",
+        "value": "192.0.2.11/24,198.51.100.2"
+      },
+      "rows": [
+        {
+          "row": {
+            "address": "192.0.2.128/25"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "address": "198.51.100.0/30"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "address": "198.51.100.4"
+          },
+          "matches": false
+        }
+      ],
+      "canonical": {
+        "kind": "condition",
+        "field": "address",
+        "op": "in",
+        "value": "192.0.2.0/24,198.51.100.2/32"
+      }
+    },
+    {
+      "name": "IPv4 negative complements all observed addresses",
+      "expression": {
+        "kind": "condition",
+        "field": "address",
+        "op": "not_in",
+        "value": "198.51.100.16/28"
+      },
+      "rows": [
+        {
+          "row": {
+            "address": [
+              "192.0.2.0/24",
+              "198.51.100.10-198.51.100.20"
+            ]
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "address": "192.0.2.1"
+          },
+          "matches": true
+        },
+        {
+          "row": {},
+          "matches": true
+        }
+      ]
+    },
+    {
+      "name": "port equality accepts normalized ranges",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "eq",
+        "value": "80 : 90,443"
+      },
+      "rows": [
+        {
+          "row": {
+            "ports": 85
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "ports": "70-85"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "ports": [
+              22,
+              443
+            ]
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "ports": 91
+          },
+          "matches": false
+        }
+      ],
+      "canonical": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "eq",
+        "value": "80-90,443"
+      }
+    },
+    {
+      "name": "port interval eq",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "eq",
+        "value": "1500"
+      },
+      "rows": [
+        {
+          "row": {
+            "ports": "1000-2000"
+          },
+          "matches": true
+        }
+      ]
+    },
+    {
+      "name": "port interval neq",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "neq",
+        "value": "1500"
+      },
+      "rows": [
+        {
+          "row": {
+            "ports": "1000-2000"
+          },
+          "matches": false
+        }
+      ]
+    },
+    {
+      "name": "port interval gt",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "gt",
+        "value": "1500"
+      },
+      "rows": [
+        {
+          "row": {
+            "ports": "1000-2000"
+          },
+          "matches": true
+        }
+      ]
+    },
+    {
+      "name": "port interval lt",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "lt",
+        "value": "1500"
+      },
+      "rows": [
+        {
+          "row": {
+            "ports": "1000-2000"
+          },
+          "matches": true
+        }
+      ]
+    },
+    {
+      "name": "port interval gte",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "gte",
+        "value": "2001"
+      },
+      "rows": [
+        {
+          "row": {
+            "ports": "1000-2000"
+          },
+          "matches": false
+        }
+      ]
+    },
+    {
+      "name": "port interval lte",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "lte",
+        "value": "999"
+      },
+      "rows": [
+        {
+          "row": {
+            "ports": "1000-2000"
+          },
+          "matches": false
+        }
+      ]
+    },
+    {
+      "name": "missing versus observed zero port",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "lt",
+        "value": "1"
+      },
+      "rows": [
+        {
+          "row": {
+            "ports": 0
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "ports": "0"
+          },
+          "matches": false
+        },
+        {
+          "row": {},
+          "matches": false
+        }
+      ]
+    },
+    {
+      "name": "exact decimal precision",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "gt",
+        "value": "9007199254740992.0000000000000001"
+      },
+      "rows": [
+        {
+          "row": {
+            "bytes": "9007199254740992.0000000000000002"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": "9007199254740992.0000000000000001"
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "bytes": null
+          },
+          "matches": false
+        }
+      ]
+    },
+    {
+      "name": "negative and decimal numbers",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "lte",
+        "value": "-0.50"
+      },
+      "rows": [
+        {
+          "row": {
+            "bytes": "-0.5"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": -1
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": 0
+          },
+          "matches": false
+        }
+      ]
+    },
+    {
+      "name": "numeric actual exponents",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "eq",
+        "value": "1000000"
+      },
+      "rows": [
+        {
+          "row": {
+            "bytes": "1e6"
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": 1000000
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": "NaN"
+          },
+          "matches": false
+        }
+      ]
+    },
+    {
+      "name": "explicit empty",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "empty",
+        "value": ""
+      },
+      "rows": [
+        {
+          "row": {
+            "bytes": null
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": ""
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": []
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": [
+              null,
+              ""
+            ]
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": 0
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "bytes": "invalid"
+          },
+          "matches": false
+        }
+      ]
+    },
+    {
+      "name": "explicit not_empty",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "not_empty",
+        "value": ""
+      },
+      "rows": [
+        {
+          "row": {
+            "bytes": null
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "bytes": ""
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "bytes": []
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "bytes": [
+              null,
+              ""
+            ]
+          },
+          "matches": false
+        },
+        {
+          "row": {
+            "bytes": 0
+          },
+          "matches": true
+        },
+        {
+          "row": {
+            "bytes": "invalid"
+          },
+          "matches": true
+        }
+      ]
+    },
+    {
+      "name": "default omitted value for empty",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "empty"
+      },
+      "rows": [
+        {
+          "row": {},
+          "matches": true
+        },
+        {
+          "row": {
+            "name": "present"
+          },
+          "matches": false
+        }
+      ],
+      "canonical": {
+        "kind": "condition",
+        "field": "name",
+        "op": "empty",
+        "value": ""
+      }
+    },
+    {
+      "name": "empty expression matches all",
+      "expression": null,
+      "rows": [
+        {
+          "row": {},
+          "matches": true
+        },
+        {
+          "row": {
+            "name": "present"
+          },
+          "matches": true
+        }
+      ]
+    }
+  ],
+  "invalid": [
+    {
+      "name": "invalid decimal NaN",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "eq",
+        "value": "NaN"
+      }
+    },
+    {
+      "name": "invalid decimal Infinity",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "eq",
+        "value": "Infinity"
+      }
+    },
+    {
+      "name": "invalid decimal 1e9",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "eq",
+        "value": "1e9"
+      }
+    },
+    {
+      "name": "invalid decimal +1",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "eq",
+        "value": "+1"
+      }
+    },
+    {
+      "name": "invalid decimal 01",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "eq",
+        "value": "01"
+      }
+    },
+    {
+      "name": "invalid decimal .5",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "eq",
+        "value": ".5"
+      }
+    },
+    {
+      "name": "invalid decimal 1.",
+      "expression": {
+        "kind": "condition",
+        "field": "bytes",
+        "op": "eq",
+        "value": "1."
+      }
+    },
+    {
+      "name": "unknown field",
+      "expression": {
+        "kind": "condition",
+        "field": "unknown",
+        "op": "eq",
+        "value": "value"
+      }
+    },
+    {
+      "name": "unknown operator",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "in",
+        "value": "foo"
+      }
+    },
+    {
+      "name": "enum outside options",
+      "expression": {
+        "kind": "condition",
+        "field": "protocol",
+        "op": "eq",
+        "value": "shell"
+      }
+    },
+    {
+      "name": "IPv4 equality rejects network",
+      "expression": {
+        "kind": "condition",
+        "field": "address",
+        "op": "eq",
+        "value": "192.0.2.0/24"
+      }
+    },
+    {
+      "name": "IPv6",
+      "expression": {
+        "kind": "condition",
+        "field": "address",
+        "op": "in",
+        "value": "::/0"
+      }
+    },
+    {
+      "name": "ports command text",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "eq",
+        "value": "80; id"
+      }
+    },
+    {
+      "name": "ports ordering list",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "gt",
+        "value": "80,443"
+      }
+    },
+    {
+      "name": "port slot bound",
+      "expression": {
+        "kind": "condition",
+        "field": "ports",
+        "op": "in",
+        "value": "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16"
+      }
+    },
+    {
+      "name": "empty criterion",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "eq",
+        "value": ""
+      }
+    },
+    {
+      "name": "empty operator cannot hide value",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "empty",
+        "value": "ignored"
+      }
+    },
+    {
+      "name": "numeric value type",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "eq",
+        "value": 1
+      }
+    },
+    {
+      "name": "extra data",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "eq",
+        "value": "value",
+        "extra": true
+      }
+    },
+    {
+      "name": "nested empty group",
+      "expression": {
+        "kind": "group",
+        "join": "and",
+        "children": [
+          {
+            "kind": "group",
+            "join": "or",
+            "children": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate JSON keys",
+      "expression": "{\"kind\":\"condition\",\"field\":\"name\",\"op\":\"eq\",\"value\":\"a\",\"value\":\"b\"}"
+    },
+    {
+      "name": "too many leaves",
+      "expression": {
+        "kind": "group",
+        "join": "and",
+        "children": [
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          },
+          {
+            "kind": "condition",
+            "field": "name",
+            "op": "eq",
+            "value": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "depth five",
+      "expression": {
+        "kind": "group",
+        "join": "and",
+        "children": [
+          {
+            "kind": "group",
+            "join": "and",
+            "children": [
+              {
+                "kind": "group",
+                "join": "and",
+                "children": [
+                  {
+                    "kind": "group",
+                    "join": "and",
+                    "children": [
+                      {
+                        "kind": "condition",
+                        "field": "name",
+                        "op": "eq",
+                        "value": "a"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "long value",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "eq",
+        "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "long value before trimming",
+      "expression": {
+        "kind": "condition",
+        "field": "name",
+        "op": "eq",
+        "value": "a                                                                                                                                "
+      }
+    }
+  ]
+}

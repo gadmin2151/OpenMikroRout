@@ -215,6 +215,120 @@ def test_negated_csv_filter_query_is_typed_and_deduplicated() -> None:
     assert query.source == "192.0.2.1/32"
 
 
+def test_advanced_expression_combines_groups_and_legacy_filters() -> None:
+    expression = {
+        "kind": "group",
+        "join": "and",
+        "children": [
+            {
+                "kind": "group",
+                "join": "or",
+                "children": [
+                    {
+                        "kind": "condition",
+                        "field": "source",
+                        "op": "in",
+                        "value": "198.51.100.0/24",
+                    },
+                    {"kind": "condition", "field": "interface", "op": "eq", "value": "eth1"},
+                ],
+            },
+            {"kind": "condition", "field": "port", "op": "not_in", "value": "80,443"},
+            {"kind": "condition", "field": "bytes", "op": "gte", "value": "360"},
+        ],
+    }
+    row = parse_conntrack(FLOW, {"203.0.113.10": "eth0"})[0]
+    query = ConnectionQuery(expression=json.dumps(expression), protocol="tcp")
+    assert matches(row, query)
+    query.protocol = "udp"
+    assert not matches(row, query)
+    row.translated_port = 443
+    query.protocol = "tcp"
+    assert not matches(row, query)  # Exclude the entire original/translated port union.
+
+
+def test_read_api_advanced_filters_are_validated_and_apply_before_counts(tmp_path: Path) -> None:
+    password = "test-only-connections-password"
+    with TestClient(
+        create_app(
+            Settings(
+                data_dir=tmp_path, auth_enabled=True, password=password, read_password=password
+            )
+        )
+    ) as client:
+        expression = {
+            "kind": "condition",
+            "field": "source",
+            "op": "not_in",
+            "value": "192.0.2.0/24",
+        }
+        assert (
+            client.get(
+                "/api/connections", params={"expression": json.dumps(expression)}
+            ).status_code
+            == 401
+        )
+        client.post(
+            "/api/login",
+            headers={"X-NAT-Request": "1"},
+            json={"username": "viewer", "password": password},
+        )
+        for kind in ("active", "attempts"):
+            response = client.get(
+                "/api/connections", params={"kind": kind, "expression": json.dumps(expression)}
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["total"] == response.json()["matched"] == 1
+            response = client.get(
+                "/api/connections",
+                params={"kind": kind, "protocol": "udp", "expression": json.dumps(expression)},
+            )
+            assert response.status_code == 200 and response.json()["matched"] == 0
+        target_expression = {
+            "kind": "group",
+            "join": "and",
+            "children": [
+                {
+                    "kind": "group",
+                    "join": "or",
+                    "children": [
+                        {
+                            "kind": "condition",
+                            "field": "translated_destination",
+                            "op": "in",
+                            "value": "192.168.10.0/24",
+                        },
+                        {"kind": "condition", "field": "source", "op": "eq", "value": "192.0.2.1"},
+                    ],
+                },
+                {"kind": "condition", "field": "destination_port", "op": "eq", "value": "3389"},
+                {"kind": "condition", "field": "translated_port", "op": "in", "value": "3380-3390"},
+                {"kind": "condition", "field": "source_port", "op": "gt", "value": "50000"},
+            ],
+        }
+        response = client.get(
+            "/api/connections", params={"expression": json.dumps(target_expression)}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["matched"] == 1
+        # Quick destination remains the original tuple even with a DNAT expression.
+        response = client.get(
+            "/api/connections",
+            params={"destination": "192.168.10.0/24", "expression": json.dumps(target_expression)},
+        )
+        assert response.status_code == 200 and response.json()["matched"] == 0
+        for invalid in (
+            {**expression, "field": "password"},
+            {**expression, "op": "shell"},
+            {**expression, "value": "::/0"},
+            {**expression, "value": 1},
+            {**expression, "extra": True},
+            "[" * 1500 + "0" + "]" * 1500,
+        ):
+            encoded = invalid if isinstance(invalid, str) else json.dumps(invalid)
+            assert client.get("/api/connections", params={"expression": encoded}).status_code == 422
+
+
 def test_api_filters_validate_and_read_accounts_can_monitor(tmp_path: Path) -> None:
     password = "test-only-connections-password"
     with TestClient(

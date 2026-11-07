@@ -2,6 +2,16 @@ import { t, html, setLanguage, locale } from "./i18n.js";
 import { installCheckboxSelectEvents } from "./checkbox-select.js";
 import { assertDraftRevision } from "./draft-guards.js";
 import {
+  renderQueryBuilder,
+  applyQueryBuilder,
+  getAppliedQuery,
+  compileQueryExpression,
+  resetAllQueryBuilders,
+  handleQueryBuilderInput,
+  handleQueryBuilderAction,
+} from "./query-builder.js";
+import { natQuerySchema } from "./config-filter-schemas.js";
+import {
   displayFilterToggle,
   displayNegations,
   syncDisplayFilterControl,
@@ -95,7 +105,7 @@ import {
   resetConnections,
   handleConnectionsAction,
   handleConnectionsInput,
-} from "./connections-ui.js?v=4";
+} from "./connections-ui.js?v=5";
 import {
   routerViews,
   renderRouterView,
@@ -260,6 +270,7 @@ function clearSession() {
   resetCapture();
   resetProtection();
   resetDiscovery();
+  resetAllQueryBuilders();
   loginUsername = currentUser()?.username || loginUsername;
   authGeneration++;
   state = null;
@@ -770,6 +781,10 @@ function render() {
 
 function filteredRules() {
   const q = search.toLowerCase();
+  const advanced = compileQueryExpression(
+    getAppliedQuery("nat"),
+    natQuerySchema(),
+  );
   const matches = (field, value, result) =>
     !value || (natFilterNegations.has(field) ? !result : result);
   return state.config.rules.filter(
@@ -780,7 +795,8 @@ function filteredRules() {
         "search",
         q,
         Object.values(r).join(" ").toLowerCase().includes(q),
-      ),
+      ) &&
+      advanced(r),
   );
 }
 function syncNatFilterControls() {
@@ -844,7 +860,8 @@ function renderRules() {
     .join(
       "",
     )}</select>${displayFilterToggle({ name: "protocol", label: t("Фильтр протокола"), value: protocolFilter, negated: natFilterNegations.has("protocol"), action: "nat-filter-negate" })}</div><button class="icon ghost" data-action="columns" title="Настроить колонки" aria-label="Настроить колонки">${icon("list")}</button><button class="icon ghost" data-action="refresh" title="Обновить" aria-label="Обновить">${icon("refresh")}</button></div></div>
-    <div class="table-scroll"><table class="rules-table"><thead><tr><th><input type="checkbox" id="select-all" aria-label="Выбрать все показанные правила" ${rows.length && rows.every((r) => selected.has(r.id)) ? "checked" : ""}></th><th class="drag-column" aria-label="Перетаскивание"></th><th>#</th>${ruleColumns.map(([key, label]) => html`<th data-column="${key}" ${visibleColumns.has(key) ? "" : "hidden"}>${t(label)}</th>`).join("")}<th></th></tr></thead><tbody id="rules-body">${renderRuleRows(rows)}</tbody></table>${!rows.length ? empty("shield", search || chainFilter || protocolFilter ? t("Ничего не найдено") : t("Пока нет правил NAT"), search || chainFilter || protocolFilter ? t("Измените поисковый запрос или фильтры.") : t("Добавьте первое правило или выберите готовый шаблон в редакторе.")) : ""}</div>
+    ${renderQueryBuilder("nat", natQuerySchema(), { applyAction: "nat-query-apply" })}
+    <div class="table-scroll"><table class="rules-table"><thead><tr><th><input type="checkbox" id="select-all" aria-label="Выбрать все показанные правила" ${rows.length && rows.every((r) => selected.has(r.id)) ? "checked" : ""}></th><th class="drag-column" aria-label="Перетаскивание"></th><th>#</th>${ruleColumns.map(([key, label]) => html`<th data-column="${key}" ${visibleColumns.has(key) ? "" : "hidden"}>${t(label)}</th>`).join("")}<th></th></tr></thead><tbody id="rules-body">${renderRuleRows(rows)}</tbody></table>${!rows.length ? empty("shield", search || chainFilter || protocolFilter || getAppliedQuery("nat") ? t("Ничего не найдено") : t("Пока нет правил NAT"), search || chainFilter || protocolFilter || getAppliedQuery("nat") ? t("Измените поисковый запрос или фильтры.") : t("Добавьте первое правило или выберите готовый шаблон в редакторе.")) : ""}</div>
     ${selected.size === 1 ? renderDetail(state.config.rules.find((r) => selected.has(r.id))) : ""}
     <div class="panel-footer"><span>${rows.length} из ${state.config.rules.length} правил${selected.size ? html` · выбрано ${selected.size}` : ""}</span><div class="footer-legend"><span><i class="dot"></i>Включено</span><span><i class="dot off"></i>Отключено</span><span>${isDemo() ? t("Счётчики недоступны в демо") : t("Счётчики первых пакетов соединений")}</span></div></div>`;
 }
@@ -1433,6 +1450,12 @@ async function handleAction(button) {
   if (button.disabled || busy) return;
   if (state && !canWrite() && !isReadAction(action)) {
     toast(t("Группа read: доступен только просмотр."), true);
+    return;
+  }
+  if (handleQueryBuilderAction(button)) return;
+  if (action === "nat-query-apply") {
+    applyQueryBuilder("nat");
+    updateRuleTable();
     return;
   }
   if (action === "nat-filter-negate") {
@@ -2080,6 +2103,20 @@ document.addEventListener("dblclick", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (
+    event.key === "Enter" &&
+    event.target.matches(
+      'input:not([type="checkbox"]):not([data-checkbox-search])',
+    )
+  ) {
+    const region = event.target.closest("[data-query-builder]");
+    const apply = region?.querySelector("[data-query-apply]");
+    if (apply && !apply.disabled) {
+      event.preventDefault();
+      void handleAction(apply).catch((error) => toast(error.message, true));
+      return;
+    }
+  }
+  if (
     event.key === "Escape" &&
     !dialog.open &&
     closeHeaderPopovers(root, { restoreFocus: true })
@@ -2156,6 +2193,7 @@ document.addEventListener("input", (event) => {
     canWrite(),
   );
   if (event.target.matches("[data-checkbox-search]")) return;
+  if (handleQueryBuilderInput(event)) return;
   if (handleConnectionsInput(event)) return;
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
@@ -2177,6 +2215,7 @@ document.addEventListener("change", (event) => {
     event.target.closest("#rule-form,#router-form[data-kind=filter]"),
     canWrite(),
   );
+  if (handleQueryBuilderInput(event)) return;
   if (handleConnectionsInput(event)) return;
   if (event.target.id === "login-language") {
     const form =

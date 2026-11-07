@@ -1,6 +1,13 @@
 import { html, t } from "./i18n.js";
 import { diagnosticOutputTail, readDiagnosticStream } from "./live-stream.js";
 import {
+  renderQueryBuilder,
+  applyQueryBuilder,
+  getAppliedQuery,
+  resetQueryBuilder,
+} from "./query-builder.js";
+import { captureQuerySchema } from "./config-filter-schemas.js";
+import {
   displayFilterField,
   displayNegations,
   syncDisplayFilterControl,
@@ -44,6 +51,7 @@ export function resetCapture() {
   active = statusController = statusRequest = status = null;
   statusError = output = meta = error = "";
   input = defaults();
+  resetQueryBuilder("packet-capture");
   renderedOptions = new WeakMap();
 }
 
@@ -87,12 +95,15 @@ export function renderCapture(ctx) {
       idPrefix: "capture-filter",
       disabled,
     });
-  return html`<div class="feature-page capture-page"><div class="feature-heading"><div><h2>Packet Sniffer</h2><p>Наблюдение заголовков IPv4-пакетов на выбранном интерфейсе.</p></div>${ctx.icon("activity")}</div><div class="capture-readiness feature-note" id="capture-readiness" role="status">${ctx.e(readiness(ctx) || t("Готов к захвату пакетов"))}</div><form id="capture-form" class="form-grid capture-form"><label class="field"><span>Интерфейс захвата</span><select name="interface" id="capture-interface" required ${locked}>${interfaceOptions(ctx)}</select></label>${filterField("protocol", html`<label class="field"><span>Протокол</span><select name="protocol" ${locked}>${["all", "tcp", "udp", "icmp"].map((value) => html`<option value="${value}" ${input.protocol === value ? "selected" : ""}>${value === "all" ? t("Все протоколы IPv4") : value.toUpperCase()}</option>`).join("")}</select></label>`)}${filterField("source", html`<label class="field"><span>Источник IPv4 / CIDR</span><input name="source" value="${ctx.e(input.source)}" placeholder="192.0.2.0/24" maxlength="32" ${locked}></label>`)}${filterField("destination", html`<label class="field"><span>Назначение IPv4 / CIDR</span><input name="destination" value="${ctx.e(input.destination)}" placeholder="198.51.100.10" maxlength="32" ${locked}></label>`)}${filterField("port", html`<label class="field"><span>Порт · необязательно</span><input name="port" value="${ctx.e(input.port)}" type="number" min="1" max="65535" step="1" placeholder="443" ${disabled || !portsAllowed() ? "disabled" : ""}><small>TCP / UDP · источник или назначение</small></label>`)}<div class="wide settings-actions capture-actions"><button type="submit" class="primary" data-action="capture-start" ${disabled || readiness(ctx) ? "disabled" : ""}>${ctx.icon("activity")}Начать захват</button><button type="button" data-action="capture-stop" ${active ? "" : "hidden"}>Стоп</button><button type="button" data-action="capture-refresh" ${active || statusRequest ? "disabled" : ""}>${ctx.icon("refresh")}Обновить интерфейсы</button></div></form><div class="connection-error" id="capture-error" role="alert" ${error ? "" : "hidden"}>${ctx.e(error)}</div><div class="tools-result capture-result"><div class="tools-result-heading"><strong>Пакеты</strong><span id="capture-meta" role="status" aria-live="polite">${ctx.e(meta || t("Захват выключен"))}</span></div><pre id="capture-output" tabindex="0" aria-live="off" aria-label="Заголовки перехваченных пакетов">${ctx.e(output || t("Выберите интерфейс и фильтры, затем начните захват."))}</pre></div><p class="feature-note">Захват работает до нажатия «Стоп». Вывод содержит заголовки пакетов без содержимого и хранит последние 32 КиБ только в этом окне. Закрытие раздела останавливает захват. Фильтры не меняют правила Firewall.</p></div>`;
+  return html`<div class="feature-page capture-page"><div class="feature-heading"><div><h2>Packet Sniffer</h2><p>Наблюдение заголовков IPv4-пакетов на выбранном интерфейсе.</p></div>${ctx.icon("activity")}</div><div class="capture-readiness feature-note" id="capture-readiness" role="status">${ctx.e(readiness(ctx) || t("Готов к захвату пакетов"))}</div><form id="capture-form" class="form-grid capture-form"><label class="field"><span>Интерфейс захвата</span><select name="interface" id="capture-interface" required ${locked}>${interfaceOptions(ctx)}</select></label>${filterField("protocol", html`<label class="field"><span>Протокол</span><select name="protocol" ${locked}>${["all", "tcp", "udp", "icmp"].map((value) => html`<option value="${value}" ${input.protocol === value ? "selected" : ""}>${value === "all" ? t("Все протоколы IPv4") : value.toUpperCase()}</option>`).join("")}</select></label>`)}${filterField("source", html`<label class="field"><span>Источник IPv4 / CIDR</span><input name="source" value="${ctx.e(input.source)}" placeholder="192.0.2.0/24" maxlength="32" ${locked}></label>`)}${filterField("destination", html`<label class="field"><span>Назначение IPv4 / CIDR</span><input name="destination" value="${ctx.e(input.destination)}" placeholder="198.51.100.10" maxlength="32" ${locked}></label>`)}${filterField("port", html`<label class="field"><span>Порт · необязательно</span><input name="port" value="${ctx.e(input.port)}" type="number" min="1" max="65535" step="1" placeholder="443" ${disabled || !portsAllowed() ? "disabled" : ""}><small>TCP / UDP · источник или назначение</small></label>`)}<div class="wide settings-actions capture-actions"><button type="submit" class="primary" data-action="capture-start" ${disabled || readiness(ctx) ? "disabled" : ""}>${ctx.icon("activity")}Начать захват</button><button type="button" data-action="capture-stop" ${active ? "" : "hidden"}>Стоп</button><button type="button" data-action="capture-refresh" ${active || statusRequest ? "disabled" : ""}>${ctx.icon("refresh")}Обновить интерфейсы</button></div></form><fieldset class="capture-query-builder" id="capture-query-builder" ${locked}>${renderQueryBuilder("packet-capture", captureQuerySchema(), { applyAction: "capture-start" })}</fieldset><div class="connection-error" id="capture-error" role="alert" ${error ? "" : "hidden"}>${ctx.e(error)}</div><div class="tools-result capture-result"><div class="tools-result-heading"><strong>Пакеты</strong><span id="capture-meta" role="status" aria-live="polite">${ctx.e(meta || t("Захват выключен"))}</span></div><pre id="capture-output" tabindex="0" aria-live="off" aria-label="Заголовки перехваченных пакетов">${ctx.e(output || t("Выберите интерфейс и фильтры, затем начните захват."))}</pre></div><p class="feature-note">Захват работает до нажатия «Стоп». Вывод содержит заголовки пакетов без содержимого и хранит последние 32 КиБ только в этом окне. Закрытие раздела останавливает захват. Фильтры не меняют правила Firewall.</p></div>`;
 }
 
 function updateCapture(ctx) {
   const form = document.querySelector("#capture-form");
   if (!form) return;
+  const queryFieldset = document.querySelector("#capture-query-builder");
+  if (queryFieldset)
+    queryFieldset.disabled = !!active || !ctx.canWrite() || ctx.offline;
   const select = document.querySelector("#capture-interface");
   if (select) {
     const markup = interfaceOptions(ctx);
@@ -268,6 +279,7 @@ export async function handleCaptureAction(button, ctx) {
   const form = document.querySelector("#capture-form");
   if (!form?.reportValidity()) return true;
   handleCaptureInput({ target: form.querySelector("input,select") }, ctx);
+  applyQueryBuilder("packet-capture");
   const generation = ctx.generation;
   const currentEpoch = epoch;
   const controller = new AbortController();
@@ -286,6 +298,7 @@ export async function handleCaptureAction(button, ctx) {
         ...input,
         source: input.source.trim(),
         destination: input.destination.trim(),
+        expression: getAppliedQuery("packet-capture"),
         port: portsAllowed() && input.port ? Number(input.port) : null,
       }),
     });

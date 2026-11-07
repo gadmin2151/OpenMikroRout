@@ -3,6 +3,14 @@ import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
 import { proofForm, proof, clearProof } from "./security-ui.js?v=1";
 import { interfaceNames } from "./router-pages.js?v=10";
 import {
+  renderQueryBuilder,
+  applyQueryBuilder,
+  getAppliedQuery,
+  compileQueryExpression,
+  resetQueryBuilder,
+} from "./query-builder.js";
+import { wireGuardQuerySchema } from "./config-filter-schemas.js";
+import {
   displayFilterToggle,
   displayNegations,
   syncDisplayFilterControl,
@@ -21,6 +29,7 @@ export function resetWireGuard() {
   controller?.abort();
   controller = request = editing = privateProfile = status = null;
   peerFilter = emptyPeerFilter();
+  resetQueryBuilder("wg-peers");
 }
 export function clearWireGuardSecrets() {
   privateProfile = null;
@@ -152,11 +161,15 @@ export function handleWireGuardFilter(event, ctx) {
       peerFilter[name],
       peerFilter.negate.includes(name),
     );
+  const advanced = compileQueryExpression(
+    getAppliedQuery("wg-peers"),
+    wireGuardQuerySchema(),
+  );
   let visible = 0;
   for (const peer of collection(ctx, "wireguard_peers")) {
     const row = document.querySelector(`[data-wg-peer-row="${peer.id}"]`);
     if (!row) continue;
-    row.hidden = !matchesWireGuardPeer(peer, peerFilter);
+    row.hidden = !(matchesWireGuardPeer(peer, peerFilter) && advanced(peer));
     if (!row.hidden) visible++;
   }
   const empty = document.querySelector("[data-wg-filter-empty]");
@@ -171,6 +184,10 @@ export function renderWireGuard(ctx, peers = false) {
   status ||= ctx.networkStatus?.wireguard || null;
   const interfaces = collection(ctx, "wireguard_interfaces");
   const entries = collection(ctx, "wireguard_peers");
+  const advanced = compileQueryExpression(
+    getAppliedQuery("wg-peers"),
+    wireGuardQuerySchema(),
+  );
   if (!interfaces.some((item) => item.name === peerFilter.interface))
     peerFilter.interface = "";
   peerFilter.negate = displayNegations(
@@ -178,8 +195,8 @@ export function renderWireGuard(ctx, peers = false) {
     peerFilter,
     peerFilterFields,
   );
-  const matched = entries.filter((item) =>
-    matchesWireGuardPeer(item, peerFilter),
+  const matched = entries.filter(
+    (item) => matchesWireGuardPeer(item, peerFilter) && advanced(item),
   ).length;
   const filters = peers
     ? html`<div class="wg-peer-filters" id="wg-display-filters"><div class="display-filter-inline"><label><span class="sr-only">Поиск peers</span><input id="wg-peer-search" type="search" placeholder="Поиск: имя, IP, ключ…" value="${ctx.e(peerFilter.query)}" maxlength="128"></label>${displayFilterToggle({ name: "query", label: t("Поиск peers"), value: peerFilter.query, negated: peerFilter.negate.includes("query"), action: "wg-peer-negate" })}</div><div class="display-filter-inline"><label><span class="sr-only">Интерфейс peers</span><select id="wg-peer-interface"><option value="">Все интерфейсы</option>${interfaces.map((item) => html`<option value="${ctx.e(item.name)}" ${item.name === peerFilter.interface ? "selected" : ""}>${ctx.e(item.name)}</option>`).join("")}</select></label>${displayFilterToggle({ name: "interface", label: t("Интерфейс peers"), value: peerFilter.interface, negated: peerFilter.negate.includes("interface"), action: "wg-peer-negate" })}</div><span data-wg-filter-count aria-live="polite">${matched} / ${entries.length}</span></div>`
@@ -202,7 +219,7 @@ export function renderWireGuard(ctx, peers = false) {
     table = html`<table class="rules-table wg-table"><thead><tr><th>Peer / Interface</th><th>Allowed IPs</th><th>Endpoint</th><th>Last handshake</th><th>RX / TX</th><th></th></tr></thead><tbody>${entries
       .map((peer) => {
         const live = peerStatus(peer);
-        return html`<tr data-wg-peer-row="${ctx.e(peer.id)}" ${matchesWireGuardPeer(peer, peerFilter) ? "" : "hidden"} class="${peer.enabled ? "" : "disabled-row"}"><td><strong>${ctx.e(peer.name)}</strong><small class="wg-table-sub mono">${ctx.e(peer.interface)}</small></td><td><span class="mono wg-allowed-ips" title="${ctx.e(peer.allowed_ips.join(", "))}">${ctx.e(peer.allowed_ips.join(", "))}</span></td><td class="mono wg-endpoint" data-wg-endpoint="${ctx.e(peer.id)}">${ctx.e(live?.endpoint || endpoint(peer))}</td><td><span class="wg-peer-state ${live?.connected ? "connected" : ""}" data-wg-handshake="${ctx.e(peer.id)}">${ctx.e(peer.enabled ? handshakeText(live) : t("Отключён"))}</span></td><td class="mono wg-counter" data-wg-traffic="${ctx.e(peer.id)}">${bytes(live?.rx_bytes)} / ${bytes(live?.tx_bytes)}</td><td><div class="row-actions"><button class="icon ghost" data-action="wg-peer-edit" data-id="${ctx.e(peer.id)}" aria-label="Настройки peer ${ctx.e(peer.name)}">${ctx.icon("edit")}</button>${peer.client_private_key_id ? html`<button class="icon ghost" data-action="wg-export" data-client="true" data-id="${ctx.e(peer.id)}" aria-label="Конфигурация и QR ${ctx.e(peer.name)}">${ctx.icon("download")}</button>` : ""}<button class="icon ghost danger" data-action="wg-remove" data-kind="wireguard_peers" data-id="${ctx.e(peer.id)}" ${disable} aria-label="Удалить peer ${ctx.e(peer.name)}">${ctx.icon("minus")}</button></div></td></tr>`;
+        return html`<tr data-wg-peer-row="${ctx.e(peer.id)}" ${matchesWireGuardPeer(peer, peerFilter) && advanced(peer) ? "" : "hidden"} class="${peer.enabled ? "" : "disabled-row"}"><td><strong>${ctx.e(peer.name)}</strong><small class="wg-table-sub mono">${ctx.e(peer.interface)}</small></td><td><span class="mono wg-allowed-ips" title="${ctx.e(peer.allowed_ips.join(", "))}">${ctx.e(peer.allowed_ips.join(", "))}</span></td><td class="mono wg-endpoint" data-wg-endpoint="${ctx.e(peer.id)}">${ctx.e(live?.endpoint || endpoint(peer))}</td><td><span class="wg-peer-state ${live?.connected ? "connected" : ""}" data-wg-handshake="${ctx.e(peer.id)}">${ctx.e(peer.enabled ? handshakeText(live) : t("Отключён"))}</span></td><td class="mono wg-counter" data-wg-traffic="${ctx.e(peer.id)}">${bytes(live?.rx_bytes)} / ${bytes(live?.tx_bytes)}</td><td><div class="row-actions"><button class="icon ghost" data-action="wg-peer-edit" data-id="${ctx.e(peer.id)}" aria-label="Настройки peer ${ctx.e(peer.name)}">${ctx.icon("edit")}</button>${peer.client_private_key_id ? html`<button class="icon ghost" data-action="wg-export" data-client="true" data-id="${ctx.e(peer.id)}" aria-label="Конфигурация и QR ${ctx.e(peer.name)}">${ctx.icon("download")}</button>` : ""}<button class="icon ghost danger" data-action="wg-remove" data-kind="wireguard_peers" data-id="${ctx.e(peer.id)}" ${disable} aria-label="Удалить peer ${ctx.e(peer.name)}">${ctx.icon("minus")}</button></div></td></tr>`;
       })
       .join(
         "",
@@ -223,7 +240,7 @@ export function renderWireGuard(ctx, peers = false) {
               "Создайте сервер для доступа к своей сети или импортируйте профиль VPN-провайдера как клиент.",
             ),
       );
-  return html`${toolbar}${summary}${notice}${filters}<div class="table-scroll router-table-scroll">${table}${empty}</div><div class="wg-guide"><div>${ctx.icon("server")}<strong>Сервер</strong><p>Мастер → peer → конфигурация или QR → применить и подтвердить.</p></div><div>${ctx.icon("swap")}<strong>Клиент</strong><p>Импорт .conf → исходные сети LAN → kill switch → предпросмотр.</p></div><div>${ctx.icon("shield")}<strong>Один черновик</strong><p>IP, маршруты и Firewall применяются вместе с автоматическим откатом.</p></div></div>`;
+  return html`${toolbar}${summary}${notice}${filters}${peers ? renderQueryBuilder("wg-peers", wireGuardQuerySchema(), { applyAction: "wg-query-apply" }) : ""}<div class="table-scroll router-table-scroll">${table}${empty}</div><div class="wg-guide"><div>${ctx.icon("server")}<strong>Сервер</strong><p>Мастер → peer → конфигурация или QR → применить и подтвердить.</p></div><div>${ctx.icon("swap")}<strong>Клиент</strong><p>Импорт .conf → исходные сети LAN → kill switch → предпросмотр.</p></div><div>${ctx.icon("shield")}<strong>Один черновик</strong><p>IP, маршруты и Firewall применяются вместе с автоматическим откатом.</p></div></div>`;
 }
 
 export async function refreshWireGuard(ctx) {
@@ -430,6 +447,11 @@ function download(profile) {
 export async function handleWireGuardAction(button, ctx) {
   const action = button.dataset.action;
   if (!action?.startsWith("wg-")) return false;
+  if (action === "wg-query-apply") {
+    applyQueryBuilder("wg-peers");
+    handleWireGuardFilter({ target: { id: "wg-peer-search" } }, ctx);
+    return true;
+  }
   if (action === "wg-peer-negate") {
     const name = button.dataset.displayNegate;
     if (!peerFilterFields.includes(name) || !String(peerFilter[name]).trim())

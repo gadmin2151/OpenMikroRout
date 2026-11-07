@@ -7,6 +7,34 @@ import {
   displayNegationQuery,
   syncDisplayFilterControl,
 } from "./display-filter-ui.js";
+import {
+  renderQueryBuilder,
+  applyQueryBuilder,
+  getAppliedExpression,
+  resetQueryBuilder,
+} from "./query-builder.js";
+export const banQuerySchema = [
+  { field: "query", label: "Поиск", type: "text" },
+  { field: "profile", label: "Профиль", type: "text" },
+  { field: "address", label: "IPv4 / CIDR", type: "ipv4" },
+  { field: "country", label: "Страна", type: "text" },
+  { field: "source", label: "Источник", type: "text" },
+  { field: "remaining_seconds", label: "Осталось, с", type: "number" },
+];
+export const countryQuerySchema = [
+  { field: "query", label: "Поиск", type: "text" },
+  { field: "country", label: "Страна", type: "text" },
+  { field: "ranges", label: "Диапазоны", type: "number" },
+  { field: "networks", label: "Подсети", type: "number" },
+];
+export const systemListQuerySchema = (name) =>
+  name.startsWith("geo_")
+    ? [
+        { field: "address", label: "IPv4 / CIDR", type: "ipv4" },
+        { field: "first", label: "Первый IPv4", type: "ipv4" },
+        { field: "last", label: "Последний IPv4", type: "ipv4" },
+      ]
+    : banQuerySchema.filter((field) => field.field !== "query");
 
 export const protectionViews = {
   fail2ban: [
@@ -79,9 +107,15 @@ function searchForm(ctx, kind, hint) {
       idPrefix: `protection-${kind}`,
     },
   );
-  return html`<form class="security-search" data-protection-search="${kind}">${search}<button type="submit" data-action="protection-search" data-kind="${kind}">${ctx.icon("search")}Найти</button><button type="button" data-action="protection-refresh">${ctx.icon("refresh")}Обновить</button></form>`;
+  return html`<form class="security-search" data-protection-search="${kind}">${search}<button type="submit" data-action="protection-search" data-kind="${kind}">${ctx.icon("search")}Найти</button><button type="button" data-action="protection-refresh">${ctx.icon("refresh")}Обновить</button></form>${renderQueryBuilder(`protection-${kind}`, kind === "geoip" ? countryQuerySchema : banQuerySchema, { applyAction: "protection-search", applyData: { kind } })}`;
 }
 export function resetProtection() {
+  for (const scope of [
+    "protection-fail2ban",
+    "protection-geoip",
+    "system-list",
+  ])
+    resetQueryBuilder(scope);
   controller?.abort();
   snapshots = {};
   errors = {};
@@ -219,6 +253,8 @@ export async function refreshProtection(ctx, { force = false } = {}) {
   });
   if (queries[kind] && appliedNegatedQueries.has(kind))
     query.set("negate", "query");
+  const expression = getAppliedExpression(`protection-${kind}`);
+  if (expression) query.set("expression", expression);
   const generation = ctx.generation;
   const operation = (async () => {
     try {
@@ -378,9 +414,11 @@ export async function handleProtectionAction(button, ctx) {
       if (action === "protection-search") {
         const kind = button.dataset.kind;
         if (!searchKinds.includes(kind)) return;
-        queries[kind] = String(
-          new FormData(button.closest("form")).get("query") || "",
-        ).trim();
+        applyQueryBuilder(`protection-${kind}`);
+        const form =
+          button.closest?.("form") ||
+          document.querySelector(`[data-protection-search="${kind}"]`);
+        queries[kind] = String(new FormData(form).get("query") || "").trim();
         queryDrafts[kind] = queries[kind];
         if (queries[kind] && negatedQueries.has(kind))
           appliedNegatedQueries.add(kind);
@@ -415,7 +453,8 @@ export async function handleProtectionAction(button, ctx) {
         action,
       )
     ) {
-      if (action === "system-list-open")
+      if (action === "system-list-open") {
+        resetQueryBuilder("system-list");
         inspectedList = {
           name: button.dataset.name,
           offset: 0,
@@ -424,9 +463,11 @@ export async function handleProtectionAction(button, ctx) {
           negated: false,
           draftNegated: false,
         };
+      }
       if (action === "system-list-page")
         inspectedList.offset = Number(button.dataset.offset);
       if (action === "system-list-search") {
+        applyQueryBuilder("system-list");
         inspectedList.query = String(
           new FormData(ctx.dialog.querySelector("#system-list-search")).get(
             "query",
@@ -448,6 +489,8 @@ export async function handleProtectionAction(button, ctx) {
         ["query"],
       );
       if (exclusion) query.set("negate", exclusion);
+      const expression = getAppliedExpression("system-list");
+      if (expression) query.set("expression", expression);
       const data = await ctx.api(
         `security/lists/${encodeURIComponent(inspectedList.name)}?${query}`,
       );
@@ -457,7 +500,7 @@ export async function handleProtectionAction(button, ctx) {
       ctx.dialogFrame(
         inspectedList.name,
         `${data.source || "Fail2ban"} · ${data.version || t("Временные записи")}`,
-        html`<form id="system-list-search" class="security-search">${displayFilterField(field(ctx, t("Поиск IPv4 / CIDR"), "query", inspectedList.draftQuery), "query", { value: inspectedList.draftQuery, negated: inspectedList.draftNegated, action: "system-list-negate", idPrefix: "system-list" })}<button type="submit" data-action="system-list-search">Найти</button></form><div class="table-scroll"><table class="rules-table"><thead><tr><th>Адрес / диапазон</th><th>Истекает</th></tr></thead><tbody>${data.items.map((row) => html`<tr><td class="mono">${ctx.e(typeof row === "string" ? row : row.address || row.network || `${row.first} – ${row.last}`)}</td><td>${ctx.e(when(row.expires_at))}</td></tr>`).join("") || html`<tr><td colspan="2">Список пуст.</td></tr>`}</tbody></table></div><div class="security-pagination"><span>Всего: ${data.total}</span><button data-action="system-list-page" data-offset="${Math.max(0, inspectedList.offset - 50)}" ${inspectedList.offset ? "" : "disabled"}>Назад</button><button data-action="system-list-page" data-offset="${inspectedList.offset + 50}" ${inspectedList.offset + 50 < data.total ? "" : "disabled"}>Далее</button></div>${attribution()}`,
+        html`<form id="system-list-search" class="security-search">${displayFilterField(field(ctx, t("Поиск IPv4 / CIDR"), "query", inspectedList.draftQuery), "query", { value: inspectedList.draftQuery, negated: inspectedList.draftNegated, action: "system-list-negate", idPrefix: "system-list" })}<button type="submit" data-action="system-list-search">Найти</button></form>${renderQueryBuilder("system-list", systemListQuerySchema(inspectedList.name), { applyAction: "system-list-search" })}<div class="table-scroll"><table class="rules-table"><thead><tr><th>Адрес / диапазон</th><th>Истекает</th></tr></thead><tbody>${data.items.map((row) => html`<tr><td class="mono">${ctx.e(typeof row === "string" ? row : row.address || row.network || `${row.first} – ${row.last}`)}</td><td>${ctx.e(when(row.expires_at))}</td></tr>`).join("") || html`<tr><td colspan="2">Список пуст.</td></tr>`}</tbody></table></div><div class="security-pagination"><span>Всего: ${data.total}</span><button data-action="system-list-page" data-offset="${Math.max(0, inspectedList.offset - 50)}" ${inspectedList.offset ? "" : "disabled"}>Назад</button><button data-action="system-list-page" data-offset="${inspectedList.offset + 50}" ${inspectedList.offset + 50 < data.total ? "" : "disabled"}>Далее</button></div>${attribution()}`,
       );
       return;
     }

@@ -174,6 +174,37 @@ def test_negated_capture_criteria_are_grouped_fixed_bpf_tokens() -> None:
     assert CaptureRequest(interface="lo", protocol="icmp", port=53, negate=["protocol"]).port == 53
 
 
+def test_capture_advanced_expression_is_typed_grouped_and_independent_of_quick_filters() -> None:
+    request = CaptureRequest.model_validate(
+        {
+            "interface": "lo",
+            "protocol": "udp",
+            "expression": {
+                "kind": "group",
+                "join": "or",
+                "children": [
+                    {
+                        "kind": "condition",
+                        "field": "source",
+                        "op": "in",
+                        "value": "192.0.2.0/24,198.51.100.0/24",
+                    },
+                    {"kind": "condition", "field": "port", "op": "neq", "value": "53"},
+                ],
+            },
+        }
+    )
+    args = capture_command("tcpdump", request)
+    assert args[args.index("--") + 1 :][:4] == ["ip", "and", "udp", "and"]
+    assert "or" in args and "not" in args
+    assert "192.0.2.0/24" in args and "198.51.100.0/24" in args
+    # Port protocol guards belong inside their leaf; source OR port must not
+    # impose TCP/UDP on the source branch or change acquisition interface.
+    assert args[args.index("-i") + 1] == "lo"
+    assert request.expression is not None
+    assert CaptureRequest.model_validate(request.model_dump()).expression == request.expression
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -202,6 +233,26 @@ def test_negated_capture_criteria_are_grouped_fixed_bpf_tokens() -> None:
         {"negate": ["protocol;id"]},
         {"source": "192.0.2.1", "negate": ["source"] * 5},
         {"source": "192.0.2.1", "negate": "source"},
+        {"expression": {"kind": "condition", "field": "interface", "op": "eq", "value": "lo"}},
+        {
+            "expression": {
+                "kind": "condition",
+                "field": "protocol",
+                "op": "contains",
+                "value": "tcp",
+            }
+        },
+        {"expression": {"kind": "condition", "field": "port", "op": "eq", "value": "443 or ip6"}},
+        {"expression": {"kind": "condition", "field": "source", "op": "in", "value": "::/0"}},
+        {
+            "expression": {
+                "kind": "condition",
+                "field": "source",
+                "op": "eq",
+                "value": "192.0.2.0/24",
+            }
+        },
+        {"expression": {"kind": "condition", "field": "source", "op": "empty", "value": ""}},
     ],
 )
 def test_invalid_fields_cannot_turn_into_options_or_payload_capture(
@@ -416,6 +467,20 @@ def test_demo_capture_is_inert_and_uses_the_shared_ndjson_protocol(
     assert [event["type"] for event in events] == ["started", "output", "completed"]
     assert events[0]["tool"] == events[-1]["result"]["tool"] == "capture"
     assert events[-1]["result"]["demo"] and isinstance(events[-1]["result"]["output"], str)
+
+
+def test_capture_expression_keeps_full_access_and_api_validation(client: TestClient) -> None:
+    body = {
+        "interface": "any",
+        "expression": {"kind": "condition", "field": "port", "op": "not_in", "value": "53,80"},
+    }
+    login(client, "viewer")
+    assert client.post("/api/tools/capture/stream", headers=HEADERS, json=body).status_code == 403
+    client.post("/api/logout", headers=HEADERS)
+    login(client)
+    assert client.post("/api/tools/capture/stream", headers=HEADERS, json=body).status_code == 200
+    body["expression"] = {"kind": "condition", "field": "interface", "op": "eq", "value": "lo"}
+    assert client.post("/api/tools/capture/stream", headers=HEADERS, json=body).status_code == 422
 
 
 @pytest.mark.parametrize("reason", ["logout", "update"])

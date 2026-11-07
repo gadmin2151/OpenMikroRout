@@ -21,11 +21,30 @@ from app.fail2ban_models import (
     client_ipv4,
     profile_id,
 )
+from app.list_filter_sql import (
+    SQLField,
+    SQLValue,
+    compile_list_expression,
+    register_list_filter_functions,
+)
+from app.list_filters import FieldSpec
 
 MAX_ACTIVE_BANS = 65_536
 MAX_EVENT_HISTORY = 20_000
 MAX_RETAINED_BANS = MAX_ACTIVE_BANS * 2
 RETENTION_SECONDS = MAX_BAN_SECONDS + 86400
+
+
+def ban_filter_fields(now: float) -> dict[str, SQLField]:
+    return {
+        "query": SQLField(FieldSpec("text"), "address || ' ' || profile"),
+        "address": SQLField(FieldSpec("ipv4"), "address"),
+        **{name: SQLField(FieldSpec("text"), name) for name in ("profile", "country", "source")},
+        "remaining_seconds": SQLField(
+            FieldSpec("number"), "omr_remaining_seconds(expires_at,?)", parameters=(now,)
+        ),
+        "expires_at": SQLField(FieldSpec("number"), "expires_at"),
+    }
 
 
 class TemporarySets(Protocol):
@@ -97,6 +116,7 @@ class BanStore:
     def connection(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
+        register_list_filter_functions(db)
         try:
             with db:
                 yield db
@@ -231,6 +251,7 @@ class BanStore:
         offset: int = 0,
         *,
         negate: str | list[str] = "",
+        expression: str = "",
     ) -> dict[str, Any]:
         limit = min(200, max(1, limit))
         offset = min(1_000_000, max(0, offset))
@@ -240,7 +261,7 @@ class BanStore:
         excluded = validate_display_negation(negate, {"query": query, "profile": profile})
         now = time.time()
         conditions = ["expires_at>?"]
-        args: list[str | float] = [now]
+        args: list[SQLValue] = [now]
         if profile:
             conditions.append("NOT (profile=?)" if "profile" in excluded else "profile=?")
             args.append(profile)
@@ -248,6 +269,9 @@ class BanStore:
             match = "(instr(address,?)>0 OR instr(lower(profile),lower(?))>0)"
             conditions.append(f"NOT {match}" if "query" in excluded else match)
             args.extend((query, query))
+        advanced, advanced_parameters = compile_list_expression(expression, ban_filter_fields(now))
+        conditions.append(advanced)
+        args.extend(advanced_parameters)
         where = " AND ".join(conditions)
         with self.connection() as db:
             total = db.execute(f"SELECT COUNT(*) FROM bans WHERE {where}", args).fetchone()[0]

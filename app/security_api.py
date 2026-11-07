@@ -14,6 +14,7 @@ from app.discovery_protocols import MAX_NEIGHBORS
 from app.display_filters import validate_display_negation
 from app.firewall import Conflict, FirewallService
 from app.link_models import LinkModel
+from app.list_filter_sql import ListFilterError
 from app.models import RevisionRequest
 from app.rule_protection import effective_fail2ban
 from app.security_services import SecurityServices
@@ -60,6 +61,7 @@ PageLimit = Annotated[int, Query(ge=1, le=200)]
 HostOffset = Annotated[int, Query(ge=0, le=MAX_NEIGHBORS)]
 SmallPageLimit = Annotated[int, Query(ge=1, le=100)]
 NegatedFilters = Annotated[list[str] | None, Query(max_length=7)]
+ListExpression = Annotated[str, Query(max_length=4096)]
 ScanOffset = Annotated[int, Query(ge=0, le=100)]
 
 
@@ -109,9 +111,12 @@ def security_router(
         offset: PageOffset = 0,
         limit: PageLimit = 50,
         negate: NegatedFilters = None,
+        expression: ListExpression = "",
     ) -> dict[str, Any]:
         try:
-            return services.fail2ban.bans.page(profile, query, limit, offset, negate=negate or [])
+            return services.fail2ban.bans.page(
+                profile, query, limit, offset, negate=negate or [], expression=expression
+            )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
@@ -138,9 +143,12 @@ def security_router(
         offset: PageOffset = 0,
         limit: PageLimit = 50,
         negate: NegatedFilters = None,
+        expression: ListExpression = "",
     ) -> dict[str, Any]:
         try:
-            return services.geoip.countries(query, offset, limit, negate=negate or [])
+            return services.geoip.countries(
+                query, offset, limit, negate=negate or [], expression=expression
+            )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
@@ -197,6 +205,7 @@ def security_router(
         limit: PageLimit = 50,
         query: Annotated[str, Query(max_length=64)] = "",
         negate: NegatedFilters = None,
+        expression: ListExpression = "",
     ) -> dict[str, Any]:
         try:
             validate_display_negation(negate or [], {"query": query})
@@ -206,16 +215,23 @@ def security_router(
             item = resolved_system_lists(firewall.config()).get(name)
             if item is None:
                 raise Conflict("Unknown system address list")
-        if item.kind == "country":
-            try:
+        try:
+            if item.kind == "country":
                 return services.geoip.entries(
-                    item.country, offset, limit, query, negate=negate or []
+                    item.country, offset, limit, query, negate=negate or [], expression=expression
                 )
-            except ValueError as exc:
-                raise Conflict(str(exc)) from exc
-        return services.fail2ban.bans.page(
-            profile=item.profile, query=query, offset=offset, limit=limit, negate=negate or []
-        )
+            return services.fail2ban.bans.page(
+                profile=item.profile,
+                query=query,
+                offset=offset,
+                limit=limit,
+                negate=negate or [],
+                expression=expression,
+            )
+        except ListFilterError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except ValueError as exc:
+            raise Conflict(str(exc)) from exc
 
     @router.get("/discovery/status")
     def discovery_status() -> dict[str, Any]:
@@ -231,9 +247,12 @@ def security_router(
         offset: HostOffset = 0,
         limit: SmallPageLimit = 50,
         negate: NegatedFilters = None,
+        expression: ListExpression = "",
     ) -> dict[str, Any]:
         try:
-            return services.discovery.hosts(query, interface, offset, limit, negate=negate or [])
+            return services.discovery.hosts(
+                query, interface, offset, limit, negate=negate or [], expression=expression
+            )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 

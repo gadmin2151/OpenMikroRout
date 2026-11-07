@@ -18,7 +18,44 @@ from app.discovery_models import DiscoverySettings
 from app.discovery_protocols import MAX_NEIGHBORS, clean_text, parse_arp, parse_lldp, parse_mndp
 from app.display_filters import validate_display_negation
 from app.link_models import interface_name
+from app.list_filter_sql import SQLField, compile_list_expression, register_list_filter_functions
+from app.list_filters import FieldSpec
 from app.telemetry import valid_address, valid_mac
+
+
+def _observed_text(name: str) -> str:
+    """Match the last nonempty observation used by _render, including tied times."""
+    path = f"$.fields.{name}"
+    return (
+        f"(SELECT json_extract(omr_latest.value,'{path}') "
+        "FROM json_each(hosts.document,'$.observations') AS omr_latest "
+        f"WHERE json_type(omr_latest.value,'{path}')='text' "
+        f"AND json_extract(omr_latest.value,'{path}')!='' "
+        "ORDER BY json_extract(omr_latest.value,'$.observed_at') DESC, "
+        "CAST(omr_latest.key AS INTEGER) DESC LIMIT 1)"
+    )
+
+
+DISCOVERY_FILTER_FIELDS = {
+    "query": SQLField(FieldSpec("text"), "hosts.document"),
+    "interface": SQLField(FieldSpec("text"), "hosts.interface"),
+    "mac": SQLField(FieldSpec("text"), "hosts.mac"),
+    **{
+        name: SQLField(FieldSpec("text"), _observed_text(name))
+        for name in ("hostname", "vendor", "platform", "model")
+    },
+    "address": SQLField(
+        FieldSpec("ipv4"),
+        "omr_address.value",
+        values_from="json_each(hosts.document,'$.observations') AS omr_observation, "
+        "json_each(omr_observation.value,'$.fields.addresses') AS omr_address",
+    ),
+    "source": SQLField(
+        FieldSpec("enum", options=("arp", "dhcp", "lldp", "cdp", "mndp", "scan")),
+        "json_extract(omr_observation.value,'$.source')",
+        values_from="json_each(hosts.document,'$.observations') AS omr_observation",
+    ),
+}
 
 
 class DiscoveryService:
@@ -54,6 +91,7 @@ class DiscoveryService:
     def connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=5)
         db.row_factory = sqlite3.Row
+        register_list_filter_functions(db)
         return db
 
     def ingest(self, observation: dict[str, Any], now: float | None = None) -> None:
@@ -190,6 +228,7 @@ class DiscoveryService:
         limit: int = 50,
         *,
         negate: str | list[str] = "",
+        expression: str = "",
     ) -> dict[str, Any]:
         if not 0 <= offset <= MAX_NEIGHBORS or not 1 <= limit <= 100 or len(query) > 100:
             raise ValueError("Invalid host pagination or search")
@@ -206,15 +245,18 @@ class DiscoveryService:
             match = "document LIKE ? ESCAPE '\\'"
             conditions.append(f"NOT ({match})" if "query" in excluded else match)
             parameters.append(pattern)
-        condition = " AND ".join(conditions) or "1"
+        advanced, advanced_parameters = compile_list_expression(expression, DISCOVERY_FILTER_FIELDS)
+        conditions.append(advanced)
+        condition = " AND ".join(conditions)
+        all_parameters = [*parameters, *advanced_parameters]
         with self.connect() as db:
             total = db.execute(
-                f"SELECT COUNT(*) FROM hosts WHERE {condition}", parameters
+                f"SELECT COUNT(*) FROM hosts WHERE {condition}", all_parameters
             ).fetchone()[0]
             rows = db.execute(
                 f"SELECT * FROM hosts WHERE {condition} "
                 "ORDER BY last_seen DESC, id LIMIT ? OFFSET ?",
-                (*parameters, limit, offset),
+                (*all_parameters, limit, offset),
             ).fetchall()
             items = [self._render(row, time.time()) for row in rows]
             conflicts = {

@@ -11,6 +11,8 @@ import {
   resetWireGuard,
 } from "../../app/static/wireguard-ui.js";
 import { isReadAction } from "../../app/static/access-ui.js";
+import { compileQueryExpression } from "../../app/static/query-builder.js";
+import { natQuerySchema } from "../../app/static/config-filter-schemas.js";
 
 const source = readFileSync(
   new URL("../../app/static/app.js", import.meta.url),
@@ -33,6 +35,9 @@ test("NAT table exclusions combine by criterion and leave router rule data untou
     chainFilter: "",
     protocolFilter: "",
     natFilterNegations: new Set(),
+    getAppliedQuery: () => null,
+    compileQueryExpression,
+    natQuerySchema,
   });
   vm.runInContext(natPredicate, context);
   const select = (search, chain, protocol, negate) => {

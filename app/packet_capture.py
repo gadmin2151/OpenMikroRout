@@ -16,6 +16,14 @@ from pydantic import Field, field_validator, model_validator
 from app.diagnostics import DiagnosticEvent, rolling_output, stream_process_output
 from app.display_filters import validate_display_negation
 from app.link_models import LinkModel, interface_name
+from app.list_filters import (
+    Condition,
+    FieldSpec,
+    FilterNode,
+    Group,
+    parse_expression,
+    port_intervals,
+)
 from app.wireguard import WireGuardError
 
 MAX_OUTPUT_BYTES = 32768
@@ -23,6 +31,14 @@ MAX_BATCH_BYTES = 8192
 FLUSH_SECONDS = 0.2
 HEARTBEAT_SECONDS = 0.1
 CaptureMatchField = Literal["source", "destination", "port", "protocol"]
+CAPTURE_FILTERS = {
+    "source": FieldSpec("ipv4", operators=("eq", "neq", "in", "not_in")),
+    "destination": FieldSpec("ipv4", operators=("eq", "neq", "in", "not_in")),
+    "protocol": FieldSpec(
+        "enum", operators=("eq", "neq", "in", "not_in"), options=("tcp", "udp", "icmp")
+    ),
+    "port": FieldSpec("ports"),
+}
 
 
 def capture_interface(value: str) -> str:
@@ -38,8 +54,14 @@ class CaptureRequest(LinkModel):
     destination: str = Field(default="", max_length=18)
     port: int | None = Field(default=None, ge=1, le=65535, strict=True)
     negate: list[CaptureMatchField] = Field(default_factory=list, max_length=4)
+    expression: FilterNode | None = None
 
     _interface = field_validator("interface")(capture_interface)
+
+    @field_validator("expression", mode="before")
+    @classmethod
+    def expression_node(cls, value: object) -> FilterNode | None:
+        return parse_expression(value, CAPTURE_FILTERS)
 
     @field_validator("source", "destination")
     @classmethod
@@ -68,6 +90,93 @@ class CaptureRequest(LinkModel):
         return self
 
 
+def capture_expression_tokens(node: FilterNode) -> list[str]:
+    """Only fixed BPF vocabulary and already validated typed values are emitted."""
+    if isinstance(node, Group):
+        result = ["("]
+        for index, child in enumerate(node.children):
+            if index:
+                result.append(node.join)
+            result.extend(capture_expression_tokens(child))
+        return [*result, ")"]
+    condition: Condition = node
+    negative = condition.op in ("neq", "not_in")
+    if condition.field == "protocol":
+        values = condition.value.split(",")
+        tokens = ["("]
+        for index, protocol in enumerate(values):
+            tokens += [*(["or"] if index else []), protocol]
+        tokens.append(")")
+    elif condition.field in ("source", "destination"):
+        direction = "src" if condition.field == "source" else "dst"
+        tokens = ["("]
+        for index, network in enumerate(condition.value.split(",")):
+            tokens += [*(["or"] if index else []), direction, "net", network]
+        tokens.append(")")
+    else:
+        # A negative port condition includes packets with no TCP/UDP ports.
+        # Keep this guard LOCAL to the leaf so OR groups remain meaningful.
+        present = [
+            "(",
+            "(",
+            "tcp",
+            "or",
+            "udp",
+            ")",
+            "and",
+            "ip[6:2]",
+            "&",
+            "0x1fff",
+            "=",
+            "0",
+            "and",
+            "(",
+            "ip[0]",
+            "&",
+            "0x0f",
+            ")",
+            ">=",
+            "5",
+            "and",
+            "ip[2:2]",
+            ">=",
+            "(",
+            "(",
+            "(",
+            "ip[0]",
+            "&",
+            "0x0f",
+            ")",
+            "<<",
+            "2",
+            ")",
+            "+",
+            "4",
+            ")",
+            ")",
+        ]
+        if condition.op in ("empty", "not_empty"):
+            return ["not", "(", *present, ")"] if condition.op == "empty" else present
+        intervals = port_intervals(condition.value)
+        if condition.op in ("gt", "gte", "lt", "lte"):
+            threshold = intervals[0][0]
+            low = threshold + (condition.op == "gt") if condition.op in ("gt", "gte") else 0
+            high = threshold - (condition.op == "lt") if condition.op in ("lt", "lte") else 65535
+            intervals = [(low, high)] if low <= high else []
+        alternatives = ["("]
+        for index, (low, high) in enumerate(intervals):
+            alternatives += [
+                *(["or"] if index else []),
+                "port" if low == high else "portrange",
+                str(low) if low == high else f"{low}-{high}",
+            ]
+        if not intervals:
+            alternatives += ["ip", "and", "not", "ip"]
+        alternatives.append(")")
+        tokens = ["(", *present, "and", *alternatives, ")"]
+    return ["not", "(", *tokens, ")"] if negative else tokens
+
+
 def capture_command(binary: str, request: CaptureRequest) -> list[str]:
     # These tokens are generated exclusively from typed fields. Names/addresses
     # are never command fragments, BPF source, file names or additional options.
@@ -92,6 +201,8 @@ def capture_command(binary: str, request: CaptureRequest) -> list[str]:
                 "and",
                 *(["not", "(", *tokens, ")"] if field in request.negate else tokens),
             ]
+    if request.expression is not None:
+        condition += ["and", *capture_expression_tokens(request.expression)]
     return [
         binary,
         "-nn",

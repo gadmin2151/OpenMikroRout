@@ -6,6 +6,28 @@ import {
   displayNegationQuery,
   syncDisplayFilterControl,
 } from "./display-filter-ui.js";
+import {
+  renderQueryBuilder,
+  applyQueryBuilder,
+  getAppliedExpression,
+  resetQueryBuilder,
+} from "./query-builder.js";
+export const hostQuerySchema = [
+  { field: "query", label: "Поиск устройства", type: "text" },
+  { field: "interface", label: "Интерфейс", type: "text" },
+  { field: "hostname", label: "Имя устройства", type: "text" },
+  { field: "address", label: "IPv4 / CIDR", type: "ipv4" },
+  { field: "mac", label: "MAC", type: "text" },
+  { field: "vendor", label: "Производитель", type: "text" },
+  { field: "platform", label: "Платформа", type: "text" },
+  { field: "model", label: "Модель", type: "text" },
+  {
+    field: "source",
+    label: "Источник",
+    type: "enum",
+    options: ["arp", "dhcp", "lldp", "cdp", "mndp", "scan"],
+  },
+];
 
 export const discoveryViews = {
   hosts: [
@@ -51,6 +73,7 @@ let scanInput = {
 };
 
 export function resetDiscovery() {
+  resetQueryBuilder("hosts");
   clearTimeout(liveTimer);
   liveController?.abort();
   liveTimer = liveController = null;
@@ -281,7 +304,7 @@ export function renderDiscovery(view, ctx) {
         }),
       )
       .join("");
-    return html`<div class="feature-page discovery-page">${settingsForm(ctx, false)}<form data-discovery-form class="monitor-filters" id="discovery-search">${fields}<button class="primary" type="submit" data-discovery-form data-action="discovery-search">Найти</button>${action("discovery-refresh", t("Обновить"))}</form><div id="discovery-results">${hostRows(ctx)}</div><p class="feature-note">Сведения сообщаются устройствами и могут быть неточными. Источник и срок актуальности каждого поля доступны в карточке. Одинаковые MAC в разных сегментах не объединяются.</p></div>`;
+    return html`<div class="feature-page discovery-page">${settingsForm(ctx, false)}<form data-discovery-form class="monitor-filters" id="discovery-search">${fields}<button class="primary" type="submit" data-discovery-form data-action="discovery-search">Найти</button>${action("discovery-refresh", t("Обновить"))}</form>${renderQueryBuilder("hosts", hostQuerySchema, { applyAction: "discovery-search" })}<div id="discovery-results">${hostRows(ctx)}</div><p class="feature-note">Сведения сообщаются устройствами и могут быть неточными. Источник и срок актуальности каждого поля доступны в карточке. Одинаковые MAC в разных сегментах не объединяются.</p></div>`;
   }
   const network = view === "network_scan";
   const networks = scanStatus?.networks?.[scanInput.interface] || [];
@@ -328,6 +351,8 @@ export async function refreshDiscovery(ctx) {
           limit: "50",
         });
         if (filters.negate) query.set("negate", filters.negate);
+        const expression = getAppliedExpression("hosts");
+        if (expression) query.set("expression", expression);
         const values = await Promise.all([
           ctx.api("discovery/status", { signal }),
           ctx.api(`discovery/hosts?${query}`, { signal }),
@@ -530,6 +555,7 @@ export async function handleDiscoveryAction(button, ctx) {
     return true;
   }
   if (name === "discovery-search") {
+    applyQueryBuilder("hosts");
     const form = document.querySelector("#discovery-search");
     const data = new FormData(form);
     hostDraft = {

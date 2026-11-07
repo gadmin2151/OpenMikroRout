@@ -15,9 +15,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, Self, get_args
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from app.display_filters import parse_display_negation, validate_display_negation
+from app.list_filters import FieldSpec, FilterNode, Predicate, compile_expression, parse_expression
 from app.models import port_spec
 from app.telemetry import FLOW_LIMIT, IFNAME, command_output, read_bounded
 
@@ -41,6 +42,26 @@ ConnectionMatchField = Literal[
     "source", "destination", "port", "protocol", "state", "interface", "search"
 ]
 MAX_NEGATED_FILTERS = 7
+CONNECTION_FILTERS = {
+    "protocol": FieldSpec("enum", options=tuple(sorted(PROTOCOLS))),
+    "source": FieldSpec("ipv4"),
+    "destination": FieldSpec("ipv4"),
+    "translated_destination": FieldSpec("ipv4"),
+    "port": FieldSpec("ports"),
+    "source_port": FieldSpec("ports"),
+    "destination_port": FieldSpec("ports"),
+    "translated_port": FieldSpec("ports"),
+    "state": FieldSpec(
+        "enum",
+        options=tuple(sorted(STATES | {"SYN", "DATAGRAM", "UNREPLIED", "ASSURED", "TRACKED"})),
+    ),
+    "interface": FieldSpec("text"),
+    "search": FieldSpec("text"),
+    "packets": FieldSpec("number"),
+    "bytes": FieldSpec("number"),
+    "expires_in": FieldSpec("number"),
+    "observations": FieldSpec("number"),
+}
 
 
 class ConnectionRow(BaseModel):
@@ -74,6 +95,12 @@ class ConnectionQuery(BaseModel):
     negate: list[ConnectionMatchField] = Field(default_factory=list, max_length=MAX_NEGATED_FILTERS)
     limit: int = Field(default=200, ge=1, le=500)
     offset: int = Field(default=0, ge=0, le=FLOW_LIMIT)
+    expression: str = Field(default="", max_length=4096)
+    _expression_node: FilterNode | None = PrivateAttr(default=None)
+
+    @property
+    def expression_node(self) -> FilterNode | None:
+        return self._expression_node
 
     @field_validator("source", "destination")
     @classmethod
@@ -96,6 +123,7 @@ class ConnectionQuery(BaseModel):
         validate_display_negation(
             self.negate, {field: getattr(self, field) for field in get_args(ConnectionMatchField)}
         )
+        self._expression_node = parse_expression(self.expression, CONNECTION_FILTERS)
         return self
 
 
@@ -234,7 +262,9 @@ def criterion_matches(query: ConnectionQuery, field: ConnectionMatchField, match
     return not matched if field in query.negate else matched
 
 
-def matches(row: ConnectionRow, query: ConnectionQuery) -> bool:
+def matches(
+    row: ConnectionRow, query: ConnectionQuery, expression_predicate: Predicate | None = None
+) -> bool:
     for field in ("protocol", "state", "interface"):
         value = getattr(query, field)
         if value and not criterion_matches(query, field, getattr(row, field) == value):
@@ -262,6 +292,14 @@ def matches(row: ConnectionRow, query: ConnectionQuery) -> bool:
         text = " ".join(str(value or "") for value in row.model_dump().values()).lower()
         if not criterion_matches(query, "search", query.search.lower() in text):
             return False
+    if query.expression_node is not None:
+        predicate = expression_predicate or compile_expression(
+            query.expression_node, CONNECTION_FILTERS
+        )
+        fields = row.model_dump()
+        fields["search"] = " ".join(str(value or "") for value in fields.values())
+        fields["port"] = [row.source_port, row.destination_port, row.translated_port]
+        return predicate(fields)
     return True
 
 
@@ -440,7 +478,8 @@ class ConnectionMonitor:
                 self._expire()
                 rows = list(reversed(self.events.values()))
                 available, partial, error = self.capture_available, self.sampled, self.capture_error
-            filtered = [row for row in rows if matches(row, query)]
+            predicate = compile_expression(query.expression_node, CONNECTION_FILTERS)
+            filtered = [row for row in rows if matches(row, query, predicate)]
             return ConnectionSnapshot(
                 kind=query.kind,
                 available=available,
