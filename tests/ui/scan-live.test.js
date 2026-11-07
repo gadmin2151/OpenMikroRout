@@ -1,5 +1,6 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { setLanguage } from "../../app/static/i18n.js";
 import {
   resetDiscovery,
   scanInterfaceNames,
@@ -13,6 +14,7 @@ const originalDocument = globalThis.document;
 afterEach(() => {
   resetDiscovery();
   globalThis.document = originalDocument;
+  setLanguage("ru");
 });
 const flush = async () => {
   for (let index = 0; index < 10; index++) await Promise.resolve();
@@ -129,7 +131,7 @@ test("allowed but unavailable interfaces are retained with a clear reason instea
   ]);
   assert.match(
     scanBlockedReason(ctx, configured, "br-lan"),
-    /нет подключённой|no connected/i,
+    /не назначен IPv4-адрес|no IPv4 address/i,
   );
   assert.match(
     scanBlockedReason(ctx, configured, "eth1"),
@@ -142,6 +144,52 @@ test("allowed but unavailable interfaces are retained with a clear reason instea
   assert.equal(f.start.disabled, false);
   assert.equal(f.hint.textContent, "192.0.2.0/24");
   assert.equal(f.target.value, "198.51.100.25");
+});
+
+test("scan targets can be routed IPv4, DNS or CIDR while the outgoing interface stays manual", () => {
+  const ctx = context();
+  const configured = status();
+  const f = scanForm();
+  f.select.value = "";
+  syncScanForm(ctx, f.form, configured);
+  assert.equal(f.select.value, "");
+  assert.equal(f.start.disabled, true);
+  assert.match(f.start.title, /Выберите исходящий интерфейс/);
+  assert.doesNotMatch(f.select.innerHTML, /value="eth[01]" selected/);
+  for (const target of ["1.1.1.1", "router.example.net", "203.0.113.0/28"]) {
+    f.select.value = "eth0";
+    f.target.value = target;
+    syncScanForm(ctx, f.form, configured);
+    assert.equal(f.select.value, "eth0");
+    assert.equal(f.target.value, target);
+    assert.equal(f.start.disabled, false);
+    assert.equal(f.hint.textContent, "192.0.2.0/24");
+  }
+});
+
+test("RU and EN scan forms describe outgoing selection and network hints as information", () => {
+  const ctx = context();
+  for (const language of ["ru", "en"]) {
+    resetDiscovery();
+    setLanguage(language);
+    for (const view of ["port_scan", "network_scan"]) {
+      const markup = renderDiscovery(view, ctx);
+      assert.match(markup, /<select name="interface" required>/);
+      assert.match(markup, /aria-describedby="scan-target-note scan-networks"/);
+      assert.match(markup, /name="target" required maxlength="253"/);
+      if (language === "ru") {
+        assert.match(markup, /Исходящий интерфейс/);
+        assert.match(markup, /указаны справочно/);
+        assert.match(markup, /Цель может находиться вне этих сетей/);
+        assert.doesNotMatch(markup, /Только непосредственно подключённые/);
+      } else {
+        assert.match(markup, /Outgoing interface/);
+        assert.match(markup, /shown for reference/);
+        assert.match(markup, /target may be outside/);
+        assert.doesNotMatch(markup, /Only directly connected|[А-Яа-яЁё]/);
+      }
+    }
+  }
 });
 
 test("scan readiness blocks pending, read, offline, unavailable-tool and no-interface states", () => {

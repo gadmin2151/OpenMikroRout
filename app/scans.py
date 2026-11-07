@@ -1,4 +1,4 @@
-"""Explicit, bounded Nmap jobs, restricted to approved directly connected IPv4 networks."""
+"""Explicit, bounded IPv4 Nmap jobs through approved outgoing interfaces."""
 
 import ipaddress
 import json
@@ -39,17 +39,15 @@ def validated_target(
 ) -> str:
     if not settings.enabled or request.interface not in settings.interfaces:
         raise DiscoveryError("Active scanning is disabled for this interface")
-    allowed = [ipaddress.IPv4Network(value) for value in networks.get(request.interface, [])]
-    if not allowed:
+    connected = [ipaddress.IPv4Network(value) for value in networks.get(request.interface, [])]
+    if not connected:
         raise DiscoveryError("The selected interface has no connected IPv4 network")
     if request.kind == "network":
         target = ipaddress.IPv4Network(request.target)
         if target.num_addresses > settings.max_hosts:
             raise DiscoveryError(f"Network scan is limited to {settings.max_hosts} addresses")
-        if not any(target.subnet_of(network) for network in allowed):
-            raise DiscoveryError("The target must belong to the selected connected network")
-        if target.is_loopback or target.is_multicast or target.is_unspecified:
-            raise DiscoveryError("Use a unicast connected network")
+        if any(not valid_address(str(address)) or address.is_reserved for address in target):
+            raise DiscoveryError("Use a unicast IPv4 network")
         return str(target)
     try:
         address = ipaddress.IPv4Address(request.target)
@@ -59,16 +57,14 @@ def validated_target(
 
         address = ipaddress.IPv4Address(resolve_ipv4(request.target))
     if not valid_address(str(address)) or address.is_reserved:
-        raise DiscoveryError("Use a unicast host in the selected connected network")
-    if not any(
+        raise DiscoveryError("Use a unicast IPv4 host")
+    if any(
         address in network
-        and (
-            network.prefixlen >= 31
-            or address not in (network.network_address, network.broadcast_address)
-        )
-        for network in allowed
+        and network.prefixlen < 31
+        and address in (network.network_address, network.broadcast_address)
+        for network in connected
     ):
-        raise DiscoveryError("The target must be a host in the selected connected network")
+        raise DiscoveryError("Use a host address, not a connected network or broadcast address")
     return str(address)
 
 
@@ -98,7 +94,9 @@ def scan_command(
     if xml_output != "-":
         arguments.append("-v")
     if request.kind == "network":
-        arguments += ["-sn", "-PR"]
+        # Nmap uses ARP on local Ethernet and IPv4 probes for routed targets.
+        # Forcing -PR would silently prevent discovery beyond the local segment.
+        arguments += ["-sn"]
     else:
         arguments += ["-Pn", "-sU" if request.profile == "udp" else "-sS"]
         if request.profile == "quick":
@@ -385,7 +383,7 @@ class ScanService:
             "available": self.demo or bool(shutil.which("nmap")),
             "networks": networks,
             "error": error,
-            "scope": "Only directly connected IPv4 networks on allowed interfaces",
+            "scope": "IPv4 hosts and networks through the selected allowed outgoing interface",
         }
 
     def _networks(self) -> dict[str, list[str]]:
@@ -612,7 +610,7 @@ class ScanService:
                         except DiscoveryError as exc:
                             event.set()
                             raise DiscoveryError(
-                                "Scan cancelled: the allowed network changed"
+                                "Scan cancelled: the outgoing interface is no longer available"
                             ) from exc
                         topology_checked = time.monotonic()
                     for key, _ in selector.select(0.2):

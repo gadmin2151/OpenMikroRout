@@ -6,15 +6,22 @@ from collections.abc import AsyncGenerator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import aclosing
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import anyio
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Scope
 
-from app.diagnostics import DiagnosticRequest, NetworkDiagnostics, diagnostic_command
+from app.diagnostics import (
+    DiagnosticRequest,
+    DiagnosticStreamRequest,
+    NetworkDiagnostics,
+    diagnostic_command,
+)
 from app.main import DiagnosticStreamResponse, Settings, create_app
 from app.wireguard import WireGuardError
 
@@ -291,6 +298,115 @@ def test_command_arguments_remain_fixed_and_never_invoke_a_shell(
         "ahostsv4",
         "router.example",
     ]
+    continuous = diagnostic_command("ping", "127.0.0.1", True)
+    assert continuous == [
+        "/usr/bin/stdbuf",
+        "-oL",
+        "-eL",
+        "/usr/bin/ping",
+        "-4",
+        "-n",
+        "-i",
+        "1",
+        "-W",
+        "1",
+        "-O",
+        "127.0.0.1",
+    ]
+    assert "-c" not in continuous and "-w" not in continuous
+
+
+def test_continuous_flag_is_strict_stream_only_and_ping_only() -> None:
+    assert DiagnosticStreamRequest(tool="ping", target="127.0.0.1", continuous=True).continuous
+    assert DiagnosticStreamRequest(tool="ping", target="127.0.0.1").continuous is None
+    for tool in ("traceroute", "dns", "route", "tcp"):
+        with pytest.raises(ValidationError, match="only for Ping"):
+            DiagnosticStreamRequest.model_validate(
+                {"tool": tool, "target": "127.0.0.1", "continuous": True}
+            )
+    with pytest.raises(ValidationError):
+        DiagnosticStreamRequest.model_validate(
+            {"tool": "ping", "target": "127.0.0.1", "continuous": "true"}
+        )
+    with pytest.raises(ValidationError):
+        DiagnosticRequest.model_validate(
+            {"tool": "ping", "target": "127.0.0.1", "continuous": True}
+        )
+
+
+def test_continuous_ping_survives_more_than_four_replies_and_the_old_time_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, processes: list[asyncio.subprocess.Process]
+) -> None:
+    gate = tmp_path / "stop"
+    command = child_command(
+        "import time; from pathlib import Path; "
+        "print(''.join(f'reply {i}\\n' for i in range(1,7)), end='', flush=True); "
+        f"gate=Path({str(gate)!r});\n"
+        "while not gate.exists(): time.sleep(.01)"
+    )
+    monkeypatch.setattr("app.diagnostics.diagnostic_command", lambda *_: command)
+    clock = [0.0]
+    monkeypatch.setattr("app.diagnostics.time", SimpleNamespace(monotonic=lambda: clock[0]))
+    service = NetworkDiagnostics(False)
+
+    async def scenario() -> None:
+        stream = service.stream(REQUEST, continuous=True)
+        assert (await next_event(stream))["continuous"] is True
+        output = await next_event(stream)
+        assert output["type"] == "output" and output["text"].count("reply ") == 6
+        clock[0] = 30.0  # Beyond both the former 14s command and 21s response limits.
+        assert await anext(stream) is None
+        assert processes[0].returncode is None and service.lock.locked()
+        await stream.aclose()
+        assert processes[0].returncode is not None and not service.lock.locked()
+
+    asyncio.run(scenario())
+
+
+def test_continuous_output_keeps_a_rolling_byte_bounded_tail_without_stopping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.diagnostics.MAX_OUTPUT_BYTES", 128)
+    monkeypatch.setattr(
+        "app.diagnostics.diagnostic_command",
+        lambda *_: child_command("print('данные'*1000 + '\\nlast reply', flush=True)"),
+    )
+    service = NetworkDiagnostics(False)
+
+    async def scenario() -> None:
+        events = [
+            event async for event in service.stream(REQUEST, continuous=True) if event is not None
+        ]
+        result = events[-1]["result"]
+        assert events[0]["continuous"] is True and result["success"]
+        assert len(result["output"].encode("utf-8")) <= 128
+        assert result["output"].endswith("last reply\n")
+        assert "\ufffd" not in result["output"]
+        assert sum(len(event.get("text", "").encode("utf-8")) for event in events) > 128
+
+    asyncio.run(scenario())
+
+
+def test_continuous_true_cannot_remove_the_limits_of_other_diagnostic_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.diagnostics.MAX_OUTPUT_BYTES", 100)
+    monkeypatch.setattr(
+        "app.diagnostics.diagnostic_command", lambda *_: child_command("print('x'*200)")
+    )
+
+    async def scenario() -> None:
+        service = NetworkDiagnostics(False)
+        async with aclosing(
+            service.stream(DiagnosticRequest(tool="dns", target="router.example"), continuous=True)
+        ) as stream:
+            assert (await next_event(stream))["continuous"] is False
+            with pytest.raises(WireGuardError, match="output exceeded"):
+                async for _ in stream:
+                    pass
+        assert not service.lock.locked()
+
+    asyncio.run(scenario())
 
 
 @pytest.fixture
@@ -366,11 +482,13 @@ def test_demo_ndjson_is_incremental_in_shape_and_matches_the_legacy_result(
     assert events[1]["text"] == legacy.json()["output"]
 
 
-def test_logout_during_a_quiet_process_stops_further_output_and_reaps_child(
+@pytest.mark.parametrize("reason", ["logout", "update"])
+def test_revocation_or_queued_update_stops_a_quiet_ping_and_reaps_child(
     client: TestClient,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     processes: list[asyncio.subprocess.Process],
+    reason: str,
 ) -> None:
     marker = tmp_path / "started"
     gate = tmp_path / "continue"
@@ -384,6 +502,8 @@ def test_logout_during_a_quiet_process_stops_further_output_and_reaps_child(
     monkeypatch.setattr("app.diagnostics.diagnostic_command", lambda *_: command)
     app = client.app
     app.state.diagnostics.demo = False  # type: ignore[attr-defined]
+    updating = [False]
+    monkeypatch.setattr(app.state.updates, "active", lambda: updating[0])  # type: ignore[attr-defined]
     login(client)
     token = client.cookies.get("nat_session")
     assert token
@@ -396,7 +516,10 @@ def test_logout_during_a_quiet_process_stops_further_output_and_reaps_child(
             time.sleep(0.01)
         try:
             assert marker.exists()
-            app.state.auth.logout(token)  # type: ignore[attr-defined]
+            if reason == "logout":
+                app.state.auth.logout(token)  # type: ignore[attr-defined]
+            else:
+                updating[0] = True
             response = pending.result(timeout=3)
         finally:
             gate.touch()
@@ -469,6 +592,43 @@ def test_wall_limit_closes_a_runner_when_the_client_stops_consuming_output(
         started = time.monotonic()
         await DiagnosticStreamResponse(events())(scope, receive, send)
         assert time.monotonic() - started < 3
+        assert processes[0].returncode is not None and not service.lock.locked()
+
+    asyncio.run(scenario())
+
+
+def test_continuous_response_has_no_total_timer_but_reaps_a_stalled_consumer(
+    monkeypatch: pytest.MonkeyPatch, processes: list[asyncio.subprocess.Process]
+) -> None:
+    monkeypatch.setattr("app.main.DIAGNOSTIC_WALL_SECONDS", -1)
+    monkeypatch.setattr("app.main.DIAGNOSTIC_SEND_SECONDS", 0.05)
+    monkeypatch.setattr(
+        "app.diagnostics.diagnostic_command",
+        lambda *_: child_command("import time; print('first', flush=True); time.sleep(30)"),
+    )
+    service = NetworkDiagnostics(False)
+
+    async def scenario() -> None:
+        async def events() -> AsyncGenerator[str, None]:
+            async with aclosing(service.stream(REQUEST, continuous=True)) as stream:
+                async for event in stream:
+                    if event is not None:
+                        yield json.dumps(event) + "\n"
+
+        async def send(message: Message) -> None:
+            if message["type"] == "http.response.body" and b"first" in message.get("body", b""):
+                await asyncio.sleep(30)
+
+        async def receive() -> Message:
+            await asyncio.sleep(30)
+            return {"type": "http.disconnect"}
+
+        scope: Scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+        started = time.monotonic()
+        # ASGI 2.4 treats a timed-out write as a disconnected consumer.
+        with pytest.raises(ClientDisconnect):
+            await DiagnosticStreamResponse(events(), continuous=True)(scope, receive, send)
+        assert time.monotonic() - started < 2
         assert processes[0].returncode is not None and not service.lock.locked()
 
     asyncio.run(scenario())

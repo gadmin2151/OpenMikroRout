@@ -51,6 +51,9 @@ def namespace_scenario(directory: Path) -> None:
             command(*prefix, "ip", "link", "set", "lo", "up")
             command(*prefix, "ip", "address", "add", "198.18.0.2/30", "dev", "scan-peer")
             command(*prefix, "ip", "link", "set", "scan-peer", "up")
+            # A reachable service outside the selected interface's connected subnet.
+            command(*prefix, "ip", "address", "add", "198.19.0.2/32", "dev", "lo")
+            command("ip", "route", "add", "198.19.0.0/30", "via", "198.18.0.2", "dev", "scan-test")
             for protocol in ("tcp", "udp"):
                 command(
                     *prefix,
@@ -66,12 +69,13 @@ def namespace_scenario(directory: Path) -> None:
                 )
             code = """
 import socket,threading,time
-tcp=socket.socket(); tcp.bind(('198.18.0.2',44444)); tcp.listen()
-udp=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); udp.bind(('198.18.0.2',44444))
-def answer():
+tcp=socket.socket(); tcp.bind(('0.0.0.0',44444)); tcp.listen()
+def answer(udp):
     while True:
         data,peer=udp.recvfrom(2048); udp.sendto(b'probe-response',peer)
-threading.Thread(target=answer,daemon=True).start()
+for address in ('198.18.0.2','198.19.0.2'):
+    udp=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); udp.bind((address,44444))
+    threading.Thread(target=answer,args=(udp,),daemon=True).start()
 print('ready',flush=True)
 time.sleep(90)
 """
@@ -86,6 +90,21 @@ time.sleep(90)
                     interface="scan-test",
                     target="198.18.0.2",
                     profile="custom",
+                    ports="44444-44446",
+                ),
+                ScanRequest(kind="network", interface="scan-test", target="198.19.0.0/30"),
+                ScanRequest(
+                    kind="ports",
+                    interface="scan-test",
+                    target="198.19.0.2",
+                    profile="custom",
+                    ports="44444-44446",
+                ),
+                ScanRequest(
+                    kind="ports",
+                    interface="scan-test",
+                    target="198.19.0.2",
+                    profile="udp",
                     ports="44444-44446",
                 ),
                 ScanRequest(
@@ -103,8 +122,9 @@ time.sleep(90)
                     time.sleep(0.1)
                     job = service.job(job["id"])
                 assert job["state"] == "completed", job
+                destination = "198.19.0.2" if request.target.startswith("198.19.") else "198.18.0.2"
                 found = next(
-                    host for host in job["result"]["hosts"] if "198.18.0.2" in host["addresses"]
+                    host for host in job["result"]["hosts"] if destination in host["addresses"]
                 )
                 assert found["state"] == "up"
                 if request.kind == "ports":
@@ -115,6 +135,7 @@ time.sleep(90)
                         "open|filtered" if request.profile == "udp" else "filtered"
                     ) in states, found
             assert hosts.hosts(query="198.18.0.2")["total"] == 1
+            assert hosts.hosts(query="198.19.0.2")["total"] == 1
         finally:
             service.close()
             hosts.close()

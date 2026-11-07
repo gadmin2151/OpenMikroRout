@@ -11,10 +11,10 @@ import time
 from collections import deque
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 import anyio
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.ipv4 import endpoint_host, ipv4
 from app.link_models import LinkModel
@@ -29,6 +29,11 @@ POLL_SECONDS = 0.1
 DiagnosticEvent = dict[str, Any]
 
 
+def rolling_output(previous: str, chunk: str, limit: int) -> str:
+    """Keep a byte-bounded UTF-8 tail without splitting a displayed character."""
+    return (previous + chunk).encode("utf-8")[-limit:].decode("utf-8", errors="ignore")
+
+
 class DiagnosticRequest(LinkModel):
     tool: Tool
     target: str = Field(min_length=1, max_length=253)
@@ -37,12 +42,24 @@ class DiagnosticRequest(LinkModel):
     _target = field_validator("target")(endpoint_host)
 
 
-def diagnostic_command(tool: Tool, address: str) -> list[str]:
+class DiagnosticStreamRequest(DiagnosticRequest):
+    continuous: bool | None = Field(default=None, strict=True)
+
+    @model_validator(mode="after")
+    def continuous_ping_only(self) -> Self:
+        if self.continuous and self.tool != "ping":
+            raise ValueError("Continuous diagnostics are available only for Ping")
+        return self
+
+
+def diagnostic_command(tool: Tool, address: str, continuous: bool = False) -> list[str]:
     binary = {"ping": "ping", "traceroute": "traceroute", "dns": "getent", "route": "ip"}.get(tool)
     if not binary or not (path := shutil.which(binary)):
         raise WireGuardError(f"Install the {binary or tool} utility to run this diagnostic")
     arguments = {
-        "ping": ["-4", "-n", "-c", "4", "-W", "1", "-w", "6", address],
+        "ping": ["-4", "-n", "-i", "1", "-W", "1", "-O", address]
+        if continuous
+        else ["-4", "-n", "-c", "4", "-W", "1", "-w", "6", address],
         "traceroute": ["-4", "-n", "-I", "-m", "12", "-q", "1", "-w", "1", address],
         "dns": ["ahostsv4", address],
         "route": ["-4", "-j", "route", "get", address],
@@ -53,6 +70,68 @@ def diagnostic_command(tool: Tool, address: str) -> list[str]:
     if tool in ("ping", "traceroute") and (buffer := shutil.which("stdbuf")):
         command = [buffer, "-oL", "-eL", *command]
     return command
+
+
+async def stream_process_output(
+    arguments: list[str], deadline: float | None, *, continuous: bool = False
+) -> AsyncGenerator[DiagnosticEvent | None, None]:
+    """One cancellable subprocess, bounded reads and an incremental UTF-8 decoder."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *arguments,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            env={"PATH": os.defpath, "LC_ALL": "C", "PYTHONUNBUFFERED": "1"},
+            limit=8192,
+        )
+    except OSError as exc:
+        raise WireGuardError("Diagnostic utility could not be started") from exc
+    assert process.stdout is not None
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    total = 0
+    try:
+        while True:
+            remaining = deadline - time.monotonic() if deadline is not None else None
+            if remaining is not None and remaining <= 0:
+                yield {"exit_code": -1}
+                return
+            try:
+                chunk = await asyncio.wait_for(
+                    process.stdout.read(4096),
+                    min(POLL_SECONDS, remaining) if remaining is not None else POLL_SECONDS,
+                )
+            except TimeoutError:
+                yield None
+                continue
+            if not chunk:
+                tail = decoder.decode(b"", final=True)
+                if tail:
+                    yield {"text": tail}
+                break
+            if not continuous:
+                total += len(chunk)
+                if total > MAX_OUTPUT_BYTES:
+                    raise WireGuardError("Diagnostic output exceeded the 32 KiB limit")
+            text = decoder.decode(chunk)
+            if text:
+                yield {"text": text}
+        while process.returncode is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            try:
+                await asyncio.wait_for(process.wait(), POLL_SECONDS)
+            except TimeoutError:
+                yield None
+        code = process.returncode if process.returncode is not None else -1
+        yield {"exit_code": code}
+    finally:
+        with anyio.CancelScope(shield=True):
+            if process.returncode is None:
+                process.kill()
+            # Drain the bounded pipe backlog after killing. Process.wait()
+            # alone can hang if the StreamReader paused on excessive output.
+            await process.communicate()
 
 
 class NetworkDiagnostics:
@@ -75,7 +154,7 @@ class NetworkDiagnostics:
         return asyncio.run(collect())
 
     async def stream(
-        self, request: DiagnosticRequest
+        self, request: DiagnosticRequest, *, continuous: bool = False
     ) -> AsyncGenerator[DiagnosticEvent | None, None]:
         """Yield live events; None lets the transport check disconnect/auth while idle.
 
@@ -85,13 +164,19 @@ class NetworkDiagnostics:
         if not self.lock.acquire(blocking=False):
             raise WireGuardError("Another diagnostic is running; wait for its result")
         try:
+            continuous = continuous and request.tool == "ping" and not self.demo
             started = time.monotonic()
             while self.requests and self.requests[0] < started - 60:
                 self.requests.popleft()
             if len(self.requests) >= 12:
                 raise WireGuardError("Diagnostics are limited to 12 runs per minute")
             self.requests.append(started)
-            yield {"type": "started", "tool": request.tool, "target": request.target}
+            yield {
+                "type": "started",
+                "tool": request.tool,
+                "target": request.target,
+                "continuous": continuous,
+            }
             if self.demo:
                 result = {
                     "tool": request.tool,
@@ -119,7 +204,7 @@ class NetworkDiagnostics:
                     output = ""
                     success = False
                     async with aclosing(
-                        self._command(
+                        stream_process_output(
                             diagnostic_command("dns", request.target),
                             min(
                                 started + DIAGNOSTIC_WALL_SECONDS,
@@ -165,18 +250,27 @@ class NetworkDiagnostics:
                 )
                 yield {"type": "output", "text": output}
             else:
-                arguments = diagnostic_command(request.tool, address)
+                arguments = diagnostic_command(request.tool, address, continuous)
                 async with aclosing(
-                    self._command(
+                    stream_process_output(
                         arguments,
-                        min(started + DIAGNOSTIC_WALL_SECONDS, time.monotonic() + PROCESS_SECONDS),
+                        None
+                        if continuous
+                        else min(
+                            started + DIAGNOSTIC_WALL_SECONDS, time.monotonic() + PROCESS_SECONDS
+                        ),
+                        continuous=continuous,
                     )
                 ) as steps:
                     async for event in steps:
                         if event is None:
                             yield None
                         elif "text" in event:
-                            output += event["text"]
+                            output = (
+                                rolling_output(output, event["text"], MAX_OUTPUT_BYTES)
+                                if continuous
+                                else output + event["text"]
+                            )
                             yield {"type": "output", "text": event["text"]}
                         else:
                             success = event["exit_code"] == 0
@@ -192,64 +286,6 @@ class NetworkDiagnostics:
             yield {"type": "completed", "result": result}
         finally:
             self.lock.release()
-
-    @staticmethod
-    async def _command(
-        arguments: list[str], deadline: float
-    ) -> AsyncGenerator[DiagnosticEvent | None, None]:
-        """One cancellable subprocess, bounded reads and an incremental UTF-8 decoder."""
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *arguments,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                env={"PATH": os.defpath, "LC_ALL": "C", "PYTHONUNBUFFERED": "1"},
-                limit=8192,
-            )
-        except OSError as exc:
-            raise WireGuardError("Diagnostic utility could not be started") from exc
-        assert process.stdout is not None
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-        total = 0
-        try:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    yield {"exit_code": -1}
-                    return
-                try:
-                    chunk = await asyncio.wait_for(
-                        process.stdout.read(4096), min(POLL_SECONDS, remaining)
-                    )
-                except TimeoutError:
-                    yield None
-                    continue
-                if not chunk:
-                    tail = decoder.decode(b"", final=True)
-                    if tail:
-                        yield {"text": tail}
-                    break
-                total += len(chunk)
-                if total > MAX_OUTPUT_BYTES:
-                    raise WireGuardError("Diagnostic output exceeded the 32 KiB limit")
-                text = decoder.decode(chunk)
-                if text:
-                    yield {"text": text}
-            try:
-                code = await asyncio.wait_for(
-                    process.wait(), max(0.001, deadline - time.monotonic())
-                )
-            except TimeoutError:
-                code = -1
-            yield {"exit_code": code}
-        finally:
-            with anyio.CancelScope(shield=True):
-                if process.returncode is None:
-                    process.kill()
-                # Drain the bounded pipe backlog after killing. Process.wait()
-                # alone can hang if the StreamReader paused on excessive output.
-                await process.communicate()
 
     @staticmethod
     async def _tcp(address: str, port: int) -> AsyncGenerator[DiagnosticEvent | None, None]:

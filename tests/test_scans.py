@@ -15,12 +15,24 @@ from app.network_models import IpAddress, NetworkConfiguration
 from app.scans import ScanOutput, ScanService, parse_host, scan_command, validated_target
 
 
-def test_target_must_be_allowed_connected_unicast_and_network_bounded() -> None:
+def test_target_can_be_routed_but_egress_must_be_allowed_and_scan_bounded() -> None:
     settings = ScanSettings(enabled=True, interfaces=["eth0"])
     networks = {"eth0": ["10.0.0.0/24"]}
     valid = ScanRequest(kind="ports", interface="eth0", target="10.0.0.2")
     assert validated_target(valid, settings, networks) == "10.0.0.2"
-    for address in ("127.0.0.1", "10.0.1.2", "10.0.0.0", "10.0.0.255"):
+    for address in ("10.0.1.2", "203.0.113.15", "198.51.100.255"):
+        assert (
+            validated_target(valid.model_copy(update={"target": address}), settings, networks)
+            == address
+        )
+    for address in (
+        "127.0.0.1",
+        "224.0.0.1",
+        "0.0.0.0",
+        "255.255.255.255",
+        "10.0.0.0",
+        "10.0.0.255",
+    ):
         with pytest.raises(DiscoveryError):
             validated_target(valid.model_copy(update={"target": address}), settings, networks)
     with pytest.raises(DiscoveryError):
@@ -37,6 +49,33 @@ def test_target_must_be_allowed_connected_unicast_and_network_bounded() -> None:
         )
         == "10.0.0.0/24"
     )
+    for target in ("10.55.0.0/24", "203.0.113.0/24"):
+        assert (
+            validated_target(
+                ScanRequest(kind="network", interface="eth0", target=target), settings, networks
+            )
+            == target
+        )
+    for target in ("224.0.0.0/24", "127.0.0.0/24", "255.255.255.255/32"):
+        with pytest.raises(DiscoveryError, match="unicast"):
+            validated_target(
+                ScanRequest(kind="network", interface="eth0", target=target), settings, networks
+            )
+
+
+def test_routed_dns_target_is_resolved_to_a_pinned_ipv4_and_preserves_selected_egress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.wireguard.resolve_ipv4", lambda _: "198.51.100.7")
+    request = ScanRequest(kind="ports", interface="eth0", target="remote.example.com")
+    settings = ScanSettings(enabled=True, interfaces=["eth0"])
+    assert validated_target(request, settings, {"eth0": ["10.0.0.0/24"]}) == "198.51.100.7"
+    command = scan_command("nmap", request, settings, "198.51.100.7")
+    assert command[command.index("-e") + 1] == "eth0"
+    assert command[-1] == "198.51.100.7"
+    assert request.interface == "eth0" and request.target == "remote.example.com"
+    with pytest.raises(DiscoveryError, match="disabled for this interface"):
+        validated_target(request, ScanSettings(enabled=True, interfaces=["eth1"]), {})
 
 
 def test_nmap_arguments_are_fixed_and_preserve_explicit_scan_intent() -> None:
@@ -53,7 +92,8 @@ def test_nmap_arguments_are_fixed_and_preserve_explicit_scan_intent() -> None:
     command = scan_command("/usr/bin/nmap", udp, settings, "10.0.0.2")
     assert "-sU" in command and "-sV" in command and "53,123" in command
     network = ScanRequest(kind="network", interface="eth0", target="10.0.0.0/24")
-    assert "-sn" in scan_command("/usr/bin/nmap", network, settings, network.target)
+    command = scan_command("/usr/bin/nmap", network, settings, network.target)
+    assert "-sn" in command and "-PR" not in command
 
 
 def test_result_preserves_open_closed_filtered_and_udp_uncertainty() -> None:
@@ -171,11 +211,18 @@ def test_candidate_inventory_does_not_broaden_an_applied_interface_allowlist(
     )
     for interface, target, message in (
         ("eth0", "203.0.113.2", "disabled for this interface"),
-        ("vmbr1", "203.0.113.2", "selected connected network"),
         ("missing0", "10.30.0.2", "no connected IPv4 network"),
     ):
         with pytest.raises(DiscoveryError, match=message):
             service.start(ScanRequest(kind="ports", interface=interface, target=target))
+    assert (
+        validated_target(
+            ScanRequest(kind="ports", interface="vmbr1", target="203.0.113.2"),
+            settings,
+            status["networks"],
+        )
+        == "203.0.113.2"
+    )
     assert service.jobs()["total"] == 0
     assert not service.threads
 

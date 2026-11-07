@@ -9,11 +9,15 @@ export const discoveryViews = {
   ],
   network_scan: [
     t("Network Scan"),
-    t("Поиск устройств в выбранной подключённой IPv4-сети."),
+    t(
+      "Поиск устройств в указанной IPv4-сети через выбранный исходящий интерфейс.",
+    ),
   ],
   port_scan: [
     t("Port Scan"),
-    t("Порты и службы одного хоста в разрешённой сети."),
+    t(
+      "Проверка портов и служб IPv4 / DNS-узла через выбранный исходящий интерфейс.",
+    ),
   ],
 };
 let renderedRegions = new WeakMap();
@@ -90,7 +94,7 @@ function choices(names, selected, name, label) {
   });
 }
 // Discovery and authorization are separate: a fresh installation has no scan
-// allowlist, but its connected interfaces must still be visible for setup.
+// allowlist, but interfaces with IPv4 addresses must still be visible for setup.
 export function scanInterfaceNames(ctx, status = scanStatus) {
   const settings = status?.settings || ctx.state.config.scanning || {};
   return [
@@ -102,14 +106,14 @@ export function scanInterfaceNames(ctx, status = scanStatus) {
 }
 function scanOptions(ctx, status = scanStatus) {
   const settings = status?.settings || ctx.state.config.scanning || {};
-  return html`<option value="">${status ? t("Выберите интерфейс") : t("Загрузка интерфейсов…")}</option>${scanInterfaceNames(
+  return html`<option value="">${status ? t("Выберите исходящий интерфейс") : t("Загрузка интерфейсов…")}</option>${scanInterfaceNames(
     ctx,
     status,
   )
     .map((name) => {
       const note =
         status?.networks && !status.networks[name]?.length
-          ? t("нет подключённой IPv4-сети")
+          ? t("нет IPv4-адреса")
           : !(settings.interfaces || []).includes(name)
             ? t("нужно разрешить сканирование")
             : "";
@@ -136,14 +140,14 @@ export function scanBlockedReason(
       "Сканирование выключено. В настройках включите его, отметьте интерфейсы, сохраните черновик и примените изменения.",
     );
   if (!scanInterfaceNames(ctx, status).length)
-    return t("Не найдено интерфейсов с подключённой IPv4-сетью.");
-  if (!selected) return t("Выберите интерфейс");
+    return t("Не найдено исходящих интерфейсов с IPv4-адресом.");
+  if (!selected) return t("Выберите исходящий интерфейс");
   if (!(status.settings.interfaces || []).includes(selected))
     return t(
       "Для выбранного интерфейса сканирование не разрешено. Отметьте его в настройках и примените изменения.",
     );
   if (status.networks && !status.networks[selected]?.length)
-    return t("На выбранном интерфейсе нет подключённой IPv4-сети.");
+    return t("На выбранном исходящем интерфейсе не назначен IPv4-адрес.");
   return "";
 }
 function scanReadiness(ctx, status = scanStatus) {
@@ -161,7 +165,7 @@ function settingsForm(ctx, scanning) {
     ...new Set([...interfaceNames(ctx), ...(value.interfaces || [])]),
   ].filter((name) => name !== "lo");
   const id = scanning ? "scan-settings" : "discovery-settings";
-  return html`<details class="configuration-help" ${scanning && !(scanStatus?.settings || value).enabled ? "open" : ""}><summary>${scanning ? t("Настройки сканирования") : t("Настройки обнаружения")}</summary><form id="${id}" data-discovery-form data-revision="${ctx.state.revision}" class="discovery-settings-form"><fieldset ${readonly(ctx) ? "disabled" : ""}><label class="wg-check"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}><span>Включить ${scanning ? t("активное сканирование") : t("пассивное обнаружение")}</span></label>${choices(names, value.interfaces || [], "interfaces", t("Разрешённые интерфейсы"))}${scanning ? html`<div class="monitor-filters"><label class="field"><span>Максимум адресов</span><input name="max_hosts" type="number" min="1" max="1024" value="${value.max_hosts || 256}" required></label><label class="field"><span>Пакетов в секунду, не более</span><input name="max_rate" type="number" min="10" max="1000" value="${value.max_rate || 100}" required></label><label class="field"><span>Таймаут, с</span><input name="timeout_seconds" type="number" min="10" max="1800" value="${value.timeout_seconds || 300}" required></label><label class="field"><span>Заданий в истории</span><input name="history_limit" type="number" min="1" max="100" value="${value.history_limit || 50}" required></label></div>` : html`${choices(["arp", "dhcp", "lldp", "cdp", "mndp"], value.protocols || ["arp", "dhcp", "lldp", "cdp", "mndp"], "protocols", t("Источники"))}<label class="field"><span>Актуальность наблюдения, с</span><input name="stale_seconds" type="number" min="30" max="86400" value="${value.stale_seconds || 300}" required></label>`}<button class="primary" data-discovery-form data-action="${scanning ? "scan-save-settings" : "discovery-save-settings"}">Сохранить черновик</button></fieldset><p class="feature-note">Изменения вступают в силу после общего применения и подтверждения конфигурации.</p></form></details>`;
+  return html`<details class="configuration-help" ${scanning && !(scanStatus?.settings || value).enabled ? "open" : ""}><summary>${scanning ? t("Настройки сканирования") : t("Настройки обнаружения")}</summary><form id="${id}" data-discovery-form data-revision="${ctx.state.revision}" class="discovery-settings-form"><fieldset ${readonly(ctx) ? "disabled" : ""}><label class="wg-check"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}><span>Включить ${scanning ? t("активное сканирование") : t("пассивное обнаружение")}</span></label>${choices(names, value.interfaces || [], "interfaces", scanning ? t("Разрешённые исходящие интерфейсы") : t("Разрешённые интерфейсы"))}${scanning ? html`<div class="monitor-filters"><label class="field"><span>Максимум адресов</span><input name="max_hosts" type="number" min="1" max="1024" value="${value.max_hosts || 256}" required></label><label class="field"><span>Пакетов в секунду, не более</span><input name="max_rate" type="number" min="10" max="1000" value="${value.max_rate || 100}" required></label><label class="field"><span>Таймаут, с</span><input name="timeout_seconds" type="number" min="10" max="1800" value="${value.timeout_seconds || 300}" required></label><label class="field"><span>Заданий в истории</span><input name="history_limit" type="number" min="1" max="100" value="${value.history_limit || 50}" required></label></div>` : html`${choices(["arp", "dhcp", "lldp", "cdp", "mndp"], value.protocols || ["arp", "dhcp", "lldp", "cdp", "mndp"], "protocols", t("Источники"))}<label class="field"><span>Актуальность наблюдения, с</span><input name="stale_seconds" type="number" min="30" max="86400" value="${value.stale_seconds || 300}" required></label>`}<button class="primary" data-discovery-form data-action="${scanning ? "scan-save-settings" : "discovery-save-settings"}">Сохранить черновик</button></fieldset><p class="feature-note">Изменения вступают в силу после общего применения и подтверждения конфигурации.</p></form></details>`;
 }
 function hostRows(ctx) {
   if (loadError)
@@ -257,7 +261,7 @@ export function renderDiscovery(view, ctx) {
     return html`<div class="feature-page discovery-page">${settingsForm(ctx, false)}<form data-discovery-form class="monitor-filters" id="discovery-search"><label class="field"><span>Поиск устройства</span><input name="query" maxlength="100" value="${ctx.e(filters.query)}" placeholder="Имя, IP, MAC, модель"></label><label class="field"><span>Интерфейс</span><select name="interface">${options(ctx, interfaceNames(ctx), filters.interface, t("Все интерфейсы"))}</select></label><button class="primary" data-discovery-form data-action="discovery-search">Найти</button>${action("discovery-refresh", t("Обновить"))}</form><div id="discovery-results">${hostRows(ctx)}</div><p class="feature-note">Сведения сообщаются устройствами и могут быть неточными. Источник и срок актуальности каждого поля доступны в карточке. Одинаковые MAC в разных сегментах не объединяются.</p></div>`;
   const network = view === "network_scan";
   const networks = scanStatus?.networks?.[scanInput.interface] || [];
-  return html`<div class="feature-page discovery-page">${settingsForm(ctx, true)}<form data-discovery-form id="scan-start" class="scan-start-form" data-kind="${network ? "network" : "ports"}"><div id="scan-readiness">${scanReadiness(ctx)}</div><fieldset ${!ctx.canWrite() || ctx.offline ? "disabled" : ""}><div class="scan-fields"><label class="field"><span>Интерфейс</span><select name="interface" required>${scanOptions(ctx)}</select></label><label class="field"><span>${network ? t("Подсеть IPv4 / CIDR") : t("IPv4 / DNS-имя хоста")}</span><input name="target" required maxlength="253" value="${ctx.e(scanInput.target)}" placeholder="${network ? "192.168.10.0/24" : "192.168.10.10"}"><small id="scan-networks">${ctx.e(networks.join(" · "))}</small></label>${
+  return html`<div class="feature-page discovery-page">${settingsForm(ctx, true)}<form data-discovery-form id="scan-start" class="scan-start-form" data-kind="${network ? "network" : "ports"}"><div id="scan-readiness">${scanReadiness(ctx)}</div><fieldset ${!ctx.canWrite() || ctx.offline ? "disabled" : ""}><div class="scan-fields"><label class="field"><span>Исходящий интерфейс</span><select name="interface" required>${scanOptions(ctx)}</select></label><label class="field"><span>${network ? t("Подсеть IPv4 / CIDR") : t("IPv4 / DNS-имя хоста")}</span><input name="target" required maxlength="253" value="${ctx.e(scanInput.target)}" placeholder="${network ? "192.168.10.0/24" : "1.1.1.1"}" aria-describedby="scan-target-note scan-networks"><small id="scan-networks">${ctx.e(networks.join(" · "))}</small><small id="scan-target-note">Сети интерфейса указаны справочно. Цель может находиться вне этих сетей.</small></label>${
     network
       ? ""
       : html`<label class="field"><span>Профиль</span><select name="profile">${[
@@ -273,7 +277,7 @@ export function renderDiscovery(view, ctx) {
           .join(
             "",
           )}</select></label><label class="field"><span>Порты / диапазоны</span><input name="ports" maxlength="200" value="${ctx.e(scanInput.ports)}" placeholder="22,80,443,8000-8010" ${["custom", "udp"].includes(scanInput.profile) ? "required" : "disabled"}></label>`
-  }</div><div class="scan-actions">${network ? "" : html`<label class="wg-check"><input name="service_detection" type="checkbox" ${scanInput.service_detection ? "checked" : ""}><span>Определять службы и версии</span></label>`}<button type="button" class="primary" data-discovery-form data-action="scan-start" ${scanBlockedReason(ctx) ? "disabled" : ""}>${ctx.icon("search")}Запустить сканирование</button></div></fieldset></form><p class="feature-note">Только непосредственно подключённые сети выбранного интерфейса. UDP: до 128 портов. Определение версий отправляет служебные запросы; результаты являются предположением Nmap.</p>${action("scan-refresh", t("Обновить историю"))}<div id="scan-results">${scanRows(ctx)}</div></div>`;
+  }</div><div class="scan-actions">${network ? "" : html`<label class="wg-check"><input name="service_detection" type="checkbox" ${scanInput.service_detection ? "checked" : ""}><span>Определять службы и версии</span></label>`}<button type="button" class="primary" data-discovery-form data-action="scan-start" ${scanBlockedReason(ctx) ? "disabled" : ""}>${ctx.icon("search")}Запустить сканирование</button></div></fieldset></form><p class="feature-note">Выберите исходящий интерфейс вручную. Цель — IPv4-адрес, DNS-имя узла или подсеть CIDR; принадлежность к локальной сети интерфейса не требуется. Сканирование использует выбранный интерфейс и маршрутизацию роутера. UDP: до 128 портов. Определение версий отправляет служебные запросы; результаты являются предположением Nmap.</p>${action("scan-refresh", t("Обновить историю"))}<div id="scan-results">${scanRows(ctx)}</div></div>`;
 }
 export async function refreshDiscovery(ctx) {
   const view = Object.keys(discoveryViews).find((name) =>

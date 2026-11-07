@@ -267,14 +267,14 @@ export const messagesExtra = {
     ],
   Завершение: ["Завершение", "Finalizing"],
   "Загрузка интерфейсов…": ["Загрузка интерфейсов…", "Loading interfaces…"],
-  "На выбранном интерфейсе нет подключённой IPv4-сети.": [
-    "На выбранном интерфейсе нет подключённой IPv4-сети.",
-    "The selected interface has no directly connected IPv4 network.",
+  "На выбранном исходящем интерфейсе не назначен IPv4-адрес.": [
+    "На выбранном исходящем интерфейсе не назначен IPv4-адрес.",
+    "The selected outgoing interface has no IPv4 address.",
   ],
   "Настроить сканирование": ["Настроить сканирование", "Configure scanning"],
-  "Не найдено интерфейсов с подключённой IPv4-сетью.": [
-    "Не найдено интерфейсов с подключённой IPv4-сетью.",
-    "No interfaces with directly connected IPv4 networks were found.",
+  "Не найдено исходящих интерфейсов с IPv4-адресом.": [
+    "Не найдено исходящих интерфейсов с IPv4-адресом.",
+    "No outgoing interfaces with IPv4 addresses were found.",
   ],
   "Не удалось обновить ход сканирования: ": [
     "Не удалось обновить ход сканирования: ",
@@ -315,12 +315,132 @@ export const messagesExtra = {
       "Scanning is disabled. Enable it in scan settings, select interfaces, save the draft and apply the changes.",
     ],
   "Ход сканирования": ["Ход сканирования", "Scan progress"],
-  "нет подключённой IPv4-сети": [
-    "нет подключённой IPv4-сети",
-    "no connected IPv4 network",
-  ],
+  "нет IPv4-адреса": ["нет IPv4-адреса", "no IPv4 address"],
   "нужно разрешить сканирование": [
     "нужно разрешить сканирование",
     "scan permission required",
   ],
+  "Исходящий интерфейс": ["Исходящий интерфейс", "Outgoing interface"],
+  "Выберите исходящий интерфейс": [
+    "Выберите исходящий интерфейс",
+    "Choose an outgoing interface",
+  ],
+  "Разрешённые исходящие интерфейсы": [
+    "Разрешённые исходящие интерфейсы",
+    "Allowed outgoing interfaces",
+  ],
+  "Поиск устройств в указанной IPv4-сети через выбранный исходящий интерфейс.":
+    [
+      "Поиск устройств в указанной IPv4-сети через выбранный исходящий интерфейс.",
+      "Discover devices in an IPv4 network through the selected outgoing interface.",
+    ],
+  "Проверка портов и служб IPv4 / DNS-узла через выбранный исходящий интерфейс.":
+    [
+      "Проверка портов и служб IPv4 / DNS-узла через выбранный исходящий интерфейс.",
+      "Check ports and services of an IPv4 / DNS host through the selected outgoing interface.",
+    ],
+  "Сети интерфейса указаны справочно. Цель может находиться вне этих сетей.": [
+    "Сети интерфейса указаны справочно. Цель может находиться вне этих сетей.",
+    "Interface networks are shown for reference. The target may be outside these networks.",
+  ],
+  "Выберите исходящий интерфейс вручную. Цель — IPv4-адрес, DNS-имя узла или подсеть CIDR; принадлежность к локальной сети интерфейса не требуется. Сканирование использует выбранный интерфейс и маршрутизацию роутера. UDP: до 128 портов. Определение версий отправляет служебные запросы; результаты являются предположением Nmap.":
+    [
+      "Выберите исходящий интерфейс вручную. Цель — IPv4-адрес, DNS-имя узла или подсеть CIDR; принадлежность к локальной сети интерфейса не требуется. Сканирование использует выбранный интерфейс и маршрутизацию роутера. UDP: до 128 портов. Определение версий отправляет служебные запросы; результаты являются предположением Nmap.",
+      "Select the outgoing interface manually. The target can be an IPv4 address, DNS hostname or CIDR subnet; it does not have to belong to the interface's local network. Scanning uses the selected interface and the router's routing. UDP: up to 128 ports. Version detection sends service probes; results are Nmap's estimates.",
+    ],
+  Стоп: ["Стоп", "Stop"],
+  "Ping выполняется до остановки": [
+    "Ping выполняется до остановки",
+    "Ping runs until stopped",
+  ],
+  "Ping — до нажатия «Стоп» · остальные инструменты — до 20 секунд": [
+    "Ping — до нажатия «Стоп» · остальные инструменты — до 20 секунд",
+    "Ping runs until Stop · other tools run for up to 20 seconds",
+  ],
+  "Ping работает до нажатия «Стоп». Traceroute: до 12 переходов. TCP Connect проверяет соединение без отправки данных. Для запуска нужна группа full. DNS использует системный резолвер роутера.":
+    [
+      "Ping работает до нажатия «Стоп». Traceroute: до 12 переходов. TCP Connect проверяет соединение без отправки данных. Для запуска нужна группа full. DNS использует системный резолвер роутера.",
+      "Ping runs until Stop. Traceroute: up to 12 hops. TCP Connect checks the connection without sending data. The full role is required. DNS uses the router's system resolver.",
+    ],
+  "Вывод сетевой диагностики": [
+    "Вывод сетевой диагностики",
+    "Network diagnostic output",
+  ],
+  "Packet Sniffer": ["Перехват пакетов", "Packet Sniffer"],
+  "Просмотр заголовков IPv4-пакетов на выбранном интерфейсе.": [
+    "Просмотр заголовков IPv4-пакетов на выбранном интерфейсе.",
+    "View IPv4 packet headers on the selected interface.",
+  ],
+  "Пакеты TCP · UDP · ICMP": [
+    "Пакеты TCP · UDP · ICMP",
+    "TCP · UDP · ICMP packets",
+  ],
+  "Поиск устройств в IPv4-сетях": [
+    "Поиск устройств в IPv4-сетях",
+    "Discover devices in IPv4 networks",
+  ],
+  "Наблюдение заголовков IPv4-пакетов на выбранном интерфейсе.": [
+    "Наблюдение заголовков IPv4-пакетов на выбранном интерфейсе.",
+    "Observe IPv4 packet headers on the selected interface.",
+  ],
+  "Для захвата пакетов нужна группа full.": [
+    "Для захвата пакетов нужна группа full.",
+    "The full role is required to capture packets.",
+  ],
+  "Для захвата установите tcpdump на сервере.": [
+    "Для захвата установите tcpdump на сервере.",
+    "Install tcpdump on the server to capture packets.",
+  ],
+  "Выберите интерфейс захвата.": [
+    "Выберите интерфейс захвата.",
+    "Choose a capture interface.",
+  ],
+  "Выберите интерфейс захвата": [
+    "Выберите интерфейс захвата",
+    "Choose a capture interface",
+  ],
+  "Все интерфейсы (any)": ["Все интерфейсы (any)", "All interfaces (any)"],
+  "Готов к захвату пакетов": [
+    "Готов к захвату пакетов",
+    "Ready to capture packets",
+  ],
+  "Интерфейс захвата": ["Интерфейс захвата", "Capture interface"],
+  "Все протоколы IPv4": ["Все протоколы IPv4", "All IPv4 protocols"],
+  "Источник IPv4 / CIDR": ["Источник IPv4 / CIDR", "Source IPv4 / CIDR"],
+  "Назначение IPv4 / CIDR": [
+    "Назначение IPv4 / CIDR",
+    "Destination IPv4 / CIDR",
+  ],
+  "Порт · необязательно": ["Порт · необязательно", "Port · optional"],
+  "TCP / UDP · источник или назначение": [
+    "TCP / UDP · источник или назначение",
+    "TCP / UDP · source or destination",
+  ],
+  "Начать захват": ["Начать захват", "Start capture"],
+  "Обновить интерфейсы": ["Обновить интерфейсы", "Refresh interfaces"],
+  "Захват выключен": ["Захват выключен", "Capture stopped"],
+  "Заголовки перехваченных пакетов": [
+    "Заголовки перехваченных пакетов",
+    "Captured packet headers",
+  ],
+  "Выберите интерфейс и фильтры, затем начните захват.": [
+    "Выберите интерфейс и фильтры, затем начните захват.",
+    "Choose an interface and filters, then start capture.",
+  ],
+  "Захват работает до нажатия «Стоп». Вывод содержит заголовки пакетов без содержимого и хранит последние 32 КиБ только в этом окне. Закрытие раздела останавливает захват. Фильтры не меняют правила Firewall.":
+    [
+      "Захват работает до нажатия «Стоп». Вывод содержит заголовки пакетов без содержимого и хранит последние 32 КиБ только в этом окне. Закрытие раздела останавливает захват. Фильтры не меняют правила Firewall.",
+      "Capture runs until Stop. Output shows packet headers without payload and keeps the latest 32 KiB only in this window. Leaving this section stops capture. Filters do not change Firewall rules.",
+    ],
+  "Захват пакетов выполняется до остановки": [
+    "Захват пакетов выполняется до остановки",
+    "Capturing packets until stopped",
+  ],
+  "DEMO · захват не запускался": [
+    "DEMO · захват не запускался",
+    "DEMO · capture was not started",
+  ],
+  "Захват завершён": ["Захват завершён", "Capture completed"],
+  "Захват завершён с ошибкой": ["Захват завершён с ошибкой", "Capture failed"],
+  "Захват остановлен": ["Захват остановлен", "Capture stopped"],
 };

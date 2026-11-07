@@ -53,6 +53,8 @@ const readActions = new Set([
   "discovery-connections",
   "scan-refresh",
   "scan-settings-open",
+  "capture-refresh",
+  "capture-stop",
   "scan-job",
   "scan-page",
   "wg-refresh",

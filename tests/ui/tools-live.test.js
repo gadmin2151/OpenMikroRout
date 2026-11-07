@@ -1,6 +1,9 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { readDiagnosticStream } from "../../app/static/live-stream.js";
+import {
+  readDiagnosticStream,
+  diagnosticOutputTail,
+} from "../../app/static/live-stream.js";
 import {
   handleToolsAction,
   resetTools,
@@ -50,7 +53,7 @@ const completed = (output) => ({
     output,
   },
 });
-function fixture() {
+function fixture(tool = "ping") {
   const output = {
     textContent: "",
     scrollHeight: 100,
@@ -81,7 +84,7 @@ function fixture() {
   };
   globalThis.FormData = class {
     get(name) {
-      return { tool: "ping", target: "  192.0.2.1  " }[name] || null;
+      return { tool, target: "  192.0.2.1  " }[name] || null;
     }
     has(name) {
       return name !== "port";
@@ -171,6 +174,7 @@ test("Ping output reaches textContent before completion, remains local-busy and 
     assert.equal(options.responseType, "stream");
     assert.deepEqual(JSON.parse(options.body), {
       tool: "ping",
+      continuous: true,
       target: "192.0.2.1",
       port: 443,
     });
@@ -215,9 +219,12 @@ test("cancel aborts the fetch signal and restores tool controls", async () => {
   await flush();
   await handleToolsAction({ dataset: { action: "tools-cancel" } }, f.ctx);
   assert.equal(signal.aborted, true);
-  // A fetch-backed body rejects on abort; close this synthetic transport explicitly.
-  stream.close();
   await pending;
+  assert.equal(
+    stream.cancelled(),
+    true,
+    "Stop must wake even a waiting stream reader",
+  );
   assert.match(f.meta.textContent, /отменена|cancelled/i);
   assert.equal(f.controls[3].disabled, false);
 });
@@ -271,4 +278,143 @@ test("output after a completed result is rejected rather than silently altering 
   stream.close();
   await assert.rejects(pending, /Некорректный|Invalid/i);
   assert.doesNotMatch(f.output.textContent, /late invalid output/);
+});
+
+test("continuous Ping accepts more than 1 MiB over time while keeping each protocol frame bounded", async () => {
+  const stream = diagnosticStream();
+  let outputs = 0;
+  const pending = readDiagnosticStream(
+    stream.response,
+    (event) => {
+      if (event.type === "output") outputs++;
+    },
+    undefined,
+    { continuous: true },
+  );
+  stream.send({ type: "started", continuous: true });
+  for (let index = 0; index < 20; index++)
+    stream.send({ type: "output", text: `${index}:` + "x".repeat(65500) });
+  stream.send(completed("finished"));
+  stream.close();
+  await pending;
+  assert.equal(outputs, 20);
+  const oversized = diagnosticStream();
+  const invalid = readDiagnosticStream(
+    oversized.response,
+    () => {},
+    undefined,
+    { continuous: true },
+  );
+  oversized.bytes(new Uint8Array(262145).fill(65));
+  await assert.rejects(invalid, /лимит|limit/i);
+  assert.equal(oversized.cancelled(), true);
+});
+
+test("continuous and finite streams reject missing terminals, malformed UTF-8 and duplicate terminal events", async () => {
+  for (const continuous of [false, true]) {
+    const incomplete = diagnosticStream();
+    const missing = readDiagnosticStream(
+      incomplete.response,
+      () => {},
+      undefined,
+      { continuous },
+    );
+    incomplete.send({ type: "started" });
+    incomplete.close();
+    await assert.rejects(missing, /прерван|interrupted/i);
+    const corrupt = diagnosticStream();
+    const invalid = readDiagnosticStream(
+      corrupt.response,
+      () => {},
+      undefined,
+      { continuous },
+    );
+    corrupt.bytes(new Uint8Array([0xff, 10]));
+    await assert.rejects(invalid);
+    assert.equal(corrupt.cancelled(), true);
+    const duplicate = diagnosticStream();
+    const twice = readDiagnosticStream(
+      duplicate.response,
+      () => {},
+      undefined,
+      { continuous },
+    );
+    duplicate.send(completed("first"));
+    duplicate.send(completed("second"));
+    duplicate.close();
+    await assert.rejects(twice, /Некорректный|Invalid/i);
+  }
+});
+
+test("live Ping rolls the console to the latest 32 KiB and keeps full Unicode characters", async () => {
+  const f = fixture();
+  const stream = diagnosticStream();
+  f.ctx.api = async () => stream.response;
+  const pending = handleToolsAction(
+    { dataset: { action: "tools-run" } },
+    f.ctx,
+  );
+  stream.send({ type: "started", continuous: true });
+  stream.send({
+    type: "output",
+    text: "old-first-packet\n" + "я".repeat(30000),
+  });
+  stream.send({ type: "output", text: "\nlatest-packet ✓\n" });
+  await flush();
+  assert.doesNotMatch(f.output.textContent, /old-first-packet/);
+  assert.match(f.output.textContent, /latest-packet ✓/);
+  assert.ok(
+    new globalThis.TextEncoder().encode(f.output.textContent).byteLength <=
+      32768,
+  );
+  assert.doesNotMatch(f.output.textContent, /�/);
+  assert.match(f.meta.textContent, /до остановки|until stopped/i);
+  assert.match(renderTools(f.ctx), /id="tools-output"[^>]*aria-live="off"/);
+  await handleToolsAction({ dataset: { action: "tools-cancel" } }, f.ctx);
+  await pending;
+  const exact = diagnosticOutputTail("✓".repeat(12000) + "END");
+  assert.ok(new globalThis.TextEncoder().encode(exact).byteLength <= 32768);
+  assert.match(exact, /END$/);
+  assert.doesNotMatch(exact, /�/);
+});
+
+test("Ping has no wall-clock timeout while finite tools retain their 30-second client guard", async () => {
+  const originalTimeout = globalThis.AbortSignal.timeout;
+  const limits = [];
+  globalThis.AbortSignal.timeout = (milliseconds) => {
+    limits.push(milliseconds);
+    return originalTimeout(milliseconds);
+  };
+  try {
+    for (const tool of ["ping", "traceroute"]) {
+      const f = fixture(tool);
+      const stream = diagnosticStream();
+      let payload;
+      f.ctx.api = async (_path, options) => {
+        payload = JSON.parse(options.body);
+        return stream.response;
+      };
+      const pending = handleToolsAction(
+        { dataset: { action: "tools-run" } },
+        f.ctx,
+      );
+      stream.send({ type: "started" });
+      stream.send({
+        ...completed("finished"),
+        result: { ...completed("finished").result, tool },
+      });
+      stream.close();
+      await pending;
+      if (tool === "ping") {
+        assert.equal(payload.continuous, true);
+        assert.deepEqual(limits, []);
+      } else {
+        assert.equal(Object.hasOwn(payload, "continuous"), false);
+        assert.deepEqual(limits, [30000]);
+      }
+      resetTools();
+    }
+  } finally {
+    globalThis.AbortSignal.timeout = originalTimeout;
+  }
 });

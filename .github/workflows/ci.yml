@@ -24,7 +24,7 @@ jobs:
       - name: Install verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends iptables iproute2 dnsmasq-base conntrack wireguard-tools iputils-ping traceroute ipset fail2ban python3-systemd lldpd nmap
+          sudo apt-get install -y --no-install-recommends iptables iproute2 dnsmasq-base conntrack wireguard-tools iputils-ping traceroute ipset fail2ban python3-systemd lldpd nmap tcpdump
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements-dev.lock
           npm install --global pnpm@12.16.1
@@ -37,7 +37,7 @@ jobs:
           .venv/bin/pytest -q
           .venv/bin/python -m pip check
       - name: Isolated Linux network tests
-        run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py tests/test_wireguard_kernel.py tests/test_system_lists_kernel.py tests/test_rule_security_kernel.py tests/test_fail2ban_kernel.py tests/test_fail2ban_attempts_kernel.py tests/test_discovery_kernel.py -q
+        run: sudo env NAT_RUN_KERNEL_TESTS=1 .venv/bin/python -m pytest tests/test_kernel.py tests/test_links.py tests/test_networking.py tests/test_wireguard_kernel.py tests/test_system_lists_kernel.py tests/test_rule_security_kernel.py tests/test_fail2ban_kernel.py tests/test_fail2ban_attempts_kernel.py tests/test_discovery_kernel.py tests/test_routed_scan_kernel.py tests/test_packet_capture_kernel.py -q
       - name: Interface checks
         run: pnpm check
       - name: Build container and check isolated demo startup

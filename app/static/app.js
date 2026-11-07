@@ -40,6 +40,13 @@ import {
   resetTools,
 } from "./tools-ui.js?v=1";
 import {
+  renderCapture,
+  refreshCapture,
+  handleCaptureAction,
+  handleCaptureInput,
+  resetCapture,
+} from "./capture-ui.js";
+import {
   renderWireGuard,
   refreshWireGuard,
   resetWireGuard,
@@ -234,6 +241,7 @@ function clearSession() {
   resetConnections();
   resetWireGuard();
   resetTools();
+  resetCapture();
   resetProtection();
   resetDiscovery();
   loginUsername = currentUser()?.username || loginUsername;
@@ -630,6 +638,10 @@ function render() {
         t("Tools"),
         t("Ping, traceroute, DNS, маршруты и проверка TCP-соединений."),
       ],
+      capture: [
+        t("Packet Sniffer"),
+        t("Просмотр заголовков IPv4-пакетов на выбранном интерфейсе."),
+      ],
     }[view] ||
     routerViews.overview;
   document.title = `OpenMikroRout · ${t(title)}`;
@@ -695,27 +707,30 @@ function render() {
         ? renderBackups(routerContext())
         : view === "tools"
           ? renderTools(routerContext())
-          : ["wireguard", "wireguard_peers"].includes(view)
-            ? renderWireGuard(routerContext(), view === "wireguard_peers")
-            : view === "updates"
-              ? renderUpdates(routerContext())
-              : view === "connections"
-                ? renderConnections(routerContext())
-                : view === "security"
-                  ? renderSecurity(routerContext())
-                  : view === "rules"
-                    ? renderRules()
-                    : view === "lists"
-                      ? renderLists()
-                      : view === "interfaces"
-                        ? renderInterfaces()
-                        : view === "audit"
-                          ? renderAudit()
-                          : view === "users"
-                            ? renderUsers(routerContext())
-                            : (view === "filter"
-                                ? renderF2BRuleSummary(routerContext())
-                                : "") + renderRouterView(view, routerContext());
+          : view === "capture"
+            ? renderCapture(routerContext())
+            : ["wireguard", "wireguard_peers"].includes(view)
+              ? renderWireGuard(routerContext(), view === "wireguard_peers")
+              : view === "updates"
+                ? renderUpdates(routerContext())
+                : view === "connections"
+                  ? renderConnections(routerContext())
+                  : view === "security"
+                    ? renderSecurity(routerContext())
+                    : view === "rules"
+                      ? renderRules()
+                      : view === "lists"
+                        ? renderLists()
+                        : view === "interfaces"
+                          ? renderInterfaces()
+                          : view === "audit"
+                            ? renderAudit()
+                            : view === "users"
+                              ? renderUsers(routerContext())
+                              : (view === "filter"
+                                  ? renderF2BRuleSummary(routerContext())
+                                  : "") +
+                                renderRouterView(view, routerContext());
   root.innerHTML = html`<div class="app-shell">
     <aside class="sidebar ${sidebarOpen ? "open" : ""}" id="sidebar">${brandMarkup()}
       <nav class="sidebar-navigation" aria-label="Настройки роутера">${renderNavigation()}</nav>
@@ -1348,6 +1363,7 @@ async function refresh(manual = false) {
   await Promise.all([refreshTelemetry(), refreshTelemetryHistory()]);
   await refreshProtection(routerContext());
   await refreshDiscovery(routerContext());
+  if (view === "capture") await refreshCapture(routerContext());
   if (view === "connections" && !dialog.open)
     await refreshConnections(routerContext());
   if (view === "updates") await refreshUpdates(routerContext());
@@ -1398,6 +1414,7 @@ async function handleAction(button) {
   if (await handleBackupAction(button, routerContext())) return;
   if (await handleWireGuardAction(button, routerContext())) return;
   if (await handleToolsAction(button, routerContext())) return;
+  if (await handleCaptureAction(button, routerContext())) return;
   if (await handleRouterAction(button, routerContext())) return;
   if (action === "close") {
     dialog.close();
@@ -1487,6 +1504,8 @@ async function handleAction(button) {
   if (action === "view") {
     const nextView = button.dataset.view;
     if (["users", "updates"].includes(nextView) && !canWrite()) return;
+    if (view === "tools" && nextView !== "tools") resetTools();
+    if (view === "capture" && nextView !== "capture") resetCapture();
     closeTelemetryChart();
     historyController?.abort();
     view = nextView;
@@ -1503,6 +1522,7 @@ async function handleAction(button) {
     window.scrollTo(0, 0);
     await refreshProtection(routerContext());
     await refreshDiscovery(routerContext());
+    if (view === "capture") await refreshCapture(routerContext());
     if (["wireguard", "wireguard_peers"].includes(view))
       await refreshWireGuard(routerContext());
     if (
@@ -1596,6 +1616,8 @@ async function handleAction(button) {
     return;
   }
   if (action === "export" || action === "import") {
+    resetTools();
+    resetCapture();
     view = "backups";
     expandNavigationForView(
       navigationItems(navigationContext()),
@@ -2054,6 +2076,7 @@ document.addEventListener("input", (event) => {
   if (event.target.matches("[data-checkbox-search]")) return;
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
+  if (handleCaptureInput(event, routerContext())) return;
   if (handleProtectionInput(event, routerContext())) return;
   if (handleDiscoveryInput(event, routerContext())) return;
   const settingsForm = event.target.closest(
@@ -2085,6 +2108,7 @@ document.addEventListener("change", (event) => {
   if (backupForm && canWrite()) backupForm.dataset.dirty = "true";
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
+  if (handleCaptureInput(event, routerContext())) return;
   if (handleProtectionInput(event, routerContext())) return;
   if (handleDiscoveryInput(event, routerContext())) return;
   const node = event.target;
@@ -2276,6 +2300,12 @@ document.addEventListener("submit", (event) => {
     }).catch((error) => toast(error.message, true));
     return;
   }
+  if (event.target.id === "capture-form") {
+    const button = document.querySelector('[data-action="capture-start"]');
+    if (button)
+      void handleAction(button).catch((error) => toast(error.message, true));
+    return;
+  }
   if (["wg-form", "wg-export-proof", "tools-form"].includes(event.target.id)) {
     const button =
       event.target.id === "tools-form"
@@ -2372,6 +2402,8 @@ window
   .addEventListener("change", () => setNavigationOpen(false));
 window.addEventListener("pagehide", () => {
   alive = false;
+  resetTools();
+  resetCapture();
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   telemetryController?.abort();
   fastTelemetryController?.abort();
@@ -2384,6 +2416,11 @@ window.addEventListener("pageshow", () => {
   if (!alive) {
     alive = true;
     startPolling();
+    if (state && ["tools", "capture"].includes(view)) render();
+    if (state && view === "capture")
+      void refreshCapture(routerContext()).catch((error) =>
+        toast(error.message, true),
+      );
   }
 });
 

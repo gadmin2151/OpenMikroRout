@@ -4238,6 +4238,22 @@ body.telemetry-expanded-open {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.capture-form {
+  margin: 20px 0;
+  min-width: 0;
+}
+.capture-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.capture-actions [hidden] {
+  display: none;
+}
+.capture-result pre {
+  height: 360px;
+}
 @media (max-width: 900px) {
   .tools-form,
   .tools-form.is-tcp {
