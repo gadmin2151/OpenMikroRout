@@ -27,6 +27,9 @@ WinBox-inspired tables, tabs, property editors and drag-and-drop rule ordering.
 NAT and Firewall support **!** match negation, such as all source addresses
 except a selected IPv4 host or address list. [Examples and limits](docs/MATCH-NEGATION.md).
 
+The same **!** control is available in Connections and other list filters,
+as well as Packet Sniffer criteria. [Display-filter guide](docs/DISPLAY-FILTERS.md).
+
 Built for administrators of Linux gateways, office networks and labs, it keeps
 configuration on your own server and runs network operations locally using standard
 Linux tools. No cloud account is required.

@@ -13,10 +13,11 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self, get_args
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.display_filters import parse_display_negation, validate_display_negation
 from app.models import port_spec
 from app.telemetry import FLOW_LIMIT, IFNAME, command_output, read_bounded
 
@@ -36,6 +37,10 @@ STATES = {
     "LISTEN",
     "NONE",
 }
+ConnectionMatchField = Literal[
+    "source", "destination", "port", "protocol", "state", "interface", "search"
+]
+MAX_NEGATED_FILTERS = 7
 
 
 class ConnectionRow(BaseModel):
@@ -66,6 +71,7 @@ class ConnectionQuery(BaseModel):
     state: str = Field(default="", max_length=32, pattern=r"^[A-Z_]*$")
     interface: str = Field(default="", max_length=15, pattern=r"^[A-Za-z0-9_.:@-]*$")
     search: str = Field(default="", max_length=100)
+    negate: list[ConnectionMatchField] = Field(default_factory=list, max_length=MAX_NEGATED_FILTERS)
     limit: int = Field(default=200, ge=1, le=500)
     offset: int = Field(default=0, ge=0, le=FLOW_LIMIT)
 
@@ -78,6 +84,19 @@ class ConnectionQuery(BaseModel):
     @classmethod
     def ports(cls, value: str) -> str:
         return port_spec(value)
+
+    @field_validator("negate", mode="before")
+    @classmethod
+    def negated_filters(cls, values: object) -> list[str]:
+        """Accept bounded CSV query values while retaining a typed internal list."""
+        return parse_display_negation(values, allowed=get_args(ConnectionMatchField))
+
+    @model_validator(mode="after")
+    def populated_negated_filters(self) -> Self:
+        validate_display_negation(
+            self.negate, {field: getattr(self, field) for field in get_args(ConnectionMatchField)}
+        )
+        return self
 
 
 class ConnectionSnapshot(BaseModel):
@@ -211,28 +230,37 @@ def parse_packet(data: bytes, interface: str, now: float) -> ConnectionRow | Non
     )
 
 
+def criterion_matches(query: ConnectionQuery, field: ConnectionMatchField, matched: bool) -> bool:
+    return not matched if field in query.negate else matched
+
+
 def matches(row: ConnectionRow, query: ConnectionQuery) -> bool:
-    if query.protocol and row.protocol != query.protocol:
-        return False
-    if query.state and row.state != query.state:
-        return False
-    if query.interface and row.interface != query.interface:
-        return False
-    for value, address in ((query.source, row.source), (query.destination, row.destination)):
-        if value and ipaddress.IPv4Address(address) not in ipaddress.IPv4Network(value):
+    for field in ("protocol", "state", "interface"):
+        value = getattr(query, field)
+        if value and not criterion_matches(query, field, getattr(row, field) == value):
             return False
+    address_fields: tuple[ConnectionMatchField, ...] = ("source", "destination")
+    for address_field in address_fields:
+        value = getattr(query, address_field)
+        if value:
+            matched = ipaddress.IPv4Address(getattr(row, address_field)) in ipaddress.IPv4Network(
+                value
+            )
+            if not criterion_matches(query, address_field, matched):
+                return False
     if query.port:
         ranges = [list(map(int, part.split("-"))) for part in query.port.split(",")]
         ports = [row.source_port, row.destination_port, row.translated_port]
-        if not any(
+        matched = any(
             port is not None and bounds[0] <= port <= bounds[-1]
             for bounds in ranges
             for port in ports
-        ):
+        )
+        if not criterion_matches(query, "port", matched):
             return False
     if query.search:
         text = " ".join(str(value or "") for value in row.model_dump().values()).lower()
-        if query.search.lower() not in text:
+        if not criterion_matches(query, "search", query.search.lower() in text):
             return False
     return True
 

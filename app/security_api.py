@@ -11,6 +11,7 @@ from pydantic import Field, field_validator
 from app.auth import AuthService, PublicUser
 from app.discovery_models import ScanRequest
 from app.discovery_protocols import MAX_NEIGHBORS
+from app.display_filters import validate_display_negation
 from app.firewall import Conflict, FirewallService
 from app.link_models import LinkModel
 from app.models import RevisionRequest
@@ -58,6 +59,7 @@ PageOffset = Annotated[int, Query(ge=0, le=1_000_000)]
 PageLimit = Annotated[int, Query(ge=1, le=200)]
 HostOffset = Annotated[int, Query(ge=0, le=MAX_NEIGHBORS)]
 SmallPageLimit = Annotated[int, Query(ge=1, le=100)]
+NegatedFilters = Annotated[list[str] | None, Query(max_length=7)]
 ScanOffset = Annotated[int, Query(ge=0, le=100)]
 
 
@@ -106,8 +108,12 @@ def security_router(
         query: Annotated[str, Query(max_length=64)] = "",
         offset: PageOffset = 0,
         limit: PageLimit = 50,
+        negate: NegatedFilters = None,
     ) -> dict[str, Any]:
-        return services.fail2ban.bans.page(profile, query, limit, offset)
+        try:
+            return services.fail2ban.bans.page(profile, query, limit, offset, negate=negate or [])
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @router.post("/security/fail2ban/unban", dependencies=[Depends(full_access)])
     def unban(body: UnbanRequest, request: Request) -> dict[str, bool]:
@@ -131,8 +137,12 @@ def security_router(
         query: Annotated[str, Query(max_length=32)] = "",
         offset: PageOffset = 0,
         limit: PageLimit = 50,
+        negate: NegatedFilters = None,
     ) -> dict[str, Any]:
-        return services.geoip.countries(query, offset, limit)
+        try:
+            return services.geoip.countries(query, offset, limit, negate=negate or [])
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @router.get("/security/geoip/lookup")
     def country(address: Annotated[str, Query(max_length=15)]) -> dict[str, Any]:
@@ -186,18 +196,25 @@ def security_router(
         offset: PageOffset = 0,
         limit: PageLimit = 50,
         query: Annotated[str, Query(max_length=64)] = "",
+        negate: NegatedFilters = None,
     ) -> dict[str, Any]:
+        try:
+            validate_display_negation(negate or [], {"query": query})
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         with firewall.lock:
             item = resolved_system_lists(firewall.config()).get(name)
             if item is None:
                 raise Conflict("Unknown system address list")
         if item.kind == "country":
             try:
-                return services.geoip.entries(item.country, offset, limit, query)
+                return services.geoip.entries(
+                    item.country, offset, limit, query, negate=negate or []
+                )
             except ValueError as exc:
                 raise Conflict(str(exc)) from exc
         return services.fail2ban.bans.page(
-            profile=item.profile, query=query, offset=offset, limit=limit
+            profile=item.profile, query=query, offset=offset, limit=limit, negate=negate or []
         )
 
     @router.get("/discovery/status")
@@ -213,9 +230,10 @@ def security_router(
         ] = "",
         offset: HostOffset = 0,
         limit: SmallPageLimit = 50,
+        negate: NegatedFilters = None,
     ) -> dict[str, Any]:
         try:
-            return services.discovery.hosts(query, interface, offset, limit)
+            return services.discovery.hosts(query, interface, offset, limit, negate=negate or [])
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 

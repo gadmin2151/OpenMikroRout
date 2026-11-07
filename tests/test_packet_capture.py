@@ -104,6 +104,76 @@ def test_capture_filter_is_typed_ipv4_only_and_does_not_accept_arbitrary_express
     ]
 
 
+def test_negated_capture_criteria_are_grouped_fixed_bpf_tokens() -> None:
+    request = CaptureRequest(
+        interface="eth0",
+        protocol="tcp",
+        source="192.0.2.0/24",
+        destination="198.51.100.9",
+        port=443,
+        negate=["protocol", "source", "destination", "port"],
+    )
+    args = capture_command("tcpdump", request)
+    assert args[args.index("--") + 1 :] == [
+        "ip",
+        "and",
+        "not",
+        "(",
+        "tcp",
+        ")",
+        "and",
+        "(",
+        "tcp",
+        "or",
+        "udp",
+        ")",
+        "and",
+        "not",
+        "(",
+        "src",
+        "net",
+        "192.0.2.0/24",
+        ")",
+        "and",
+        "not",
+        "(",
+        "dst",
+        "net",
+        "198.51.100.9/32",
+        ")",
+        "and",
+        "not",
+        "(",
+        "port",
+        "443",
+        ")",
+    ]
+    # Inverting a port remains scoped to TCP/UDP even when no protocol was chosen.
+    no_protocol = capture_command(
+        "tcpdump", CaptureRequest(interface="any", port=53, negate=["port"])
+    )
+    assert no_protocol[no_protocol.index("--") + 1 :] == [
+        "ip",
+        "and",
+        "(",
+        "tcp",
+        "or",
+        "udp",
+        ")",
+        "and",
+        "not",
+        "(",
+        "port",
+        "53",
+        ")",
+    ]
+    assert CaptureRequest(
+        interface="lo", source="192.0.2.1", negate=["source", "source"]
+    ).negate == ["source"]
+    # !ICMP with a port has a well-defined TCP/UDP meaning; positive ICMP does not.
+    assert CaptureRequest(interface="lo", protocol="icmp", port=53, negate=["protocol"]).port == 53
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -123,6 +193,15 @@ def test_capture_filter_is_typed_ipv4_only_and_does_not_accept_arbitrary_express
         {"filter": "tcp or udp"},
         {"flags": "-X"},
         {"file": "/tmp/capture.pcap"},
+        {"negate": ["source"]},
+        {"negate": ["destination"]},
+        {"negate": ["port"]},
+        {"protocol": "all", "negate": ["protocol"]},
+        {"negate": ["interface"]},
+        {"negate": [""]},
+        {"negate": ["protocol;id"]},
+        {"source": "192.0.2.1", "negate": ["source"] * 5},
+        {"source": "192.0.2.1", "negate": "source"},
     ],
 )
 def test_invalid_fields_cannot_turn_into_options_or_payload_capture(
@@ -297,6 +376,22 @@ def test_capture_status_and_start_keep_auth_csrf_and_read_only_boundaries(
             "/api/tools/capture/stream", headers=HEADERS, json={**body, "filter": "ip"}
         ).status_code
         == 422
+    )
+    assert (
+        client.post(
+            "/api/tools/capture/stream",
+            headers=HEADERS,
+            json={**body, "negate": ["source"]},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/tools/capture/stream",
+            headers=HEADERS,
+            json={**body, "negate": ["port"]},
+        ).status_code
+        == 200
     )
 
 

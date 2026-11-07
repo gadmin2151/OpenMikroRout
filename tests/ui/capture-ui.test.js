@@ -70,10 +70,23 @@ function fixture() {
       disabled: false,
     })),
   );
+  for (const name of ["protocol", "source", "destination", "port"])
+    controls.push({
+      dataset: { action: "capture-negate", displayNegate: name },
+      disabled: true,
+      setAttribute(name, value) {
+        this[name] = value;
+      },
+    });
   const form = {
     reportValidity: () => true,
     querySelectorAll: () => controls,
-    querySelector: () => ({ closest: () => form }),
+    querySelector: (selector) => {
+      const name = /data-display-negate="([^"]+)"/.exec(selector)?.[1];
+      return name
+        ? controls.find((node) => node.dataset.displayNegate === name)
+        : { closest: () => form };
+    },
   };
   let text = "",
     paints = 0;
@@ -264,6 +277,7 @@ test("capture streams safely before completion, paints at most once per 100ms an
       source: "192.0.2.0/24",
       destination: "198.51.100.20",
       port: 443,
+      negate: [],
     });
     signal = options.signal;
     posts++;
@@ -372,6 +386,94 @@ test("ICMP disables ports, read users cannot start, and packet errors use textCo
   await pending;
   assert.match(f.nodes["#capture-error"].textContent, /<img/);
   assert.doesNotMatch(renderCapture(f.ctx), /<img/);
+});
+
+test("capture ! controls preserve inputs and submit typed exclusions only for populated packet criteria", async () => {
+  const f = fixture(),
+    wire = stream();
+  let posted;
+  f.ctx.api = async (path, options) => {
+    if (path.endsWith("status")) return status;
+    posted = JSON.parse(options.body);
+    return wire.response;
+  };
+  await refreshCapture(f.ctx);
+  f.fields.source = "192.0.2.0/24";
+  f.fields.destination = "198.51.100.10";
+  handleCaptureInput({ target: { closest: () => f.form } }, f.ctx);
+  for (const name of ["source", "destination", "port", "protocol"])
+    await handleCaptureAction(
+      { dataset: { action: "capture-negate", displayNegate: name } },
+      f.ctx,
+    );
+  assert.equal(f.fields.source, "192.0.2.0/24");
+  assert.equal(f.fields.port, "443");
+  assert.equal(
+    f.controls.find((node) => node.dataset.displayNegate === "source")[
+      "aria-pressed"
+    ],
+    "true",
+  );
+  const pending = action("capture-start", f.ctx);
+  wire.send(completed("packet"));
+  wire.close();
+  await pending;
+  assert.deepEqual(posted.negate, [
+    "protocol",
+    "source",
+    "destination",
+    "port",
+  ]);
+  assert.equal(posted.interface, "any");
+  assert.equal(posted.port, 443);
+  f.fields.source = "";
+  handleCaptureInput({ target: { closest: () => f.form } }, f.ctx);
+  const toggle = f.controls.find(
+    (node) => node.dataset.displayNegate === "source",
+  );
+  assert.equal(toggle.disabled, true);
+  assert.equal(toggle["aria-pressed"], "false");
+  assert.doesNotMatch(renderCapture(f.ctx), /data-display-negate="interface"/);
+  f.ctx.canWrite = () => false;
+  await assert.rejects(
+    handleCaptureAction(
+      { dataset: { action: "capture-negate", displayNegate: "port" } },
+      f.ctx,
+    ),
+    /full/,
+  );
+});
+
+test("capture ports become usable for !ICMP and are safely cleared from negation for positive ICMP", async () => {
+  const f = fixture();
+  f.ctx.api = async () => status;
+  await refreshCapture(f.ctx);
+  f.fields.protocol = "icmp";
+  handleCaptureInput({ target: { closest: () => f.form } }, f.ctx);
+  const port = f.controls.find((node) => node.name === "port");
+  assert.equal(port.disabled, true);
+  const toggle = (name) =>
+    handleCaptureAction(
+      { dataset: { action: "capture-negate", displayNegate: name } },
+      f.ctx,
+    );
+  await toggle("protocol");
+  assert.equal(port.disabled, false);
+  await toggle("port");
+  assert.equal(
+    f.controls.find((node) => node.dataset.displayNegate === "port")[
+      "aria-pressed"
+    ],
+    "true",
+  );
+  await toggle("protocol");
+  assert.equal(port.disabled, true);
+  assert.equal(
+    f.controls.find((node) => node.dataset.displayNegate === "port")[
+      "aria-pressed"
+    ],
+    "false",
+  );
 });
 
 test("reset/logout ignores late capture responses and aborts pending status requests", async () => {

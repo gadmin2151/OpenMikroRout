@@ -4,13 +4,16 @@ import asyncio
 import os
 import shutil
 import socket
+import struct
+import subprocess
 import sys
 from contextlib import aclosing
+from pathlib import Path
 from typing import Literal
 
 import pytest
 
-from app.packet_capture import CaptureRequest, PacketCapture
+from app.packet_capture import CaptureRequest, PacketCapture, capture_command
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux"
@@ -74,3 +77,86 @@ def test_native_tcpdump_streams_headers_before_stop_and_never_prints_payload(
             assert not capture.lock.locked()
 
     asyncio.run(scenario())
+
+
+def test_native_negated_bpf_selects_only_expected_synthetic_packets(tmp_path: Path) -> None:
+    """Exercise libpcap's real parser and matching without observing host traffic."""
+    rows = [
+        (17, "192.0.2.1", "203.0.113.1", 41001, 53),
+        (17, "192.0.2.2", "203.0.113.1", 41002, 53),
+        (17, "192.0.2.2", "203.0.113.2", 41003, 53),
+        (17, "192.0.2.2", "203.0.113.2", 41004, 54),
+        (6, "192.0.2.2", "203.0.113.2", 41005, 54),
+        (1, "192.0.2.99", "203.0.113.2", 0, 0),
+        (6, "192.0.2.2", "203.0.113.2", 41007, 55),
+        (17, "192.0.2.8", "203.0.113.2", 53, 55),
+    ]
+    # DLT_RAW pcap consists entirely of packets made here; no packet bytes from
+    # the router, workstation or other interfaces are read by the test.
+    data = bytearray(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 101))
+    patterns: list[str] = []
+    for protocol, source, destination, sport, dport in rows:
+        if protocol == 17:
+            transport = struct.pack("!HHHH", sport, dport, 8, 0)
+        elif protocol == 6:
+            transport = struct.pack("!HHIIHHHH", sport, dport, 0, 0, (5 << 12) | 2, 0, 0, 0)
+        else:
+            transport = b"\x08\x00\x00\x00\x00\x01\x00\x01"
+        packet = (
+            struct.pack("!BBHHHBBH", 0x45, 0, 20 + len(transport), 0, 0, 64, protocol, 0)
+            + socket.inet_aton(source)
+            + socket.inet_aton(destination)
+            + transport
+        )
+        data += struct.pack("<IIII", 0, 0, len(packet), len(packet)) + packet
+        patterns.append(
+            f"{source}.{sport} > {destination}.{dport}"
+            if protocol != 1
+            else f"{source} > {destination}: ICMP"
+        )
+    capture = tmp_path / "synthetic.pcap"
+    capture.write_bytes(data)
+    cases: list[tuple[dict[str, object], set[int]]] = [
+        ({}, set(range(8))),
+        ({"source": "192.0.2.1", "negate": ["source"]}, {1, 2, 3, 4, 5, 6, 7}),
+        ({"destination": "203.0.113.1", "negate": ["destination"]}, {2, 3, 4, 5, 6, 7}),
+        ({"port": 53, "negate": ["port"]}, {3, 4, 6}),
+        ({"protocol": "tcp", "negate": ["protocol"]}, {0, 1, 2, 3, 5, 7}),
+        ({"protocol": "tcp", "port": 54, "negate": ["protocol"]}, {3}),
+        ({"protocol": "icmp", "port": 54, "negate": ["protocol"]}, {3, 4}),
+        ({"protocol": "udp", "port": 54, "negate": ["protocol", "port"]}, {6}),
+        (
+            {
+                "protocol": "udp",
+                "source": "192.0.2.1",
+                "destination": "203.0.113.1",
+                "port": 53,
+                "negate": ["source", "destination", "port"],
+            },
+            {3},
+        ),
+    ]
+    for parameters, expected in cases:
+        request = CaptureRequest.model_validate({"interface": "lo", **parameters})
+        command = capture_command("tcpdump", request)
+        condition = command[command.index("--") + 1 :]
+        result = subprocess.run(
+            [
+                "tcpdump",
+                "-nn",
+                "-q",
+                "-r",
+                str(capture),
+                *(["-Z", "root"] if os.geteuid() == 0 else []),
+                "--",
+                *condition,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        assert result.returncode == 0, (parameters, result.stderr)
+        actual = {index for index, pattern in enumerate(patterns) if pattern in result.stdout}
+        assert actual == expected, (parameters, actual, expected, result.stdout)
+        assert len(result.stdout.splitlines()) == len(expected), result.stdout

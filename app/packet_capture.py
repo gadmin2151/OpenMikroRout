@@ -14,6 +14,7 @@ from typing import Any, Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from app.diagnostics import DiagnosticEvent, rolling_output, stream_process_output
+from app.display_filters import validate_display_negation
 from app.link_models import LinkModel, interface_name
 from app.wireguard import WireGuardError
 
@@ -21,6 +22,7 @@ MAX_OUTPUT_BYTES = 32768
 MAX_BATCH_BYTES = 8192
 FLUSH_SECONDS = 0.2
 HEARTBEAT_SECONDS = 0.1
+CaptureMatchField = Literal["source", "destination", "port", "protocol"]
 
 
 def capture_interface(value: str) -> str:
@@ -35,6 +37,7 @@ class CaptureRequest(LinkModel):
     source: str = Field(default="", max_length=18)
     destination: str = Field(default="", max_length=18)
     port: int | None = Field(default=None, ge=1, le=65535, strict=True)
+    negate: list[CaptureMatchField] = Field(default_factory=list, max_length=4)
 
     _interface = field_validator("interface")(capture_interface)
 
@@ -43,9 +46,24 @@ class CaptureRequest(LinkModel):
     def ipv4_network(cls, value: str) -> str:
         return str(ipaddress.IPv4Network(value, strict=False)) if value else ""
 
+    @field_validator("negate")
+    @classmethod
+    def unique_negated_filters(cls, values: list[CaptureMatchField]) -> list[CaptureMatchField]:
+        return list(dict.fromkeys(values))
+
     @model_validator(mode="after")
     def protocol_port(self) -> Self:
-        if self.protocol == "icmp" and self.port is not None:
+        validate_display_negation(
+            self.negate,
+            {
+                "source": self.source,
+                "destination": self.destination,
+                "port": self.port,
+                "protocol": self.protocol if self.protocol != "all" else "",
+            },
+            maximum=4,
+        )
+        if self.protocol == "icmp" and "protocol" not in self.negate and self.port is not None:
             raise ValueError("ICMP does not have TCP/UDP ports")
         return self
 
@@ -55,15 +73,25 @@ def capture_command(binary: str, request: CaptureRequest) -> list[str]:
     # are never command fragments, BPF source, file names or additional options.
     condition = ["ip"]
     if request.protocol != "all":
-        condition += ["and", request.protocol]
-    elif request.port is not None:
+        protocol = [request.protocol]
+        condition += [
+            "and",
+            *(["not", "(", *protocol, ")"] if "protocol" in request.negate else protocol),
+        ]
+    if request.port is not None and (request.protocol == "all" or "protocol" in request.negate):
         condition += ["and", "(", "tcp", "or", "udp", ")"]
-    if request.source:
-        condition += ["and", "src", "net", request.source]
-    if request.destination:
-        condition += ["and", "dst", "net", request.destination]
-    if request.port is not None:
-        condition += ["and", "port", str(request.port)]
+    filters: tuple[tuple[CaptureMatchField, str | int | None, list[str]], ...] = (
+        ("source", request.source, ["src", "net"]),
+        ("destination", request.destination, ["dst", "net"]),
+        ("port", request.port, ["port"]),
+    )
+    for field, value, prefix in filters:
+        if value:
+            tokens = [*prefix, str(value)]
+            condition += [
+                "and",
+                *(["not", "(", *tokens, ")"] if field in request.negate else tokens),
+            ]
     return [
         binary,
         "-nn",

@@ -2,6 +2,11 @@ import { t, html, setLanguage, locale } from "./i18n.js";
 import { installCheckboxSelectEvents } from "./checkbox-select.js";
 import { assertDraftRevision } from "./draft-guards.js";
 import {
+  displayFilterToggle,
+  displayNegations,
+  syncDisplayFilterControl,
+} from "./display-filter-ui.js";
+import {
   withRuleNegation,
   collectRuleNegations,
   toggleRuleNegation,
@@ -89,7 +94,8 @@ import {
   refreshConnections,
   resetConnections,
   handleConnectionsAction,
-} from "./connections-ui.js?v=3";
+  handleConnectionsInput,
+} from "./connections-ui.js?v=4";
 import {
   routerViews,
   renderRouterView,
@@ -184,6 +190,8 @@ let state,
   search = "",
   chainFilter = "",
   protocolFilter = "";
+let natFilterNegations = new Set();
+const natFilterFields = ["search", "chain", "protocol"];
 let interfaces = [],
   forwarding = null,
   audit = [],
@@ -762,12 +770,32 @@ function render() {
 
 function filteredRules() {
   const q = search.toLowerCase();
+  const matches = (field, value, result) =>
+    !value || (natFilterNegations.has(field) ? !result : result);
   return state.config.rules.filter(
     (r) =>
-      (!chainFilter || r.chain === chainFilter) &&
-      (!protocolFilter || r.protocol === protocolFilter) &&
-      (!q || Object.values(r).join(" ").toLowerCase().includes(q)),
+      matches("chain", chainFilter, r.chain === chainFilter) &&
+      matches("protocol", protocolFilter, r.protocol === protocolFilter) &&
+      matches(
+        "search",
+        q,
+        Object.values(r).join(" ").toLowerCase().includes(q),
+      ),
   );
+}
+function syncNatFilterControls() {
+  const values = { search, chain: chainFilter, protocol: protocolFilter };
+  natFilterNegations = new Set(
+    displayNegations(natFilterNegations, values, natFilterFields),
+  );
+  const container = document.querySelector("#nat-display-filters");
+  for (const field of natFilterFields)
+    syncDisplayFilterControl(
+      container,
+      field,
+      values[field],
+      natFilterNegations.has(field),
+    );
 }
 function renderRules() {
   const rows = filteredRules(),
@@ -787,7 +815,7 @@ function renderRules() {
     )
     .join(
       "",
-    )}</div><div class="toolbar-end"><div class="search">${icon("search")}<input id="rule-search" aria-label="Поиск правил" placeholder="Найти правило…" value="${e(search)}"></div><select id="chain-filter" aria-label="Фильтр цепочки">${[
+    )}</div><div class="toolbar-end" id="nat-display-filters"><div class="display-filter-inline"><div class="search">${icon("search")}<input id="rule-search" aria-label="Поиск правил" placeholder="Найти правило…" value="${e(search)}"></div>${displayFilterToggle({ name: "search", label: t("Поиск правил"), value: search, negated: natFilterNegations.has("search"), action: "nat-filter-negate" })}</div><div class="display-filter-inline"><select id="chain-filter" aria-label="Фильтр цепочки">${[
     ["", t("Все цепочки")],
     ["srcnat", "srcnat"],
     ["dstnat", "dstnat"],
@@ -799,7 +827,7 @@ function renderRules() {
     )
     .join(
       "",
-    )}</select><select id="protocol-filter" aria-label="Фильтр протокола">${[
+    )}</select>${displayFilterToggle({ name: "chain", label: t("Фильтр цепочки"), value: chainFilter, negated: natFilterNegations.has("chain"), action: "nat-filter-negate" })}</div><div class="display-filter-inline"><select id="protocol-filter" aria-label="Фильтр протокола">${[
     ["", t("Протокол")],
     ["tcp", "TCP"],
     ["udp", "UDP"],
@@ -815,7 +843,7 @@ function renderRules() {
     )
     .join(
       "",
-    )}</select><button class="icon ghost" data-action="columns" title="Настроить колонки" aria-label="Настроить колонки">${icon("list")}</button><button class="icon ghost" data-action="refresh" title="Обновить" aria-label="Обновить">${icon("refresh")}</button></div></div>
+    )}</select>${displayFilterToggle({ name: "protocol", label: t("Фильтр протокола"), value: protocolFilter, negated: natFilterNegations.has("protocol"), action: "nat-filter-negate" })}</div><button class="icon ghost" data-action="columns" title="Настроить колонки" aria-label="Настроить колонки">${icon("list")}</button><button class="icon ghost" data-action="refresh" title="Обновить" aria-label="Обновить">${icon("refresh")}</button></div></div>
     <div class="table-scroll"><table class="rules-table"><thead><tr><th><input type="checkbox" id="select-all" aria-label="Выбрать все показанные правила" ${rows.length && rows.every((r) => selected.has(r.id)) ? "checked" : ""}></th><th class="drag-column" aria-label="Перетаскивание"></th><th>#</th>${ruleColumns.map(([key, label]) => html`<th data-column="${key}" ${visibleColumns.has(key) ? "" : "hidden"}>${t(label)}</th>`).join("")}<th></th></tr></thead><tbody id="rules-body">${renderRuleRows(rows)}</tbody></table>${!rows.length ? empty("shield", search || chainFilter || protocolFilter ? t("Ничего не найдено") : t("Пока нет правил NAT"), search || chainFilter || protocolFilter ? t("Измените поисковый запрос или фильтры.") : t("Добавьте первое правило или выберите готовый шаблон в редакторе.")) : ""}</div>
     ${selected.size === 1 ? renderDetail(state.config.rules.find((r) => selected.has(r.id))) : ""}
     <div class="panel-footer"><span>${rows.length} из ${state.config.rules.length} правил${selected.size ? html` · выбрано ${selected.size}` : ""}</span><div class="footer-legend"><span><i class="dot"></i>Включено</span><span><i class="dot off"></i>Отключено</span><span>${isDemo() ? t("Счётчики недоступны в демо") : t("Счётчики первых пакетов соединений")}</span></div></div>`;
@@ -1405,6 +1433,16 @@ async function handleAction(button) {
   if (button.disabled || busy) return;
   if (state && !canWrite() && !isReadAction(action)) {
     toast(t("Группа read: доступен только просмотр."), true);
+    return;
+  }
+  if (action === "nat-filter-negate") {
+    const field = button.dataset.displayNegate;
+    const values = { search, chain: chainFilter, protocol: protocolFilter };
+    if (!natFilterFields.includes(field) || !values[field]) return;
+    if (natFilterNegations.has(field)) natFilterNegations.delete(field);
+    else natFilterNegations.add(field);
+    syncNatFilterControls();
+    updateRuleTable();
     return;
   }
   if (action === "rule-negate") {
@@ -2118,6 +2156,7 @@ document.addEventListener("input", (event) => {
     canWrite(),
   );
   if (event.target.matches("[data-checkbox-search]")) return;
+  if (handleConnectionsInput(event)) return;
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
   if (handleCaptureInput(event, routerContext())) return;
@@ -2129,6 +2168,7 @@ document.addEventListener("input", (event) => {
   if (settingsForm && canWrite()) settingsForm.dataset.dirty = "true";
   if (event.target.id === "rule-search") {
     search = event.target.value;
+    syncNatFilterControls();
     updateRuleTable();
   }
 });
@@ -2137,6 +2177,7 @@ document.addEventListener("change", (event) => {
     event.target.closest("#rule-form,#router-form[data-kind=filter]"),
     canWrite(),
   );
+  if (handleConnectionsInput(event)) return;
   if (event.target.id === "login-language") {
     const form =
       event.target.closest("form") || document.querySelector("#login-form");
@@ -2201,10 +2242,12 @@ document.addEventListener("change", (event) => {
   }
   if (node.id === "chain-filter") {
     chainFilter = node.value;
+    syncNatFilterControls();
     updateRuleTable();
   }
   if (node.id === "protocol-filter") {
     protocolFilter = node.value;
+    syncNatFilterControls();
     updateRuleTable();
   }
   if (node.id === "rule-enabled" && draft && canWrite())
@@ -2280,6 +2323,18 @@ document.addEventListener("focusout", (event) => {
     queueMicrotask(updateTelemetry);
 });
 installCheckboxSelectEvents(document);
+function formSubmitAction(event) {
+  if (
+    event.submitter?.matches?.("button[data-action]:not([data-display-negate])")
+  )
+    return event.submitter;
+  return (
+    event.target.querySelector(
+      'button[data-action]:not([type="button"]):not([type="reset"])',
+    ) ||
+    event.target.querySelector("button[data-action]:not([data-display-negate])")
+  );
+}
 document.addEventListener("submit", (event) => {
   event.preventDefault();
   if (event.target.id === "preferences-form") {
@@ -2296,7 +2351,7 @@ document.addEventListener("submit", (event) => {
     )
   ) {
     const button =
-      event.target.querySelector("button[data-action]") ||
+      formSubmitAction(event) ||
       dialog.querySelector(
         '[data-action="f2b-profile-save"],[data-action="protection-confirm"],[data-action="apply-confirm"]',
       );

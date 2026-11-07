@@ -1,6 +1,11 @@
 import { html, t, locale } from "./i18n.js";
 import { checkboxSelect } from "./checkbox-select.js";
 import { interfaceNames } from "./router-pages.js?v=13";
+import {
+  displayFilterField,
+  displayNegationQuery,
+  syncDisplayFilterControl,
+} from "./display-filter-ui.js";
 
 export const discoveryViews = {
   hosts: [
@@ -34,6 +39,9 @@ let detailEpoch = 0;
 let liveTimer = null;
 let liveController = null;
 let filters = { query: "", interface: "", offset: 0 };
+let hostDraft = { query: "", interface: "" },
+  hostNegated = new Set();
+const hostFilterNames = ["query", "interface"];
 let scanInput = {
   interface: "",
   target: "",
@@ -60,6 +68,8 @@ export function resetDiscovery() {
       null;
   loadError = "";
   filters = { query: "", interface: "", offset: 0 };
+  hostDraft = { query: "", interface: "" };
+  hostNegated = new Set();
   scanInput = {
     interface: "",
     target: "",
@@ -257,8 +267,22 @@ function scheduleScanProgress(ctx) {
 }
 
 export function renderDiscovery(view, ctx) {
-  if (view === "hosts")
-    return html`<div class="feature-page discovery-page">${settingsForm(ctx, false)}<form data-discovery-form class="monitor-filters" id="discovery-search"><label class="field"><span>Поиск устройства</span><input name="query" maxlength="100" value="${ctx.e(filters.query)}" placeholder="Имя, IP, MAC, модель"></label><label class="field"><span>Интерфейс</span><select name="interface">${options(ctx, interfaceNames(ctx), filters.interface, t("Все интерфейсы"))}</select></label><button class="primary" data-discovery-form data-action="discovery-search">Найти</button>${action("discovery-refresh", t("Обновить"))}</form><div id="discovery-results">${hostRows(ctx)}</div><p class="feature-note">Сведения сообщаются устройствами и могут быть неточными. Источник и срок актуальности каждого поля доступны в карточке. Одинаковые MAC в разных сегментах не объединяются.</p></div>`;
+  if (view === "hosts") {
+    const fields = [
+      html`<label class="field"><span>Поиск устройства</span><input name="query" maxlength="100" value="${ctx.e(hostDraft.query)}" placeholder="Имя, IP, MAC, модель"></label>`,
+      html`<label class="field"><span>Интерфейс</span><select name="interface">${options(ctx, interfaceNames(ctx), hostDraft.interface, t("Все интерфейсы"))}</select></label>`,
+    ]
+      .map((markup, index) =>
+        displayFilterField(markup, hostFilterNames[index], {
+          value: hostDraft[hostFilterNames[index]],
+          negated: hostNegated.has(hostFilterNames[index]),
+          action: "discovery-negate",
+          idPrefix: "discovery-filter",
+        }),
+      )
+      .join("");
+    return html`<div class="feature-page discovery-page">${settingsForm(ctx, false)}<form data-discovery-form class="monitor-filters" id="discovery-search">${fields}<button class="primary" type="submit" data-discovery-form data-action="discovery-search">Найти</button>${action("discovery-refresh", t("Обновить"))}</form><div id="discovery-results">${hostRows(ctx)}</div><p class="feature-note">Сведения сообщаются устройствами и могут быть неточными. Источник и срок актуальности каждого поля доступны в карточке. Одинаковые MAC в разных сегментах не объединяются.</p></div>`;
+  }
   const network = view === "network_scan";
   const networks = scanStatus?.networks?.[scanInput.interface] || [];
   return html`<div class="feature-page discovery-page">${settingsForm(ctx, true)}<form data-discovery-form id="scan-start" class="scan-start-form" data-kind="${network ? "network" : "ports"}"><div id="scan-readiness">${scanReadiness(ctx)}</div><fieldset ${!ctx.canWrite() || ctx.offline ? "disabled" : ""}><div class="scan-fields"><label class="field"><span>Исходящий интерфейс</span><select name="interface" required>${scanOptions(ctx)}</select></label><label class="field"><span>${network ? t("Подсеть IPv4 / CIDR") : t("IPv4 / DNS-имя хоста")}</span><input name="target" required maxlength="253" value="${ctx.e(scanInput.target)}" placeholder="${network ? "192.168.10.0/24" : "1.1.1.1"}" aria-describedby="scan-target-note scan-networks"><small id="scan-networks">${ctx.e(networks.join(" · "))}</small><small id="scan-target-note">Сети интерфейса указаны справочно. Цель может находиться вне этих сетей.</small></label>${
@@ -303,6 +327,7 @@ export async function refreshDiscovery(ctx) {
           offset: String(filters.offset),
           limit: "50",
         });
+        if (filters.negate) query.set("negate", filters.negate);
         const values = await Promise.all([
           ctx.api("discovery/status", { signal }),
           ctx.api(`discovery/hosts?${query}`, { signal }),
@@ -413,6 +438,19 @@ export function syncScanForm(ctx, form, status = scanStatus) {
   }
 }
 export function handleDiscoveryInput(event, ctx) {
+  const hostForm = event.target?.closest?.("#discovery-search");
+  const hostName = event.target?.name;
+  if (hostForm && hostFilterNames.includes(hostName)) {
+    hostDraft[hostName] = String(event.target.value || "").trim();
+    if (!hostDraft[hostName]) hostNegated.delete(hostName);
+    syncDisplayFilterControl(
+      hostForm,
+      hostName,
+      hostDraft[hostName],
+      hostNegated.has(hostName),
+    );
+    return true;
+  }
   const form = event.target?.closest?.("#scan-start");
   if (!form) return false;
   const data = new FormData(form);
@@ -444,6 +482,7 @@ export async function handleDiscoveryAction(button, ctx) {
   const reads = [
     "discovery-refresh",
     "discovery-search",
+    "discovery-negate",
     "discovery-page",
     "discovery-host",
     "discovery-connections",
@@ -454,6 +493,27 @@ export async function handleDiscoveryAction(button, ctx) {
   ];
   if (!reads.includes(name) && !ctx.canWrite())
     throw new Error(t("Для этого действия нужна группа full."));
+  if (name === "discovery-negate") {
+    const field = button.dataset.displayNegate;
+    if (!hostFilterNames.includes(field)) return true;
+    const form = document.querySelector("#discovery-search");
+    if (!form) return true;
+    const values = new FormData(form);
+    hostDraft = Object.fromEntries(
+      hostFilterNames.map((key) => [key, String(values.get(key) || "").trim()]),
+    );
+    if (hostDraft[field]) {
+      if (hostNegated.has(field)) hostNegated.delete(field);
+      else hostNegated.add(field);
+    } else hostNegated.delete(field);
+    syncDisplayFilterControl(
+      form,
+      field,
+      hostDraft[field],
+      hostNegated.has(field),
+    );
+    return true;
+  }
   if (name === "scan-settings-open") {
     const settings = document.querySelector("#scan-settings");
     const details = settings?.closest("details");
@@ -472,11 +532,20 @@ export async function handleDiscoveryAction(button, ctx) {
   if (name === "discovery-search") {
     const form = document.querySelector("#discovery-search");
     const data = new FormData(form);
+    hostDraft = {
+      query: String(data.get("query") || "").trim(),
+      interface: String(data.get("interface") || "").trim(),
+    };
     filters = {
-      query: String(data.get("query") || ""),
-      interface: String(data.get("interface") || ""),
+      ...hostDraft,
       offset: 0,
     };
+    const excluded = displayNegationQuery(
+      hostNegated,
+      hostDraft,
+      hostFilterNames,
+    );
+    if (excluded) filters.negate = excluded;
     await refreshNow(ctx);
   } else if (name === "discovery-page") {
     filters.offset = Number(button.dataset.offset || 0);

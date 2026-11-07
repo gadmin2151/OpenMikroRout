@@ -3,7 +3,9 @@ import socket
 import struct
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.connections import (
     EVENT_LIMIT,
@@ -128,6 +130,91 @@ def test_connection_filters_are_composable_and_do_not_change_data() -> None:
         assert not matches(row, query)
 
 
+@pytest.mark.parametrize(
+    ("field", "matching", "different"),
+    [
+        ("source", "198.51.100.0/24", "192.0.2.0/24"),
+        ("destination", "203.0.113.0/24", "192.0.2.0/24"),
+        ("port", "3389,443", "80,443"),
+        ("protocol", "tcp", "udp"),
+        ("state", "ESTABLISHED", "SYN_SENT"),
+        ("interface", "eth0", "eth1"),
+        ("search", "EsTaBlIsHeD", "not-present"),
+    ],
+)
+def test_each_negation_inverts_the_whole_criterion(
+    field: str, matching: str, different: str
+) -> None:
+    row = parse_conntrack(FLOW, {"203.0.113.10": "eth0"})[0]
+    before = row.model_dump()
+    assert matches(row, ConnectionQuery.model_validate({field: matching}))
+    assert not matches(row, ConnectionQuery.model_validate({field: matching, "negate": [field]}))
+    assert not matches(row, ConnectionQuery.model_validate({field: different}))
+    assert matches(row, ConnectionQuery.model_validate({field: different, "negate": [field]}))
+    assert row.model_dump() == before
+
+
+def test_negated_destination_preserves_original_only_and_port_matches_any_tuple() -> None:
+    row = parse_conntrack(FLOW, {"203.0.113.10": "eth0"})[0]
+    row.translated_port = 3390
+    assert matches(row, ConnectionQuery(destination="203.0.113.10"))
+    assert not matches(row, ConnectionQuery(destination="203.0.113.10", negate=["destination"]))
+    # Destination has always described the original tuple. DNAT is searchable
+    # through free text; adding ! must not silently change positive IP matching.
+    assert not matches(row, ConnectionQuery(destination="192.168.10.0/24"))
+    assert matches(row, ConnectionQuery(destination="192.168.10.0/24", negate=["destination"]))
+    for port in ("3389", "3390", "50000", "80,3380-3400"):
+        assert matches(row, ConnectionQuery(port=port))
+        assert not matches(row, ConnectionQuery(port=port, negate=["port"]))
+    assert matches(row, ConnectionQuery(destination="192.0.2.0/24", negate=["destination"]))
+    assert matches(row, ConnectionQuery(port="80,443", negate=["port"]))
+
+
+def test_negated_filters_combine_with_positive_filters_using_and() -> None:
+    row = parse_conntrack(FLOW, {"203.0.113.10": "eth0"})[0]
+    query = ConnectionQuery(
+        source="192.0.2.0/24",
+        destination="203.0.113.0/24",
+        protocol="udp",
+        port="3389",
+        negate=["source", "protocol"],
+    )
+    assert matches(row, query)
+    query.state = "SYN_SENT"
+    assert not matches(row, query)
+    query.state = "ESTABLISHED"
+    query.source = "198.51.100.0/24"
+    assert not matches(row, query)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"negate": ["source"]},
+        {"source": "", "negate": ["source"]},
+        {"source": "192.0.2.1", "negate": [""]},
+        {"source": "192.0.2.1", "negate": ["source,"]},
+        {"source": "192.0.2.1", "negate": ["limit"]},
+        {"source": "192.0.2.1", "negate": ["source;id"]},
+        {"source": "192.0.2.1", "negate": ["source"] * 8},
+        {"source": "192.0.2.1", "negate": ["source," * 8]},
+        {"source": "192.0.2.1", "negate": ["s" * 101]},
+        {"source": "192.0.2.1", "negate": [1]},
+    ],
+)
+def test_negated_filter_validation_rejects_unbounded_unknown_or_empty(values: object) -> None:
+    with pytest.raises(ValidationError):
+        ConnectionQuery.model_validate(values)
+
+
+def test_negated_csv_filter_query_is_typed_and_deduplicated() -> None:
+    query = ConnectionQuery.model_validate(
+        {"source": "192.0.2.1", "port": "443", "negate": ["source,port", "source"]}
+    )
+    assert query.negate == ["source", "port"]
+    assert query.source == "192.0.2.1/32"
+
+
 def test_api_filters_validate_and_read_accounts_can_monitor(tmp_path: Path) -> None:
     password = "test-only-connections-password"
     with TestClient(
@@ -153,9 +240,40 @@ def test_api_filters_validate_and_read_accounts_can_monitor(tmp_path: Path) -> N
             "interface=eth0;id",
             "kind=shell",
             "protocol=unknown",
+            "negate=source",
+            "source=192.0.2.1&negate=limit",
+            "source=192.0.2.1&negate=",
+            "source=192.0.2.1&negate=source,",
+            "source=192.0.2.1&negate=" + ",".join(["source"] * 8),
         ]:
             assert client.get("/api/connections?" + query).status_code == 422, query
         assert client.get("/api/connections?source=192.0.2.0/24").json()["items"] == []
+        for kind in ("active", "attempts"):
+            positive = client.get(
+                "/api/connections",
+                params={"kind": kind, "source": "192.0.2.0/24", "protocol": "udp"},
+            )
+            assert positive.status_code == 200 and positive.json()["matched"] == 0
+            negative = client.get(
+                "/api/connections",
+                params={
+                    "kind": kind,
+                    "source": "192.0.2.0/24",
+                    "protocol": "udp",
+                    "negate": "source,protocol",
+                },
+            )
+            assert negative.status_code == 200, negative.text
+            assert negative.json()["total"] == 1 and negative.json()["matched"] == 1
+            excluded = client.get(
+                "/api/connections",
+                params={"kind": kind, "destination": "203.0.113.0/24", "negate": "destination"},
+            )
+            assert excluded.status_code == 200 and excluded.json()["matched"] == 0
+        repeated = client.get(
+            "/api/connections?source=192.0.2.1&protocol=udp&negate=source&negate=protocol"
+        )
+        assert repeated.status_code == 200 and repeated.json()["matched"] == 1
 
 
 def test_live_reader_uses_bounded_fixed_commands_and_reports_missing_source(tmp_path: Path) -> None:

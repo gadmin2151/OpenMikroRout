@@ -3817,6 +3817,27 @@ body.is-readonly .access-note > svg,
 .monitor-filters .field {
   margin: 0;
 }
+.display-filter-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 26px;
+  min-width: 0;
+  gap: 8px;
+}
+.display-filter-heading > label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.security-search button.display-filter-negate {
+  min-height: 26px;
+}
+.display-filter-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .monitor-filter-actions {
   display: flex;
   align-items: end;

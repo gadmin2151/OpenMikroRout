@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.display_filters import validate_display_negation
 from app.fail2ban_models import (
     MAX_BAN_SECONDS,
     F2BConfiguration,
@@ -223,16 +224,31 @@ class BanStore:
                 self.driver.add_temporary(f"f2b_{profile.id}", row["address"], remaining)
 
     def page(
-        self, profile: str = "", query: str = "", limit: int = 100, offset: int = 0
+        self,
+        profile: str = "",
+        query: str = "",
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        negate: str | list[str] = "",
     ) -> dict[str, Any]:
         limit = min(200, max(1, limit))
         offset = min(1_000_000, max(0, offset))
         query = query.strip()[:64]
         if profile:
             profile_id(profile)
+        excluded = validate_display_negation(negate, {"query": query, "profile": profile})
         now = time.time()
-        where = "expires_at>? AND (?='' OR profile=?) AND instr(address,?)>0"
-        args = (now, profile, profile, query)
+        conditions = ["expires_at>?"]
+        args: list[str | float] = [now]
+        if profile:
+            conditions.append("NOT (profile=?)" if "profile" in excluded else "profile=?")
+            args.append(profile)
+        if query:
+            match = "(instr(address,?)>0 OR instr(lower(profile),lower(?))>0)"
+            conditions.append(f"NOT {match}" if "query" in excluded else match)
+            args.extend((query, query))
+        where = " AND ".join(conditions)
         with self.connection() as db:
             total = db.execute(f"SELECT COUNT(*) FROM bans WHERE {where}", args).fetchone()[0]
             rows = db.execute(

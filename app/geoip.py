@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from app.compiler import FirewallError
+from app.display_filters import validate_display_negation
 from app.system_lists import country_code
 
 SOURCE = "DB-IP Country Lite"
@@ -191,20 +192,30 @@ class GeoIPService:
             return {**result, "country": row[1], "status": "known"}
         return {**result, "status": "unknown"}
 
-    def countries(self, search: str = "", offset: int = 0, limit: int = 50) -> dict[str, Any]:
+    def countries(
+        self,
+        search: str = "",
+        offset: int = 0,
+        limit: int = 50,
+        *,
+        negate: str | list[str] = "",
+    ) -> dict[str, Any]:
         self._page(offset, limit)
         if len(search) > 32:
             raise ValueError("Search is limited to 32 characters")
         version = self.active_version
-        pattern = "%" + search.upper().replace("%", "").replace("_", "") + "%"
+        cleaned = search.upper().replace("%", "").replace("_", "")
+        excluded = validate_display_negation(negate, {"query": cleaned})
+        pattern = "%" + cleaned + "%"
+        match = "country NOT LIKE ?" if "query" in excluded else "country LIKE ?"
         with self.connect() as db:
             total = db.execute(
-                "SELECT count(*) FROM country_counts WHERE version=? AND country LIKE ?",
+                f"SELECT count(*) FROM country_counts WHERE version=? AND {match}",
                 (version, pattern),
             ).fetchone()[0]
             rows = db.execute(
                 "SELECT country,ranges,networks FROM country_counts WHERE version=? "
-                "AND country LIKE ? ORDER BY country LIMIT ? OFFSET ?",
+                f"AND {match} ORDER BY country LIMIT ? OFFSET ?",
                 (version, pattern, limit, offset),
             ).fetchall()
         return {
@@ -218,11 +229,18 @@ class GeoIPService:
         }
 
     def entries(
-        self, country: str, offset: int = 0, limit: int = 50, query: str = ""
+        self,
+        country: str,
+        offset: int = 0,
+        limit: int = 50,
+        query: str = "",
+        *,
+        negate: str | list[str] = "",
     ) -> dict[str, Any]:
         self._page(offset, limit)
         country = country_code(country)
         query = query.strip()
+        excluded = validate_display_negation(negate, {"query": query})
         if len(query) > 32:
             raise ValueError("Search is limited to one IPv4 address or subnet")
         low, high = 0, 2**32 - 1
@@ -233,7 +251,10 @@ class GeoIPService:
                 raise ValueError("Enter a valid IPv4 address or subnet to search") from exc
             low, high = int(network.network_address), int(network.broadcast_address)
         version = self.active_version
-        where = "version=? AND country=? AND first<=? AND last>=?"
+        match = "first<=? AND last>=?"
+        if "query" in excluded:
+            match = f"NOT ({match})"
+        where = f"version=? AND country=? AND ({match})"
         parameters = (version, country, high, low)
         with self.connect() as db:
             total = db.execute(f"SELECT count(*) FROM ranges WHERE {where}", parameters).fetchone()[

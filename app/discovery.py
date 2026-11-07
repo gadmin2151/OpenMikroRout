@@ -16,6 +16,7 @@ from typing import Any
 from app.discovery_io import DiscoveryError, bounded_command, connected_networks
 from app.discovery_models import DiscoverySettings
 from app.discovery_protocols import MAX_NEIGHBORS, clean_text, parse_arp, parse_lldp, parse_mndp
+from app.display_filters import validate_display_negation
 from app.link_models import interface_name
 from app.telemetry import valid_address, valid_mac
 
@@ -182,22 +183,38 @@ class DiscoveryService:
         return document
 
     def hosts(
-        self, query: str = "", interface: str = "", offset: int = 0, limit: int = 50
+        self,
+        query: str = "",
+        interface: str = "",
+        offset: int = 0,
+        limit: int = 50,
+        *,
+        negate: str | list[str] = "",
     ) -> dict[str, Any]:
         if not 0 <= offset <= MAX_NEIGHBORS or not 1 <= limit <= 100 or len(query) > 100:
             raise ValueError("Invalid host pagination or search")
         if interface:
             interface_name(interface)
+        excluded = validate_display_negation(negate, {"query": query, "interface": interface})
         pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        condition = "(?='' OR interface=?) AND document LIKE ? ESCAPE '\\'"
+        conditions = []
+        parameters = []
+        if interface:
+            conditions.append("NOT (interface=?)" if "interface" in excluded else "interface=?")
+            parameters.append(interface)
+        if query:
+            match = "document LIKE ? ESCAPE '\\'"
+            conditions.append(f"NOT ({match})" if "query" in excluded else match)
+            parameters.append(pattern)
+        condition = " AND ".join(conditions) or "1"
         with self.connect() as db:
             total = db.execute(
-                f"SELECT COUNT(*) FROM hosts WHERE {condition}", (interface, interface, pattern)
+                f"SELECT COUNT(*) FROM hosts WHERE {condition}", parameters
             ).fetchone()[0]
             rows = db.execute(
                 f"SELECT * FROM hosts WHERE {condition} "
                 "ORDER BY last_seen DESC, id LIMIT ? OFFSET ?",
-                (interface, interface, pattern, limit, offset),
+                (*parameters, limit, offset),
             ).fetchall()
             items = [self._render(row, time.time()) for row in rows]
             conflicts = {

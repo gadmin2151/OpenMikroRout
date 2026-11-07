@@ -2,18 +2,25 @@ import { t, html, locale } from "./i18n.js";
 import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
 import { proofForm, proof, clearProof } from "./security-ui.js?v=1";
 import { interfaceNames } from "./router-pages.js?v=10";
+import {
+  displayFilterToggle,
+  displayNegations,
+  syncDisplayFilterControl,
+} from "./display-filter-ui.js";
 
 let editing = null;
 let privateProfile = null;
 let status = null;
 let request = null;
 let controller = null;
-let peerFilter = { interface: "", query: "" };
+const peerFilterFields = ["query", "interface"];
+const emptyPeerFilter = () => ({ interface: "", query: "", negate: [] });
+let peerFilter = emptyPeerFilter();
 
 export function resetWireGuard() {
   controller?.abort();
   controller = request = editing = privateProfile = status = null;
-  peerFilter = { interface: "", query: "" };
+  peerFilter = emptyPeerFilter();
 }
 export function clearWireGuardSecrets() {
   privateProfile = null;
@@ -97,7 +104,16 @@ function form(
 }
 
 export function matchesWireGuardPeer(peer, filter) {
-  if (filter.interface && peer.interface !== filter.interface) return false;
+  const negate = new Set(
+    displayNegations(filter.negate, filter, peerFilterFields),
+  );
+  if (
+    filter.interface &&
+    (negate.has("interface")
+      ? peer.interface === filter.interface
+      : peer.interface !== filter.interface)
+  )
+    return false;
   const text = [
     peer.name,
     peer.interface,
@@ -108,20 +124,34 @@ export function matchesWireGuardPeer(peer, filter) {
   ]
     .join(" ")
     .toLocaleLowerCase();
-  return text.includes(
-    String(filter.query || "")
-      .trim()
-      .toLocaleLowerCase(),
-  );
+  const query = String(filter.query || "")
+    .trim()
+    .toLocaleLowerCase();
+  const found = text.includes(query);
+  return !query || (negate.has("query") ? !found : found);
 }
 
 export function handleWireGuardFilter(event, ctx) {
   if (!["wg-peer-search", "wg-peer-interface"].includes(event.target?.id))
     return false;
   peerFilter = {
+    ...peerFilter,
     query: document.querySelector("#wg-peer-search")?.value || "",
     interface: document.querySelector("#wg-peer-interface")?.value || "",
   };
+  peerFilter.negate = displayNegations(
+    peerFilter.negate,
+    peerFilter,
+    peerFilterFields,
+  );
+  const container = document.querySelector("#wg-display-filters");
+  for (const name of peerFilterFields)
+    syncDisplayFilterControl(
+      container,
+      name,
+      peerFilter[name],
+      peerFilter.negate.includes(name),
+    );
   let visible = 0;
   for (const peer of collection(ctx, "wireguard_peers")) {
     const row = document.querySelector(`[data-wg-peer-row="${peer.id}"]`);
@@ -143,11 +173,16 @@ export function renderWireGuard(ctx, peers = false) {
   const entries = collection(ctx, "wireguard_peers");
   if (!interfaces.some((item) => item.name === peerFilter.interface))
     peerFilter.interface = "";
+  peerFilter.negate = displayNegations(
+    peerFilter.negate,
+    peerFilter,
+    peerFilterFields,
+  );
   const matched = entries.filter((item) =>
     matchesWireGuardPeer(item, peerFilter),
   ).length;
   const filters = peers
-    ? html`<div class="wg-peer-filters"><label><span class="sr-only">Поиск peers</span><input id="wg-peer-search" type="search" placeholder="Поиск: имя, IP, ключ…" value="${ctx.e(peerFilter.query)}" maxlength="128"></label><label><span class="sr-only">Интерфейс peers</span><select id="wg-peer-interface"><option value="">Все интерфейсы</option>${interfaces.map((item) => html`<option value="${ctx.e(item.name)}" ${item.name === peerFilter.interface ? "selected" : ""}>${ctx.e(item.name)}</option>`).join("")}</select></label><span data-wg-filter-count aria-live="polite">${matched} / ${entries.length}</span></div>`
+    ? html`<div class="wg-peer-filters" id="wg-display-filters"><div class="display-filter-inline"><label><span class="sr-only">Поиск peers</span><input id="wg-peer-search" type="search" placeholder="Поиск: имя, IP, ключ…" value="${ctx.e(peerFilter.query)}" maxlength="128"></label>${displayFilterToggle({ name: "query", label: t("Поиск peers"), value: peerFilter.query, negated: peerFilter.negate.includes("query"), action: "wg-peer-negate" })}</div><div class="display-filter-inline"><label><span class="sr-only">Интерфейс peers</span><select id="wg-peer-interface"><option value="">Все интерфейсы</option>${interfaces.map((item) => html`<option value="${ctx.e(item.name)}" ${item.name === peerFilter.interface ? "selected" : ""}>${ctx.e(item.name)}</option>`).join("")}</select></label>${displayFilterToggle({ name: "interface", label: t("Интерфейс peers"), value: peerFilter.interface, negated: peerFilter.negate.includes("interface"), action: "wg-peer-negate" })}</div><span data-wg-filter-count aria-live="polite">${matched} / ${entries.length}</span></div>`
     : "";
   const disable = locked(ctx) ? "disabled" : "";
   const active =
@@ -395,6 +430,17 @@ function download(profile) {
 export async function handleWireGuardAction(button, ctx) {
   const action = button.dataset.action;
   if (!action?.startsWith("wg-")) return false;
+  if (action === "wg-peer-negate") {
+    const name = button.dataset.displayNegate;
+    if (!peerFilterFields.includes(name) || !String(peerFilter[name]).trim())
+      return true;
+    const selected = new Set(peerFilter.negate);
+    if (selected.has(name)) selected.delete(name);
+    else selected.add(name);
+    peerFilter.negate = [...selected];
+    handleWireGuardFilter({ target: { id: "wg-peer-search" } }, ctx);
+    return true;
+  }
   if (action === "wg-refresh") {
     await refreshWireGuard(ctx);
     return true;
