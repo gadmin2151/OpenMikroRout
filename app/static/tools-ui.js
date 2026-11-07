@@ -5,9 +5,6 @@ let active = null;
 let liveOutput = "";
 let liveMeta = "";
 let input = { tool: "ping", target: "", port: "443" };
-export function getToolsActivity() {
-  return { active: !!active && !active.signal.aborted, kind: "diagnostic" };
-}
 export function resetTools() {
   active?.abort();
   active = null;
@@ -43,7 +40,6 @@ export function renderTools(ctx) {
 }
 
 function updateTools(ctx) {
-  if (ctx.isWindowVisible?.() === false) return;
   const form = document.querySelector("#tools-form");
   if (!form) return;
   const output = document.querySelector("#tools-output");

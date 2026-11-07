@@ -21,10 +21,6 @@ const defaults = () => ({
 });
 let input = defaults();
 
-export function getCaptureActivity() {
-  return { active: !!active && !active.signal.aborted, kind: "capture" };
-}
-
 export function resetCapture() {
   epoch++;
   clearTimeout(paintTimer);
@@ -72,7 +68,6 @@ export function renderCapture(ctx) {
 }
 
 function updateCapture(ctx) {
-  if (ctx.isWindowVisible?.() === false) return;
   const form = document.querySelector("#capture-form");
   if (!form) return;
   const select = document.querySelector("#capture-interface");
@@ -121,7 +116,6 @@ function updateCapture(ctx) {
 }
 
 function schedulePaint(ctx) {
-  if (ctx.isWindowVisible?.() === false) return;
   if (paintTimer !== null) return;
   const currentEpoch = epoch;
   const generation = ctx.generation;
@@ -133,7 +127,6 @@ function schedulePaint(ctx) {
 }
 
 export async function refreshCapture(ctx) {
-  if (ctx.isWindowVisible?.() === false) return null;
   if (statusRequest) return statusRequest;
   const currentEpoch = epoch;
   const generation = ctx.generation;

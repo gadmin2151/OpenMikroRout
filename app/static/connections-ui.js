@@ -6,6 +6,106 @@ let kind = "active",
   error = "",
   request = null,
   controller = null;
+let sorting = { column: null, direction: "ascending" };
+const sortColumns = new Set([
+  "protocol",
+  "source",
+  "destination",
+  "translated_destination",
+  "state",
+  "interface",
+  "packets",
+  "bytes",
+  "time",
+]);
+
+function compareNullable(left, right, direction, compare) {
+  const missingLeft = left == null || left === "";
+  const missingRight = right == null || right === "";
+  if (missingLeft || missingRight)
+    return Number(missingLeft) - Number(missingRight);
+  return direction * compare(left, right);
+}
+
+function ipv4(value) {
+  if (typeof value !== "string" || !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value))
+    return null;
+  const parts = value.split(".").map(Number);
+  return parts.every((part) => part <= 255)
+    ? parts.reduce((result, part) => result * 256 + part, 0)
+    : null;
+}
+
+/** Sort only the returned monitoring sample, never router rules or API data. */
+export function sortConnectionRows(items, order, viewKind = "active") {
+  if (!sortColumns.has(order?.column)) return [...items];
+  const column = order.column;
+  const direction = order.direction === "descending" ? -1 : 1;
+  const collator = new Intl.Collator(locale(), {
+    numeric: true,
+    sensitivity: "base",
+  });
+  const text = (left, right) => collator.compare(String(left), String(right));
+  const numeric = (left, right) => Number(left) - Number(right);
+  const endpointColumns = {
+    source: "source_port",
+    destination: "destination_port",
+    translated_destination: "translated_port",
+  };
+  const compare = (left, right) => {
+    if (column in endpointColumns) {
+      const address = compareNullable(
+        left[column],
+        right[column],
+        direction,
+        (a, b) => {
+          const one = ipv4(a),
+            two = ipv4(b);
+          return one !== null && two !== null ? one - two : text(a, b);
+        },
+      );
+      if (address) return address;
+      // A missing endpoint's port has no meaning.
+      if (!left[column] || !right[column]) return 0;
+      return compareNullable(
+        left[endpointColumns[column]],
+        right[endpointColumns[column]],
+        direction,
+        numeric,
+      );
+    }
+    const key =
+      column === "time"
+        ? viewKind === "attempts"
+          ? "last_seen"
+          : "expires_in"
+        : column;
+    const numbers = ["packets", "bytes", "time"].includes(column);
+    return compareNullable(
+      left[key],
+      right[key],
+      direction,
+      numbers ? numeric : text,
+    );
+  };
+  return items
+    .map((row, index) => ({ row, index }))
+    .sort(
+      (left, right) => compare(left.row, right.row) || left.index - right.index,
+    )
+    .map(({ row }) => row);
+}
+
+function columnHeader(column, label) {
+  const selected = sorting.column === column;
+  const state = selected ? sorting.direction : "none";
+  const arrow = selected
+    ? sorting.direction === "ascending"
+      ? "▲"
+      : "▼"
+    : "↕";
+  return html`<th scope="col" aria-sort="${state}"><button type="button" class="connection-sort" data-action="connections-sort" data-sort-column="${column}">${t(label)}<span aria-hidden="true">${arrow}</span></button></th>`;
+}
 
 export function resetConnections() {
   controller?.abort();
@@ -14,6 +114,7 @@ export function resetConnections() {
   snapshot = null;
   error = "";
   request = null;
+  sorting = { column: null, direction: "ascending" };
 }
 
 function endpoint(address, port) {
@@ -35,13 +136,53 @@ function rows(ctx) {
       notice +
       html`<div class="empty">${e(snapshot.error || t("Источник данных недоступен"))}</div>`
     );
-  const body = snapshot.items
+  const body = sortConnectionRows(snapshot.items, sorting, kind)
     .map(
       (row) =>
         html`<tr><td>${e(row.protocol.toUpperCase())}</td><td class="mono">${e(endpoint(row.source, row.source_port))}</td><td class="mono">${e(endpoint(row.destination, row.destination_port))}</td><td class="mono">${row.translated_destination ? e(endpoint(row.translated_destination, row.translated_port)) : "—"}</td><td>${e(row.state)}</td><td class="mono">${e(row.interface || "—")}</td><td class="numeric">${number(row.packets)}</td><td class="numeric">${number(row.bytes)}</td><td>${kind === "attempts" ? e(new Date(row.last_seen * 1000).toLocaleTimeString(locale())) : row.expires_in == null ? "—" : e(row.expires_in + t(" сек."))}</td></tr>`,
     )
     .join("");
-  return html`${notice}<div class="monitor-summary"><strong>${number(snapshot.matched)} из ${number(snapshot.total)}</strong><span>Обновлено ${e(new Date(snapshot.timestamp * 1000).toLocaleTimeString(locale()))}</span>${snapshot.partial ? html`<span class="monitor-partial">Ограниченная выборка</span>` : ""}</div><div class="table-scroll"><table class="rules-table connections-table"><thead><tr><th>Протокол</th><th>Источник</th><th>Назначение</th><th>После DNAT</th><th>Состояние</th><th>${kind === "active" ? t("Интерфейс назначения") : t("Входной интерфейс")}</th><th>Пакеты</th><th>Байты</th><th>${kind === "attempts" ? t("Последний пакет") : t("Таймаут")}</th></tr></thead><tbody>${body || html`<tr><td colspan="9" class="users-empty">Подходящих соединений нет.</td></tr>`}</tbody></table></div>${snapshot.matched > snapshot.items.length ? html`<p class="feature-note">Показаны первые ${snapshot.items.length} записей. Уточните фильтры.</p>` : ""}`;
+  return html`${notice}<div class="monitor-summary"><strong>${number(snapshot.matched)} из ${number(snapshot.total)}</strong><span>Обновлено ${e(new Date(snapshot.timestamp * 1000).toLocaleTimeString(locale()))}</span>${snapshot.partial ? html`<span class="monitor-partial">Ограниченная выборка</span>` : ""}</div><div class="table-scroll"><table class="rules-table connections-table"><thead><tr>${[
+    ["protocol", "Протокол"],
+    ["source", "Источник"],
+    ["destination", "Назначение"],
+    ["translated_destination", "После DNAT"],
+    ["state", "Состояние"],
+    [
+      "interface",
+      kind === "active" ? "Интерфейс назначения" : "Входной интерфейс",
+    ],
+    ["packets", "Пакеты"],
+    ["bytes", "Байты"],
+    ["time", kind === "attempts" ? "Последний пакет" : "Таймаут"],
+  ]
+    .map(([column, label]) => columnHeader(column, label))
+    .join(
+      "",
+    )}</tr></thead><tbody>${body || html`<tr><td colspan="9" class="users-empty">Подходящих соединений нет.</td></tr>`}</tbody></table></div>${snapshot.matched > snapshot.items.length ? html`<p class="feature-note">Показаны первые ${snapshot.items.length} записей. Уточните фильтры.</p>` : ""}`;
+}
+
+function updateResults(ctx, focusColumn) {
+  const container = document.querySelector("#connections-results");
+  if (!container) return;
+  const focused =
+    focusColumn ||
+    (container.contains?.(document.activeElement)
+      ? document.activeElement?.dataset?.sortColumn
+      : null);
+  const scroll = container.querySelector?.(".table-scroll");
+  const left = scroll?.scrollLeft || 0,
+    top = scroll?.scrollTop || 0;
+  container.innerHTML = rows(ctx);
+  const nextScroll = container.querySelector?.(".table-scroll");
+  if (nextScroll) {
+    nextScroll.scrollLeft = left;
+    nextScroll.scrollTop = top;
+  }
+  if (sortColumns.has(focused))
+    container
+      .querySelector?.(`[data-sort-column="${focused}"]`)
+      ?.focus({ preventScroll: true });
 }
 
 export function renderConnections(ctx) {
@@ -79,8 +220,7 @@ export async function refreshConnections(ctx) {
         ctx.isCurrentView("connections") &&
         generation === ctx.getGeneration()
       ) {
-        const container = document.querySelector("#connections-results");
-        if (container) container.innerHTML = rows(ctx);
+        updateResults(ctx);
       }
     }
   })();
@@ -96,9 +236,23 @@ export async function handleConnectionsAction(button, ctx) {
       "connections-filter",
       "connections-reset",
       "connections-refresh",
+      "connections-sort",
     ].includes(action)
   )
     return false;
+  if (action === "connections-sort") {
+    const column = button.dataset.sortColumn;
+    if (!sortColumns.has(column)) return true;
+    sorting = {
+      column,
+      direction:
+        sorting.column === column && sorting.direction === "ascending"
+          ? "descending"
+          : "ascending",
+    };
+    updateResults(ctx, column);
+    return true;
+  }
   await ctx.run(async () => {
     controller?.abort();
     request = null;

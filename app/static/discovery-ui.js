@@ -30,7 +30,6 @@ let request = null;
 let requestKind = null;
 let controller = null;
 let selectedJob = null;
-let scanWindowKind = null;
 let detailEpoch = 0;
 let liveTimer = null;
 let liveController = null;
@@ -43,44 +42,7 @@ let scanInput = {
   service_detection: false,
 };
 
-function currentScanKind(ctx, view) {
-  const name =
-    view ||
-    ["network_scan", "port_scan", "hosts"].find((name) =>
-      ctx.isCurrentView?.(name),
-    );
-  if (name)
-    scanWindowKind =
-      name === "network_scan"
-        ? "network"
-        : name === "port_scan"
-          ? "ports"
-          : null;
-}
-function matchingScan(job) {
-  return !!scanWindowKind && job?.request?.kind === scanWindowKind;
-}
-export function getScanActivity() {
-  const running = (job) =>
-    matchingScan(job) && ["queued", "running"].includes(job.state);
-  const job = running(selectedJob)
-    ? selectedJob
-    : jobs?.items?.find((job) => job.id !== selectedJob?.id && running(job));
-  return { active: !!job, jobId: job?.id || null, kind: "scan" };
-}
-export async function cancelActiveScan(ctx) {
-  currentScanKind(ctx);
-  const activity = getScanActivity();
-  if (!activity.active) return false;
-  await handleDiscoveryAction(
-    { dataset: { action: "scan-cancel", id: activity.jobId } },
-    ctx,
-  );
-  return true;
-}
-
 export function resetDiscovery() {
-  scanWindowKind = null;
   clearTimeout(liveTimer);
   liveController?.abort();
   liveTimer = liveController = null;
@@ -238,12 +200,10 @@ function scheduleScanProgress(ctx) {
   clearTimeout(liveTimer);
   if (
     !selectedJob ||
-    !matchingScan(selectedJob) ||
     !["queued", "running"].includes(selectedJob.state) ||
     !["network_scan", "port_scan"].some(ctx.isCurrentView) ||
     typeof document === "undefined" ||
-    document.hidden ||
-    ctx.isWindowVisible?.() === false
+    document.hidden
   )
     return;
   const id = selectedJob.id;
@@ -254,8 +214,7 @@ function scheduleScanProgress(ctx) {
       selectedJob?.id !== id ||
       !["network_scan", "port_scan"].some(ctx.isCurrentView) ||
       typeof document === "undefined" ||
-      document.hidden ||
-      ctx.isWindowVisible?.() === false
+      document.hidden
     )
       return;
     const controller = new AbortController();
@@ -273,10 +232,7 @@ function scheduleScanProgress(ctx) {
         return;
       if (Number(job.updated) < Number(selectedJob.updated)) return;
       selectedJob = job;
-      const detail =
-        ctx.isWindowVisible?.() === false
-          ? null
-          : document.querySelector("#scan-detail");
+      const detail = document.querySelector("#scan-detail");
       if (detail) {
         const markup = renderScanResult(job, ctx);
         if (renderedRegions.get(detail) !== markup) {
@@ -286,11 +242,7 @@ function scheduleScanProgress(ctx) {
       }
       if (!["queued", "running"].includes(job.state)) await refreshNow(ctx);
     } catch (error) {
-      if (
-        !controller.signal.aborted &&
-        generation === ctx.getGeneration() &&
-        ctx.isWindowVisible?.() !== false
-      ) {
+      if (!controller.signal.aborted && generation === ctx.getGeneration()) {
         const detail = document.querySelector("#scan-detail");
         if (detail)
           detail.textContent =
@@ -305,7 +257,6 @@ function scheduleScanProgress(ctx) {
 }
 
 export function renderDiscovery(view, ctx) {
-  currentScanKind(ctx, view);
   if (view === "hosts")
     return html`<div class="feature-page discovery-page">${settingsForm(ctx, false)}<form data-discovery-form class="monitor-filters" id="discovery-search"><label class="field"><span>Поиск устройства</span><input name="query" maxlength="100" value="${ctx.e(filters.query)}" placeholder="Имя, IP, MAC, модель"></label><label class="field"><span>Интерфейс</span><select name="interface">${options(ctx, interfaceNames(ctx), filters.interface, t("Все интерфейсы"))}</select></label><button class="primary" data-discovery-form data-action="discovery-search">Найти</button>${action("discovery-refresh", t("Обновить"))}</form><div id="discovery-results">${hostRows(ctx)}</div><p class="feature-note">Сведения сообщаются устройствами и могут быть неточными. Источник и срок актуальности каждого поля доступны в карточке. Одинаковые MAC в разных сегментах не объединяются.</p></div>`;
   const network = view === "network_scan";
@@ -329,11 +280,9 @@ export function renderDiscovery(view, ctx) {
   }</div><div class="scan-actions">${network ? "" : html`<label class="wg-check"><input name="service_detection" type="checkbox" ${scanInput.service_detection ? "checked" : ""}><span>Определять службы и версии</span></label>`}<button type="button" class="primary" data-discovery-form data-action="scan-start" ${scanBlockedReason(ctx) ? "disabled" : ""}>${ctx.icon("search")}Запустить сканирование</button></div></fieldset></form><p class="feature-note">Выберите исходящий интерфейс вручную. Цель — IPv4-адрес, DNS-имя узла или подсеть CIDR; принадлежность к локальной сети интерфейса не требуется. Сканирование использует выбранный интерфейс и маршрутизацию роутера. UDP: до 128 портов. Определение версий отправляет служебные запросы; результаты являются предположением Nmap.</p>${action("scan-refresh", t("Обновить историю"))}<div id="scan-results">${scanRows(ctx)}</div></div>`;
 }
 export async function refreshDiscovery(ctx) {
-  if (ctx.isWindowVisible?.() === false) return null;
   const view = Object.keys(discoveryViews).find((name) =>
     ctx.isCurrentView(name),
   );
-  currentScanKind(ctx, view);
   if (request && requestKind === view) return request;
   if (request) {
     controller?.abort();
@@ -369,10 +318,8 @@ export async function refreshDiscovery(ctx) {
         [scanStatus, jobs] = values;
         const selectedId =
           selectedJob?.id ||
-          jobs?.items.find(
-            (job) =>
-              matchingScan(job) && ["queued", "running"].includes(job.state),
-          )?.id;
+          jobs?.items.find((job) => ["queued", "running"].includes(job.state))
+            ?.id;
         if (selectedId) {
           const value = await ctx.api(
             `scans/jobs/${encodeURIComponent(selectedId)}`,
@@ -394,8 +341,7 @@ export async function refreshDiscovery(ctx) {
       if (
         !signal.aborted &&
         generation === ctx.getGeneration() &&
-        ctx.isCurrentView(view) &&
-        ctx.isWindowVisible?.() !== false
+        ctx.isCurrentView(view)
       ) {
         const region = document.querySelector(
           view === "hosts" ? "#discovery-results" : "#scan-results",
@@ -427,7 +373,6 @@ async function refreshNow(ctx) {
   return refreshDiscovery(ctx);
 }
 export function syncScanForm(ctx, form, status = scanStatus) {
-  if (ctx.isWindowVisible?.() === false) return;
   const select = form?.querySelector('[name="interface"]');
   if (!select) return;
   if (!status) {
@@ -492,7 +437,6 @@ export function handleDiscoveryInput(event, ctx) {
   return true;
 }
 export async function handleDiscoveryAction(button, ctx) {
-  currentScanKind(ctx);
   const name = button.dataset.action;
   const generation = ctx.generation;
   if (!name?.startsWith("discovery-") && !name?.startsWith("scan-"))
@@ -611,10 +555,7 @@ export async function handleDiscoveryAction(button, ctx) {
     if (generation !== ctx.getGeneration() || epoch !== detailEpoch)
       return true;
     selectedJob = job;
-    const region =
-      ctx.isWindowVisible?.() === false
-        ? null
-        : document.querySelector("#scan-detail");
+    const region = document.querySelector("#scan-detail");
     if (region) region.innerHTML = renderScanResult(selectedJob, ctx);
     scheduleScanProgress(ctx);
   } else if (name === "discovery-host") {

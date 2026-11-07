@@ -35,12 +35,6 @@ Linux tools. No cloud account is required.
 
 ## Capabilities
 
-Version **0.8** adds a WinBox-style desktop inside one browser tab: open NAT,
-Interfaces, charts, Ping and Packet Sniffer together. Move, resize, minimize and
-zoom individual tools; switch through the taskbar or **Open windows** in the
-left menu. Layouts are saved per account and router, with protected unsaved forms
-and full-screen panels on phones. [Release details →](docs/RELEASE-0.8.0.md)
-
 | Area                        | Included                                                                                                                                                    |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Security** | Src./Dst. Country and a Fail2ban condition tab in NAT/Filter editors; shared profiles, expiring ban lists and the local GeoIP database remain in Security. Ban collection is disabled by default |

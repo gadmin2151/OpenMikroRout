@@ -8,7 +8,6 @@ import {
   handleToolsAction,
   resetTools,
   renderTools,
-  getToolsActivity,
 } from "../../app/static/tools-ui.js";
 
 const originalDocument = globalThis.document;
@@ -105,56 +104,6 @@ function fixture(tool = "ping") {
   };
   return { ctx, output, meta, controls, logout: () => generation++ };
 }
-
-test("minimized diagnostic windows keep their stream and recent output without touching DOM", async () => {
-  const f = fixture();
-  const stream = diagnosticStream();
-  let visible = true;
-  f.ctx.isWindowVisible = () => visible;
-  f.ctx.api = async () => stream.response;
-  const pending = handleToolsAction(
-    { dataset: { action: "tools-run" } },
-    f.ctx,
-  );
-  await flush();
-  assert.deepEqual(getToolsActivity(), { active: true, kind: "diagnostic" });
-  const painted = f.output.textContent;
-  visible = false;
-  stream.send({ type: "started", continuous: true });
-  stream.send({ type: "output", text: "reply while minimized\n" });
-  await flush();
-  assert.equal(f.output.textContent, painted);
-  assert.equal(stream.cancelled(), false);
-  const snapshot = getToolsActivity();
-  snapshot.active = false;
-  assert.equal(getToolsActivity().active, true);
-  assert.deepEqual(Object.keys(getToolsActivity()), ["active", "kind"]);
-  stream.send(completed("last reply while minimized\n"));
-  stream.close();
-  await pending;
-  assert.equal(f.output.textContent, painted);
-  assert.equal(getToolsActivity().active, false);
-  visible = true;
-  assert.match(renderTools(f.ctx), /last reply while minimized/);
-});
-
-test("closing a minimized diagnostic window cancels its reader and clears activity", async () => {
-  const f = fixture();
-  const stream = diagnosticStream();
-  f.ctx.api = async () => stream.response;
-  const pending = handleToolsAction(
-    { dataset: { action: "tools-run" } },
-    f.ctx,
-  );
-  stream.send({ type: "started", continuous: true });
-  await flush();
-  f.ctx.isWindowVisible = () => false;
-  resetTools();
-  await pending;
-  assert.equal(stream.cancelled(), true);
-  assert.deepEqual(getToolsActivity(), { active: false, kind: "diagnostic" });
-  assert.doesNotMatch(renderTools(f.ctx), /reply while minimized/);
-});
 
 test("NDJSON parser delivers early output and preserves UTF-8 split across network chunks", async () => {
   const stream = diagnosticStream();

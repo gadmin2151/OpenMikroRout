@@ -3799,6 +3799,39 @@ body.is-readonly .access-note > svg,
 .connections-table .numeric {
   text-align: right;
 }
+.connections-table .connection-sort {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.connections-table .connection-sort:hover {
+  color: var(--accent, #315a7e);
+}
+.connections-table .connection-sort:focus-visible {
+  outline: 2px solid var(--accent, #315a7e);
+  outline-offset: 3px;
+}
+.connections-table .connection-sort span {
+  font-size: 10px;
+  opacity: 0.6;
+}
+.connections-table th[aria-sort="ascending"] .connection-sort span,
+.connections-table th[aria-sort="descending"] .connection-sort span {
+  opacity: 1;
+}
 @media (max-width: 1000px) {
   .monitor-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));

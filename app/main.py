@@ -19,7 +19,6 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
-from starlette.routing import Route
 from starlette.types import Message, Receive, Scope, Send
 
 from app.auth import (
@@ -63,12 +62,7 @@ from app.telemetry_history import HistoryResponse, TelemetryHistory
 from app.totp import CredentialProof, TotpEnrollment, TotpRecovery, TotpStatus
 from app.updates import UpdateApply, UpdateError, UpdateJob, UpdateService, UpdateStatus
 from app.version import VERSION
-from app.web_assets import (
-    WORKSPACE_FRAME_PATH,
-    StaticTextCompression,
-    WebAssets,
-    WorkspaceFrameAssets,
-)
+from app.web_assets import StaticTextCompression, WebAssets
 from app.web_domain import PanelHostMiddleware
 from app.wireguard import WireGuardError
 from app.wireguard_api import wireguard_router
@@ -413,13 +407,11 @@ def create_app(
         response = denied if denied is not None else await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
-        frame = request.url.path == WORKSPACE_FRAME_PATH and response.status_code in (200, 304)
-        response.headers["X-Frame-Options"] = "SAMEORIGIN" if frame else "DENY"
-        ancestors = "'self'" if frame else "'none'"
+        response.headers["X-Frame-Options"] = "DENY"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; "
             "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
-            f"base-uri 'none'; frame-ancestors {ancestors}; form-action 'self'"
+            "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         )
         if api_request:
             response.headers["Cache-Control"] = "no-store"
@@ -861,18 +853,6 @@ def create_app(
 
     # Static files contain no account data. Compress this mount only; authenticated
     # API bodies (including key/2FA exports) deliberately keep their existing transport.
-    app.router.routes.append(
-        Route(
-            WORKSPACE_FRAME_PATH,
-            endpoint=StaticTextCompression(
-                WorkspaceFrameAssets(directory=STATIC, html=True),
-                minimum_size=1024,
-                compresslevel=6,
-            ),
-            methods=["GET", "HEAD"],
-            name="workspace-frame",
-        )
-    )
     app.mount(
         "/",
         StaticTextCompression(

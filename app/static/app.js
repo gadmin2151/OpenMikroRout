@@ -1,19 +1,6 @@
 import { t, html, setLanguage, locale } from "./i18n.js";
 import { installCheckboxSelectEvents } from "./checkbox-select.js";
 import { assertDraftRevision } from "./draft-guards.js";
-import { isSharedWorkspaceRead } from "./workspace-api.js";
-import {
-  getWorkspaceFrame,
-  connectWorkspaceClient,
-  createWorkspaceNavigation,
-} from "./workspace-runtime.js";
-import { sameWorkspaceTool, isWorkspaceView } from "./workspace-tools.js";
-import {
-  createDesktopWorkspace,
-  markWorkspaceFormDirty,
-  hasUnsavedWorkspaceForm,
-  confirmWorkspaceNavigation,
-} from "./workspace-shell.js";
 import {
   renderHeaderControls,
   captureHeaderState,
@@ -51,7 +38,6 @@ import {
   handleToolsAction,
   handleToolsInput,
   resetTools,
-  getToolsActivity,
 } from "./tools-ui.js?v=1";
 import {
   renderCapture,
@@ -59,7 +45,6 @@ import {
   handleCaptureAction,
   handleCaptureInput,
   resetCapture,
-  getCaptureActivity,
 } from "./capture-ui.js";
 import {
   renderWireGuard,
@@ -89,7 +74,6 @@ import {
   refreshUpdates,
   resetUpdates,
   handleUpdatesAction,
-  createUpdateReloadWatcher,
 } from "./updates-ui.js?v=2";
 import {
   renderConnections,
@@ -97,7 +81,7 @@ import {
   refreshConnections,
   resetConnections,
   handleConnectionsAction,
-} from "./connections-ui.js?v=2";
+} from "./connections-ui.js?v=3";
 import {
   routerViews,
   renderRouterView,
@@ -123,8 +107,6 @@ import {
   renderDiscovery,
   refreshDiscovery,
   resetDiscovery,
-  getScanActivity,
-  cancelActiveScan,
   handleDiscoveryAction,
   handleDiscoveryInput,
 } from "./discovery-ui.js?v=1";
@@ -177,23 +159,7 @@ const e = (value) =>
   );
 const root = document.querySelector("#app");
 const dialog = document.querySelector("#editor");
-const workspaceFrame =
-  window.parent !== window ? getWorkspaceFrame(window.location, window) : null;
-let desktop = null;
-let frameClient = null;
-let frameVisible = true;
-let frameDisposed = false;
-let clearingSession = false;
-let workspaceEditorDirty = false;
-let workspaceNavigation = null;
-// Only the target version is retained while updates restart the service.
-// This watcher belongs to the top document and survives child/session teardown.
-const workspaceUpdateReload = createUpdateReloadWatcher({
-  onStopped: (message) => toast(message, true),
-});
-if (workspaceFrame) document.documentElement.classList.add("workspace-tool");
 dialog.addEventListener("close", () => {
-  workspaceEditorDirty = false;
   if (
     dialog.querySelector("#backup-proof") ||
     dialog.querySelector('[name="new_archive_password"]')
@@ -205,7 +171,7 @@ dialog.addEventListener("close", () => {
   }
 });
 let state,
-  view = workspaceFrame?.view || "overview",
+  view = "overview",
   selected = new Set(),
   search = "",
   chainFilter = "",
@@ -261,21 +227,7 @@ function requireWrite() {
 function applyAccessControls() {
   applyReadAccess(document, state);
 }
-function clearSession(notify = true) {
-  if (clearingSession) return;
-  clearingSession = true;
-  workspaceEditorDirty = false;
-  workspaceNavigation?.clear();
-  if (notify && frameClient && !frameDisposed) {
-    try {
-      frameClient.notifySessionEnd();
-    } catch {
-      /* A detached document is already being disposed by the host. */
-    }
-  }
-  desktop?.destroy();
-  desktop = null;
-  document.body.classList.remove("workspace-host");
+function clearSession() {
   clearTimeout(toastTimer);
   const oldToast = document.querySelector("#toast");
   if (oldToast) {
@@ -320,13 +272,12 @@ function clearSession(notify = true) {
   draftRevision = null;
   confirmationRevision = null;
   sidebarScroll = 0;
-  view = workspaceFrame?.view || "overview";
+  view = "overview";
   offline = false;
   if (dialog.open) dialog.close();
   dialog.innerHTML = "";
   endDrag();
   document.body.classList.remove("router-drag-active");
-  clearingSession = false;
 }
 const ruleColumns = [
   ["name", t("Comment / Name")],
@@ -367,7 +318,7 @@ try {
 }
 
 async function api(path, options = {}) {
-  const { responseType, workspaceBypass = false, ...fetchOptions } = options;
+  const { responseType, ...fetchOptions } = options;
   const method = (options.method || "GET").toUpperCase();
   if (
     !["GET", "HEAD"].includes(method) &&
@@ -383,14 +334,6 @@ async function api(path, options = {}) {
   )
     requireWrite();
   const generation = authGeneration;
-  const shared = frameClient || desktop;
-  if (
-    !workspaceBypass &&
-    shared &&
-    isSharedWorkspaceRead(path, fetchOptions) &&
-    !responseType
-  )
-    return shared.read(path, fetchOptions);
   const response = await fetch(`/api/${path}`, {
     credentials: "same-origin",
     signal: AbortSignal.timeout(path === "apply" ? 45000 : 20000),
@@ -421,23 +364,6 @@ async function api(path, options = {}) {
           .join("\n")
       : data.detail;
     throw new Error(detail || html`Ошибка HTTP ${response.status}`);
-  }
-  if (path === "config" && method === "PUT") {
-    workspaceEditorDirty = false;
-    for (const form of dialog.querySelectorAll("form"))
-      delete form.dataset.workspaceDirty;
-  }
-  if (path === "me/preferences" && method === "PUT") {
-    const form = document.querySelector("#preferences-form");
-    if (form) delete form.dataset.workspaceDirty;
-  }
-  if (
-    !["GET", "HEAD"].includes(method) &&
-    !["login", "logout", "preview"].includes(path) &&
-    !path.startsWith("tools/")
-  ) {
-    if (frameClient && !frameDisposed) frameClient.notifyMutation(path);
-    else desktop?.notifyMutation(path);
   }
   return data;
 }
@@ -471,7 +397,6 @@ async function run(task) {
       !dialog.open
     )
       render();
-    void workspaceNavigation?.flush();
   }
 }
 function acceptState(data) {
@@ -555,15 +480,7 @@ function setNavigationOpen(open, focus = false) {
   }
 }
 function navigationContext() {
-  return {
-    state,
-    interfaces,
-    canWrite,
-    view: desktop?.activeView || view,
-    expandedGroups,
-    e,
-    icon,
-  };
+  return { state, interfaces, canWrite, view, expandedGroups, e, icon };
 }
 function renderNavigation() {
   return renderSidebarNavigation(navigationContext());
@@ -621,8 +538,6 @@ function routerContext() {
     generation: authGeneration,
     getGeneration: () => authGeneration,
     isCurrentView: (name) => !!state && view === name,
-    isWindowVisible: () =>
-      !document.hidden && (!workspaceFrame || frameVisible),
     interfaces,
     networkStatus,
     offline,
@@ -639,10 +554,6 @@ function routerContext() {
     securityStatus,
     refreshSecurity,
     refreshCurrentUser: () => refresh(true),
-    watchUpdate: (version) => {
-      if (frameClient) frameClient.watchUpdate(version);
-      else workspaceUpdateReload.watch(version);
-    },
     currentUser: currentUser(),
     canWrite,
     api,
@@ -661,94 +572,9 @@ function routerContext() {
     render,
   };
 }
-const chromeRegions = new WeakMap();
-function patchChrome(node, markup) {
-  if (!node || chromeRegions.get(node) === markup) return;
-  const active = document.activeElement;
-  const focused =
-    node.contains(active) && active?.dataset.action
-      ? {
-          action: active.dataset.action,
-          view: active.dataset.view,
-          id: active.id,
-        }
-      : null;
-  node.innerHTML = markup;
-  chromeRegions.set(node, markup);
-  if (focused) {
-    const candidates = node.querySelectorAll("[data-action]");
-    [...candidates]
-      .find(
-        (element) =>
-          element.dataset.action === focused.action &&
-          element.dataset.view === focused.view &&
-          element.id === focused.id,
-      )
-      ?.focus({ preventScroll: true });
-  }
-}
-function renderDesktopChrome() {
-  if (!state || !desktop) return;
-  const headerState = captureHeaderState(root);
-  const navigation = document.querySelector(".sidebar-navigation");
-  const scroll = navigation?.scrollTop || 0;
-  for (const [selector, label] of [
-    [".sidebar-navigation", "Настройки роутера"],
-    [".mobile-menu", "Открыть меню"],
-    [".sidebar-scrim", "Закрыть меню"],
-    ["#desktop-workspace", "Рабочий стол роутера"],
-  ])
-    document.querySelector(selector)?.setAttribute("aria-label", t(label));
-  patchChrome(navigation, renderNavigation());
-  if (navigation) navigation.scrollTop = scroll;
-  patchChrome(
-    document.querySelector("#workspace-header-controls"),
-    renderHeaderControls(routerContext()),
-  );
-  patchChrome(
-    document.querySelector("#workspace-breadcrumb"),
-    html`<b>Рабочий стол</b>`,
-  );
-  patchChrome(
-    document.querySelector("#workspace-notices"),
-    html`${state.runtime_error ? html`<div class="connection-error" role="alert">${e(state.runtime_error)}</div>` : ""}${offline ? html`<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>` : ""}${!canWrite() ? html`<div class="read-only-banner">Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}`,
-  );
-  patchChrome(document.querySelector("#statusbar"), renderStatus());
-  patchChrome(
-    document.querySelector("#workspace-sidebar-bottom"),
-    html`<button class="nav-item" data-action="workspace-windows">${icon("grid")}Открытые окна<span class="count" id="workspace-window-count">${desktop.windowCount}</span></button><button class="nav-item" data-action="help">${icon("help")}Справка</button>`,
-  );
-  desktop.update();
-  applyAccessControls();
-  restoreHeaderState(root, headerState);
-}
-function renderDesktop() {
-  document.body.classList.add("workspace-host");
-  document.title = `OpenMikroRout · ${t("Рабочий стол")}`;
-  if (!desktop) {
-    root.innerHTML = html`<div class="app-shell"><aside class="sidebar" id="sidebar">${brandMarkup()}<nav class="sidebar-navigation" aria-label="Настройки роутера"></nav><div class="sidebar-bottom" id="workspace-sidebar-bottom"></div></aside><button class="sidebar-scrim" data-action="menu" aria-label="Закрыть меню" tabindex="-1"></button><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="icon ghost mobile-menu" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false" data-action="menu">${icon("menu")}</button>${icon("network")}<span id="workspace-breadcrumb"></span></div><div id="workspace-header-controls"></div></header><div class="workspace-content"><div class="workspace-notices" id="workspace-notices"></div><div id="desktop-workspace" aria-label="Рабочий стол роутера"></div></div><div id="statusbar"></div></main></div>`;
-    desktop = createDesktopWorkspace({
-      container: document.querySelector("#desktop-workspace"),
-      getContext: routerContext,
-      fetcher: (path, options) =>
-        api(path, { ...options, workspaceBypass: true }),
-      onUpdate: renderDesktopChrome,
-      onError: (error) => toast(error.message, true),
-      onSessionEnd: () => {
-        clearSession(false);
-        renderLogin();
-      },
-    });
-  }
-  renderDesktopChrome();
-}
 function render() {
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   if (!state) return;
-  if (!workspaceFrame) {
-    renderDesktop();
-    return;
-  }
   const headerState = captureHeaderState(root);
   const previousNavigation = document.querySelector(".sidebar-navigation");
   if (previousNavigation) sidebarScroll = previousNavigation.scrollTop;
@@ -1137,7 +963,6 @@ function openEditor(id, duplicate = false) {
   if (duplicate) {
     draft.id = crypto.randomUUID();
     draft.name += " (copy)";
-    workspaceEditorDirty = true;
   }
   editorTab = "general";
   renderEditor();
@@ -1352,7 +1177,6 @@ function closeTelemetryChart() {
       ?.focus({ preventScroll: true });
 }
 async function refreshTelemetryHistory(replace = false) {
-  if (!workspaceFrame || !frameVisible) return;
   if (!alive || !state || view !== "overview" || document.hidden) return;
   const seconds = telemetryExpanded?.period || 60;
   replace ||= historyPeriod !== seconds || historyCursor === null;
@@ -1408,7 +1232,6 @@ async function refreshTelemetryHistory(replace = false) {
   }
 }
 async function refreshTelemetry(fast = false) {
-  if (!workspaceFrame || !frameVisible) return;
   const inFlight = fast ? fastTelemetryRequest : telemetryRequest;
   if (inFlight) return inFlight;
   if (!alive || !state || view !== "overview" || dialog.open || document.hidden)
@@ -1474,24 +1297,19 @@ async function refresh(manual = false) {
   if (!canWrite()) users = [];
   const ids = new Set(next.config.rules.map((rule) => rule.id));
   selected = new Set([...selected].filter((id) => ids.has(id)));
-  if (!workspaceFrame) {
-    const results = await Promise.allSettled([
-      api("interfaces"),
-      api("network/status"),
-    ]);
-    if (generation !== authGeneration || !state) return;
-    if (results[0].status === "fulfilled") {
-      interfaces = results[0].value.interfaces;
-      forwarding = results[0].value.forwarding;
-    }
-    if (results[1].status === "fulfilled") networkStatus = results[1].value;
-    const failure = results.find((result) => result.status === "rejected");
-    if (failure) throw failure.reason;
-    offline = false;
-    render();
-    return;
-  }
-  if (hasUnsavedWorkspaceForm(root)) {
+  const settingsForm = document.querySelector(
+    "#router-dns-form,#router-domain-form,#backup-import-form,#f2b-settings,#geo-settings,#discovery-settings,#scan-settings",
+  );
+  if (
+    [
+      "dns",
+      "web_settings",
+      "backups",
+      ...Object.keys(protectionViews),
+      ...Object.keys(discoveryViews),
+    ].includes(view) &&
+    settingsForm?.dataset.dirty === "true"
+  ) {
     const statusbar = document.querySelector("#statusbar");
     if (statusbar) statusbar.innerHTML = renderStatus();
     applyAccessControls();
@@ -1516,11 +1334,6 @@ async function refresh(manual = false) {
     const failure = results.find((result) => result.status === "rejected");
     if (failure) throw failure.reason;
     offline = false;
-    // Input can start while the auxiliary requests above are still pending.
-    if (hasUnsavedWorkspaceForm(root)) {
-      applyAccessControls();
-      return;
-    }
     if (draggingId || document.body.classList.contains("router-drag-active"))
       return;
     if (view === "users") await refreshUsers();
@@ -1562,21 +1375,10 @@ async function handleAction(button) {
   const action = button.dataset.action,
     id = button.dataset.id;
   if (button.disabled || busy) return;
-  if (action === "workspace-windows") {
-    setNavigationOpen(false);
-    desktop?.showWindows();
-    return;
-  }
   if (state && !canWrite() && !isReadAction(action)) {
     toast(t("Группа read: доступен только просмотр."), true);
     return;
   }
-  if (
-    workspaceFrame &&
-    dialog.open &&
-    ["editor-toggle", "editor-copy", "router-editor-copy"].includes(action)
-  )
-    workspaceEditorDirty = true;
   if (action === "rule-protection-open") {
     if (
       button.dataset.table === "nat" &&
@@ -1701,31 +1503,7 @@ async function handleAction(button) {
   }
   if (action === "view") {
     const nextView = button.dataset.view;
-    if (!isWorkspaceView(nextView)) return;
     if (["users", "updates"].includes(nextView) && !canWrite()) return;
-    if (desktop) {
-      expandNavigationForView(
-        navigationItems(navigationContext()),
-        nextView,
-        expandedGroups,
-      );
-      desktop.open(nextView);
-      setNavigationOpen(false);
-      return;
-    }
-    if (frameClient && !sameWorkspaceTool(workspaceFrame.view, nextView)) {
-      frameClient.navigate(nextView);
-      return;
-    }
-    if (
-      workspaceFrame &&
-      nextView !== view &&
-      (workspaceEditorDirty || hasUnsavedWorkspaceForm(document))
-    ) {
-      if (!(await confirmWorkspaceNavigation(document))) return;
-      workspaceEditorDirty = false;
-      if (dialog.open) dialog.close();
-    }
     if (view === "tools" && nextView !== "tools") resetTools();
     if (view === "capture" && nextView !== "capture") resetCapture();
     closeTelemetryChart();
@@ -1838,14 +1616,6 @@ async function handleAction(button) {
     return;
   }
   if (action === "export" || action === "import") {
-    if (desktop) {
-      desktop.open("backups");
-      return;
-    }
-    if (frameClient) {
-      frameClient.navigate("backups");
-      return;
-    }
     resetTools();
     resetCapture();
     view = "backups";
@@ -2303,12 +2073,6 @@ document.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("input", (event) => {
-  if (
-    workspaceFrame &&
-    markWorkspaceFormDirty(event) &&
-    event.target.closest("#editor")
-  )
-    workspaceEditorDirty = true;
   if (event.target.matches("[data-checkbox-search]")) return;
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
@@ -2325,12 +2089,6 @@ document.addEventListener("input", (event) => {
   }
 });
 document.addEventListener("change", (event) => {
-  if (
-    workspaceFrame &&
-    markWorkspaceFormDirty(event) &&
-    event.target.closest("#editor")
-  )
-    workspaceEditorDirty = true;
   if (event.target.id === "login-language") {
     const form =
       event.target.closest("form") || document.querySelector("#login-form");
@@ -2401,10 +2159,8 @@ document.addEventListener("change", (event) => {
     protocolFilter = node.value;
     updateRuleTable();
   }
-  if (node.id === "rule-enabled" && draft && canWrite()) {
+  if (node.id === "rule-enabled" && draft && canWrite())
     draft.enabled = node.checked;
-    if (workspaceFrame) workspaceEditorDirty = true;
-  }
   if (node.name === "f2b_profile" && dialog.querySelector("#rule-form")) {
     collectRule();
     renderEditor();
@@ -2599,27 +2355,10 @@ document.addEventListener("submit", (event) => {
       }
     });
 });
-async function boot(attempt = 0) {
+async function boot() {
   try {
     await refresh(true);
-    void workspaceNavigation?.flush();
   } catch (error) {
-    if (error.name === "AbortError") {
-      if (!alive || frameDisposed) return;
-      if (attempt < 3)
-        setTimeout(
-          () => {
-            if (alive && !frameDisposed) void boot(attempt + 1);
-          },
-          100 * (attempt + 1),
-        );
-      else if (state) {
-        render();
-        void workspaceNavigation?.flush();
-      } else
-        root.innerHTML = html`<div class="empty"><p>Сервер недоступен</p><button data-action="refresh">Повторить</button></div>`;
-      return;
-    }
     if (state) {
       offline = true;
       render();
@@ -2627,112 +2366,14 @@ async function boot(attempt = 0) {
       root.innerHTML = html`<div class="empty"><p>Сервер недоступен</p><small>${e(error.message)}</small><button data-action="refresh">Повторить</button></div>`;
   }
 }
-function workspaceActivity() {
-  const scan = getScanActivity();
-  const capture = getCaptureActivity();
-  const tools = getToolsActivity();
-  return {
-    view,
-    dirty: workspaceEditorDirty || hasUnsavedWorkspaceForm(document),
-    busy,
-    active: scan.active || capture.active || tools.active,
-    kind: scan.active
-      ? "scan"
-      : capture.active
-        ? "capture"
-        : tools.active
-          ? "tool"
-          : "idle",
-    jobId: scan.jobId,
-  };
-}
-function publishWorkspaceStatus() {
-  if (!frameClient || frameDisposed) return;
-  try {
-    frameClient.publishStatus(workspaceActivity());
-  } catch {
-    /* The host already released this document. */
-  }
-}
-function refreshWorkspaceFrame() {
-  if (!alive || !state || frameDisposed) return Promise.resolve();
-  return refresh().catch((error) => {
-    if (!frameDisposed && state && error.name !== "AbortError")
-      toast(error.message, true);
-  });
-}
-let activityTimer = null;
-if (workspaceFrame) {
-  workspaceNavigation = createWorkspaceNavigation({
-    ready: () => alive && !frameDisposed && !!state && !busy,
-    navigate: (nextView) =>
-      handleAction({
-        dataset: { action: "view", view: nextView },
-        disabled: false,
-      }),
-    onError: (error) => {
-      if (!frameDisposed && error.name !== "AbortError")
-        toast(error.message, true);
-    },
-  });
-  frameClient = connectWorkspaceClient({
-    window,
-    ...workspaceFrame,
-    hooks: {
-      getCloseState: workspaceActivity,
-      cancelScan: () => cancelActiveScan(routerContext()),
-      navigate: (nextView) => workspaceNavigation.request(nextView),
-      requestRefresh: refreshWorkspaceFrame,
-      setVisible: (visible) => {
-        frameVisible = visible;
-        if (!visible)
-          stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
-        else if (state && !frameDisposed) {
-          if (["tools", "capture"].includes(view)) render();
-          void refreshWorkspaceFrame();
-        }
-      },
-      dispose: () => {
-        if (frameDisposed) return;
-        frameDisposed = true;
-        workspaceNavigation.dispose();
-        alive = false;
-        clearInterval(pollTimer);
-        clearInterval(telemetryTimer);
-        clearInterval(countdownTimer);
-        clearInterval(activityTimer);
-        clearSession(false);
-      },
-    },
-  });
-  document.addEventListener(
-    "pointerdown",
-    () => {
-      if (frameClient && !frameDisposed) frameClient.focus();
-    },
-    { capture: true },
-  );
-  activityTimer = setInterval(publishWorkspaceStatus, 1000);
-}
 installRouterEvents(routerContext);
-if (!workspaceFrame || frameClient) void boot();
-else
-  root.innerHTML = html`<div class="empty"><p>Не удалось подключить окно. Закройте его и откройте снова.</p></div>`;
+void boot();
 async function poll() {
-  if (
-    !alive ||
-    !state ||
-    busy ||
-    pollInFlight ||
-    document.hidden ||
-    (workspaceFrame && !frameVisible)
-  )
-    return;
+  if (!alive || !state || busy || pollInFlight || document.hidden) return;
   pollInFlight = true;
   try {
     await refresh();
   } catch (error) {
-    if (error.name === "AbortError") return;
     if (state && !offline) {
       offline = true;
       render();
@@ -2770,19 +2411,11 @@ window.addEventListener("pagehide", () => {
   clearInterval(pollTimer);
   clearInterval(telemetryTimer);
   clearInterval(countdownTimer);
-  clearInterval(activityTimer);
-  if (!workspaceFrame) {
-    desktop?.destroy();
-    desktop = null;
-  }
 });
 window.addEventListener("pageshow", () => {
   if (!alive) {
     alive = true;
     startPolling();
-    if (workspaceFrame && !frameDisposed)
-      activityTimer = setInterval(publishWorkspaceStatus, 1000);
-    if (!workspaceFrame && state) render();
     if (state && ["tools", "capture"].includes(view)) render();
     if (state && view === "capture")
       void refreshCapture(routerContext()).catch((error) =>
@@ -2798,13 +2431,6 @@ document.addEventListener("visibilitychange", () => {
     fastTelemetryController?.abort();
     historyController?.abort();
   } else {
-    if (
-      workspaceFrame &&
-      frameVisible &&
-      state &&
-      ["tools", "capture"].includes(view)
-    )
-      render();
     void refreshTelemetry(true);
     void poll();
   }
