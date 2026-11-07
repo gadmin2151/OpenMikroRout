@@ -24,6 +24,9 @@
 WireGuard, firewall, NAT, routing, VLANs, DHCP and DNS share one workspace with
 WinBox-inspired tables, tabs, property editors and drag-and-drop rule ordering.
 
+NAT and Firewall support **!** match negation, such as all source addresses
+except a selected IPv4 host or address list. [Examples and limits](docs/MATCH-NEGATION.md).
+
 Built for administrators of Linux gateways, office networks and labs, it keeps
 configuration on your own server and runs network operations locally using standard
 Linux tools. No cloud account is required.

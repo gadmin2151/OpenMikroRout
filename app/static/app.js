@@ -2,6 +2,14 @@ import { t, html, setLanguage, locale } from "./i18n.js";
 import { installCheckboxSelectEvents } from "./checkbox-select.js";
 import { assertDraftRevision } from "./draft-guards.js";
 import {
+  withRuleNegation,
+  collectRuleNegations,
+  toggleRuleNegation,
+  syncRuleNegationControls,
+  negatedValue,
+  negationSummary,
+} from "./rule-match-ui.js";
+import {
   renderHeaderControls,
   captureHeaderState,
   restoreHeaderState,
@@ -433,11 +441,11 @@ function listRef(name) {
 }
 function addr(rule, side) {
   const address = rule[`${side}_list`]
-    ? listRef(rule[`${side}_list`])
-    : html`<span class="mono ${rule[`${side}_address`] ? "" : "muted"}">${e(rule[`${side}_address`] || "any")}</span>`;
+    ? listRef(negatedValue(rule, `${side}_list`))
+    : html`<span class="mono ${rule[`${side}_address`] ? "" : "muted"}">${e(negatedValue(rule, `${side}_address`, "any"))}</span>`;
   const country = rule[`${side}_country`];
   const conditions = [
-    country ? `Country: ${country}` : "",
+    country ? `Country: ${negatedValue(rule, `${side}_country`)}` : "",
     side === "src" && rule.f2b_profile
       ? `${rule.f2b_match === "banned" ? "∈" : "∉"} f2b_${rule.f2b_profile}`
       : "",
@@ -834,16 +842,16 @@ function renderRuleRows(rows) {
   return rows
     .map((rule) => {
       const values = {
-        name: html`<div class="rule-name"><span class="dot ${rule.enabled ? "" : "off"}"></span>${e(rule.name)}</div>${rule.comment ? html`<div class="rule-comment" title="${e(rule.comment)}">${e(rule.comment)}</div>` : ""}`,
+        name: html`<div class="rule-name"><span class="dot ${rule.enabled ? "" : "off"}"></span>${negationSummary(rule) ? html`<span class="rule-negation-badge" title="${e(t("Отрицание условий: {fields}", { fields: negationSummary(rule) }))}">!</span>` : ""}${e(rule.name)}</div>${rule.comment ? html`<div class="rule-comment" title="${e(rule.comment)}">${e(rule.comment)}</div>` : ""}`,
         action: actionBadge(rule.action),
         chain: html`<span class="mono">${e(rule.chain)}</span>`,
-        protocol: html`<span class="protocol-badge">${e(rule.protocol)}</span>`,
+        protocol: html`<span class="protocol-badge">${e(negatedValue(rule, "protocol"))}</span>`,
         src: addr(rule, "src"),
         dst: addr(rule, "dst"),
-        src_ports: html`<span class="mono">${e(rule.src_ports || "—")}</span>`,
-        dst_ports: html`<span class="mono">${e(rule.dst_ports || "—")}</span>`,
-        in_interface: html`<span class="mono">${e(rule.in_interface || "—")}</span>`,
-        out_interface: html`<span class="mono">${e(rule.out_interface || "—")}</span>`,
+        src_ports: html`<span class="mono">${e(negatedValue(rule, "src_ports"))}</span>`,
+        dst_ports: html`<span class="mono">${e(negatedValue(rule, "dst_ports"))}</span>`,
+        in_interface: html`<span class="mono">${e(negatedValue(rule, "in_interface"))}</span>`,
+        out_interface: html`<span class="mono">${e(negatedValue(rule, "out_interface"))}</span>`,
         target: html`<span class="mono">${e(target(rule))}</span>`,
         bytes: isDemo() ? "—" : fmtBytes(statistics[rule.id]?.bytes || 0),
         packets: isDemo()
@@ -861,7 +869,7 @@ function renderRuleRows(rows) {
 }
 function renderDetail(r) {
   if (!r) return "";
-  return html`<div class="detail"><div class="detail-title"><b>${e(r.name)} <span>· предпросмотр потока</span></b><button class="small ghost" data-action="edit" data-id="${e(r.id)}" ${state.pending ? "disabled" : ""}>${icon("edit")}Редактировать</button></div><div class="flow"><div class="flow-item"><div class="flow-label">Source</div><div class="flow-value">${addr(r, "src")}${r.src_ports ? " : " + e(r.src_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">Match · ${e(r.chain)}</div><div class="flow-value">${e(r.protocol.toUpperCase())} → ${addr(r, "dst")}${r.dst_ports ? " : " + e(r.dst_ports) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">${e(r.action)}</div><div class="flow-value">${e(target(r))}</div></div></div></div>`;
+  return html`<div class="detail"><div class="detail-title"><b>${e(r.name)} <span>· предпросмотр потока</span></b><button class="small ghost" data-action="edit" data-id="${e(r.id)}" ${state.pending ? "disabled" : ""}>${icon("edit")}Редактировать</button></div><div class="flow"><div class="flow-item"><div class="flow-label">Source</div><div class="flow-value">${addr(r, "src")}${r.src_ports ? " : " + e(negatedValue(r, "src_ports")) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">Match · ${e(r.chain)}</div><div class="flow-value">${e(negatedValue(r, "protocol").toUpperCase())} → ${addr(r, "dst")}${r.dst_ports ? " : " + e(negatedValue(r, "dst_ports")) : ""}</div></div>${icon("arrow")}<div class="flow-item"><div class="flow-label">${e(r.action)}</div><div class="flow-value">${e(target(r))}</div></div></div></div>`;
 }
 function empty(ico, title, description) {
   return html`<div class="empty">${icon(ico)}<p>${e(t(title))}</p><small>${e(t(description))}</small></div>`;
@@ -926,6 +934,7 @@ const defaultRule = () => ({
   chain: "dstnat",
   action: "dst-nat",
   protocol: "tcp",
+  negate: [],
   src_address: "",
   dst_address: "",
   src_list: "",
@@ -975,15 +984,27 @@ function field(
   type = "text",
   extra = "",
 ) {
-  return html`<label class="field ${extra}"><span>${t(label)}</span><input name="${name}" value="${e(value)}" placeholder="${e(placeholder)}" type="${type}" ${name === "name" ? 'maxlength="80"' : ""}></label>`;
+  return withRuleNegation(
+    html`<label class="field ${extra}"><span>${t(label)}</span><input name="${name}" value="${e(value)}" placeholder="${e(placeholder)}" type="${type}" ${name === "name" ? 'maxlength="80"' : ""}></label>`,
+    name,
+    draft,
+    { disabled: !canWrite() },
+  );
 }
 function selectField(label, name, value, options, note = "") {
-  return html`<label class="field"><span>${t(label)}</span><select name="${name}">${options
-    .map((option) => {
-      const [val, text] = Array.isArray(option) ? option : [option, option];
-      return html`<option value="${e(val)}" ${value === val ? "selected" : ""}>${e(text)}</option>`;
-    })
-    .join("")}</select>${note ? html`<small>${e(note)}</small>` : ""}</label>`;
+  return withRuleNegation(
+    html`<label class="field"><span>${t(label)}</span><select name="${name}">${options
+      .map((option) => {
+        const [val, text] = Array.isArray(option) ? option : [option, option];
+        return html`<option value="${e(val)}" ${value === val ? "selected" : ""}>${e(text)}</option>`;
+      })
+      .join(
+        "",
+      )}</select>${note ? html`<small>${e(note)}</small>` : ""}</label>`,
+    name,
+    draft,
+    { disabled: !canWrite() },
+  );
 }
 function interfaceField(label, name, value, available) {
   const names = interfaceNames(routerContext());
@@ -996,7 +1017,12 @@ function interfaceField(label, name, value, available) {
   ];
   if (value && !names.includes(value))
     options.push([value, html`${value} · не обнаружен`]);
-  return html`<label class="field"><span>${t(label)}</span><select name="${name}" ${available ? "" : "disabled"}>${options.map(([key, text]) => html`<option value="${e(key)}" ${value === key ? "selected" : ""}>${e(text)}</option>`).join("")}</select></label>`;
+  return withRuleNegation(
+    html`<label class="field"><span>${t(label)}</span><select name="${name}" ${available ? "" : "disabled"}>${options.map(([key, text]) => html`<option value="${e(key)}" ${value === key ? "selected" : ""}>${e(text)}</option>`).join("")}</select></label>`,
+    name,
+    draft,
+    { disabled: !available || !canWrite() },
+  );
 }
 
 function renderEditor() {
@@ -1029,6 +1055,7 @@ function renderEditor() {
     ${interfaceField(t("In. Interface"), "in_interface", r.in_interface, r.chain === "dstnat")}
     ${interfaceField(t("Out. Interface"), "out_interface", r.out_interface, r.chain !== "dstnat")}
     <div class="field-note">${isDemo() ? t("Демо: интерфейсы приведены для примера.") : t("Интерфейсы обнаружены автоматически на Linux-хосте.")} Списки адресов — во вкладке Advanced.</div>
+    <div class="field-note">Кнопка ! исключает указанное значение. Для списка исключаются все его адреса.</div>
     <label class="field"><span>Template</span><select id="template"><option value="">Без шаблона</option><option value="forward">Port forwarding</option><option value="masquerade">Masquerade · Internet access</option><option value="dns">DNS redirect</option><option value="snat">Source NAT</option></select></label>
     <label class="field"><span>Comment</span><textarea name="comment" rows="2" maxlength="200" placeholder="Комментарий к правилу">${e(r.comment)}</textarea></label>
     </div>`;
@@ -1036,11 +1063,11 @@ function renderEditor() {
     content = html`<div class="winbox-form">
     ${selectField(t("Src. Address List"), "src_list", r.src_list, [["", t("Не использовать")], ...addressListChoices(state.config)])}
     ${selectField(t("Dst. Address List"), "dst_list", r.dst_list, [["", t("Не использовать")], ...addressListChoices(state.config)])}
-    ${countryField(routerContext(), "src_country", r.src_country)}
-    ${countryField(routerContext(), "dst_country", r.dst_country)}
+    ${withRuleNegation(countryField(routerContext(), "src_country", r.src_country), "src_country", r, { disabled: !canWrite() })}
+    ${withRuleNegation(countryField(routerContext(), "dst_country", r.dst_country), "dst_country", r, { disabled: !canWrite() })}
     <div class="field-note">Страна дополняет адрес и список: должны совпасть все условия. Dst. Country в dstnat проверяется до подмены назначения. База стран и обновления — Security → GeoIP.</div>
     ${selectField(t("In. Interface List"), "in_interface_list", r.in_interface_list || "", [["", t("Не использовать")], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}${selectField(t("Out. Interface List"), "out_interface_list", r.out_interface_list || "", [["", t("Не использовать")], ...(state.config.network?.interface_lists || []).map((item) => [item.name, item.name])])}<div class="field-note">Для source и destination укажите адрес в General или список здесь. Если список ещё не создан, добавьте его в Address Lists.</div>
-    <div class="form-divider"></div><div class="field"><span>Connection State</span><div class="states">${["NEW", "ESTABLISHED", "RELATED", "INVALID", "UNTRACKED"].map((value) => html`<label class="checkbox-label"><input type="checkbox" name="state" value="${value}" ${r.connection_states.includes(value) ? "checked" : ""}>${value.toLowerCase()}</label>`).join("")}</div><small>Без отметок — любое состояние.</small></div></div>`;
+    <div class="form-divider"></div>${withRuleNegation(html`<div class="field"><span>Connection State</span><div class="states">${["NEW", "ESTABLISHED", "RELATED", "INVALID", "UNTRACKED"].map((value) => html`<label class="checkbox-label"><input type="checkbox" name="state" value="${value}" ${r.connection_states.includes(value) ? "checked" : ""}>${value.toLowerCase()}</label>`).join("")}</div><small>Без отметок — любое состояние.</small></div>`, "connection_states", r, { disabled: !canWrite() })}</div>`;
   if (editorTab === "fail2ban")
     content = renderRuleFail2ban(routerContext(), r);
   if (editorTab === "advanced")
@@ -1090,6 +1117,7 @@ function collectRule() {
   draft.enabled = dialog.querySelector("#rule-enabled").checked;
   const protection = collectRuleProtection(form, draft.protection);
   if (protection) draft.protection = protection;
+  draft.negate = collectRuleNegations(form, draft);
 }
 function openList(id) {
   if (!canWrite() && !id) {
@@ -1377,6 +1405,18 @@ async function handleAction(button) {
   if (button.disabled || busy) return;
   if (state && !canWrite() && !isReadAction(action)) {
     toast(t("Группа read: доступен только просмотр."), true);
+    return;
+  }
+  if (action === "rule-negate") {
+    const field = button.dataset.ruleNegate;
+    if (!dialog.querySelector("#rule-form")) return;
+    collectRule();
+    if (toggleRuleNegation(draft, field)) {
+      renderEditor();
+      dialog
+        .querySelector(`[data-rule-negate="${field}"]`)
+        ?.focus({ preventScroll: true });
+    }
     return;
   }
   if (action === "rule-protection-open") {
@@ -2073,6 +2113,10 @@ document.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("input", (event) => {
+  syncRuleNegationControls(
+    event.target.closest("#rule-form,#router-form[data-kind=filter]"),
+    canWrite(),
+  );
   if (event.target.matches("[data-checkbox-search]")) return;
   if (handleWireGuardFilter(event, routerContext())) return;
   if (handleToolsInput(event, routerContext())) return;
@@ -2089,6 +2133,10 @@ document.addEventListener("input", (event) => {
   }
 });
 document.addEventListener("change", (event) => {
+  syncRuleNegationControls(
+    event.target.closest("#rule-form,#router-form[data-kind=filter]"),
+    canWrite(),
+  );
   if (event.target.id === "login-language") {
     const form =
       event.target.closest("form") || document.querySelector("#login-form");

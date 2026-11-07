@@ -3,6 +3,13 @@ import { checkboxSelect } from "./checkbox-select.js";
 import { addressListChoices } from "./protection-ui.js?v=3";
 import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
+import {
+  withRuleNegation,
+  collectRuleNegations,
+  toggleRuleNegation,
+  negatedValue,
+  negationSummary,
+} from "./rule-match-ui.js";
 import { renderTelemetry } from "./telemetry-ui.js?v=7";
 import {
   countryField,
@@ -434,7 +441,7 @@ function optionsFor(ctx, type, item) {
   );
 }
 
-function renderField(ctx, definition, item) {
+function renderRawField(ctx, definition, item) {
   const [key, label, type, fallback, required] = definition;
   const e = ctx.e;
   const value = item[key] ?? fallback;
@@ -464,12 +471,26 @@ function renderField(ctx, definition, item) {
   return html`<label class="field"><span>${e(t(label))}</span><input name="${key}" value="${e(value)}" type="${type}" placeholder="${e(type === "text" ? fallback : "")}" ${required ? "required" : ""} ${type === "number" ? 'step="1" min="0"' : 'maxlength="200"'}></label>`;
 }
 
+function renderField(ctx, definition, item) {
+  return withRuleNegation(
+    renderRawField(ctx, definition, item),
+    definition[0],
+    item,
+    {
+      action: "router-negate",
+      disabled: !ctx.canWrite?.(),
+    },
+  );
+}
+
 function toolbar(ctx, kind) {
   return html`<div class="toolbar"><button class="primary add" data-action="router-new" data-kind="${kind}" ${ctx.state.pending || ctx.offline ? "disabled" : ""}>${ctx.icon("plus")}${t(itemSchemas[kind].label)}</button><span class="muted">${collection(ctx, kind).length} записей · черновик</span><button class="small" data-action="refresh">${ctx.icon("refresh")}Обновить</button></div>`;
 }
 
 function valueCell(ctx, key, item) {
   const value = item[key];
+  if (key === "name" && negationSummary(item))
+    return html`<span class="rule-negation-badge" title="${ctx.e(t("Отрицание условий: {fields}", { fields: negationSummary(item) }))}">!</span>${ctx.e(value)}`;
   if (key === "enabled")
     return html`<span class="status-tag ${value ? "on" : "off"}"><i class="dot ${value ? "" : "off"}"></i>${value ? t("enabled") : t("disabled")}</span>`;
   if (key === "stp") return value ? "on" : "off";
@@ -479,15 +500,18 @@ function valueCell(ctx, key, item) {
     const country = item[source ? "src_country" : "dst_country"];
     const list = item[source ? "src_list" : "dst_list"];
     const details = [];
-    if (country) details.push(`Country: ${country}`);
+    if (country)
+      details.push(
+        `Country: ${negatedValue(item, source ? "src_country" : "dst_country")}`,
+      );
     if (source && item.protection?.enabled) details.push(t("Fail2ban · авто"));
     if (source && item.f2b_profile)
       details.push(
         `${item.f2b_match === "banned" ? "∈" : "∉"} f2b_${item.f2b_profile}`,
       );
-    return `${ctx.e(list || value || "any")}${details.length ? html`<small class="cell-note">${ctx.e(details.join(" · "))}</small>` : ""}`;
+    return `${ctx.e(negatedValue(item, list ? (source ? "src_list" : "dst_list") : key, "any"))}${details.length ? html`<small class="cell-note">${ctx.e(details.join(" · "))}</small>` : ""}`;
   }
-  return ctx.e(Array.isArray(value) ? value.join(", ") || "—" : (value ?? "—"));
+  return ctx.e(negatedValue(item, key));
 }
 
 function entityTable(ctx, kind) {
@@ -643,7 +667,10 @@ export function renderRouterView(view, ctx) {
 function newItem(ctx, kind) {
   const schema = itemSchemas[kind];
   const item = { id: crypto.randomUUID() };
-  if (kind === "filter") item.protection = defaultRuleProtection();
+  if (kind === "filter") {
+    item.protection = defaultRuleProtection();
+    item.negate = [];
+  }
   for (const [key, , type, value] of schema.fields)
     item[key] = type === "text" && key !== "kind" ? "" : structuredClone(value);
   if (kind === "routes") item.destination = "0.0.0.0/0";
@@ -703,6 +730,8 @@ function showEntityEditor(
       : fields.map((field) => renderField(ctx, field, item)).join("");
   if (kind === "filter" && tab === "advanced")
     content += html`<details class="rule-condition-help" ${item.f2b_profile ? "open" : ""}><summary>Дополнительное условие по списку Fail2ban</summary>${renderLegacyBanMatch(ctx, item)}</details>`;
+  if (kind === "filter" && ["general", "advanced"].includes(tab))
+    content += html`<div class="field-note">Кнопка ! исключает указанное значение. Для списка исключаются все его адреса.</div>`;
   const note =
     kind === "filter" && tab === "advanced"
       ? t(
@@ -754,6 +783,7 @@ function readForm(schema, form, original) {
   if (schema === itemSchemas.filter) {
     const protection = collectRuleProtection(form, original.protection);
     if (protection) result.protection = protection;
+    result.negate = collectRuleNegations(form, result);
   }
   return result;
 }
@@ -800,6 +830,28 @@ function updateNameReferences(config, kind, oldName, newName) {
 export async function handleRouterAction(button, ctx) {
   const { action, kind, id } = button.dataset;
   if (!action.startsWith("router-")) return false;
+  if (action === "router-negate") {
+    if (editing?.kind !== "filter" || !ctx.canWrite()) return true;
+    const item = readForm(
+      itemSchemas.filter,
+      ctx.dialog.querySelector("#router-form"),
+      editing.item,
+    );
+    if (toggleRuleNegation(item, button.dataset.ruleNegate)) {
+      showEntityEditor(
+        ctx,
+        "filter",
+        item,
+        editing.existing,
+        editing.revision,
+        editing.tab,
+      );
+      ctx.dialog
+        .querySelector(`[data-rule-negate="${button.dataset.ruleNegate}"]`)
+        ?.focus({ preventScroll: true });
+    }
+    return true;
+  }
   if (action === "router-editor-tab") {
     if (
       editing?.kind !== "filter" ||

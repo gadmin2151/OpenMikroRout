@@ -2146,6 +2146,47 @@ dialog::backdrop {
   text-align: right;
   font-size: 13px;
 }
+.winbox-form .field > .rule-match-heading {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+}
+.rule-match-heading > span,
+.rule-match-heading > label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+button.rule-negate {
+  flex: 0 0 26px;
+  width: 26px;
+  min-width: 26px;
+  min-height: 26px;
+  padding: 2px;
+  border-radius: 4px;
+  font: 700 15px/20px monospace;
+  color: var(--text-secondary);
+  background: var(--surface);
+}
+button.rule-negate[aria-pressed="true"] {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.rule-negation-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 19px;
+  padding: 0 4px;
+  margin-right: 5px;
+  border: 1px solid var(--control-line);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font: 700 12px/17px monospace;
+}
 .winbox-form .field > small {
   grid-column: 2;
 }
@@ -2283,6 +2324,9 @@ dialog::backdrop {
   .winbox-form .field > span {
     text-align: left;
     font-size: 13px;
+  }
+  .winbox-form .field > .rule-match-heading {
+    justify-content: flex-start;
   }
   .winbox-form .field > small {
     grid-column: 1;

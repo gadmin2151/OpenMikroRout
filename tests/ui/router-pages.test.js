@@ -178,7 +178,8 @@ function editorContext(item, writable = true) {
   ctx.dialog = {
     classList: { add() {} },
     close() {},
-    querySelector: () => ctx.currentForm,
+    querySelector: (selector) =>
+      selector === "#router-form" ? ctx.currentForm : null,
   };
   ctx.dialogFrame = (_title, _description, body, _footer, tabs) => {
     ctx.body = body;
@@ -309,6 +310,7 @@ test("Filter tabs preserve hidden conditions, clear visible checks, and save all
       ban_time: 7200,
     },
     action: "drop",
+    negate: [],
   });
   assert.equal(original.name, "Initial");
   assert.equal(original.protection.enabled, false);
@@ -369,6 +371,7 @@ test("copying a Filter rule carries inline protection and legacy conditions into
     ...original,
     id: copy.id,
     name: "Protected service-copy",
+    negate: [],
     protection: {
       enabled: false,
       event_source: "connections",
@@ -422,6 +425,123 @@ test("read users can navigate all Filter tabs without disabled controls altering
   assert.equal(ctx.saved, undefined);
   assert.equal(item.f2b_match, "banned");
   assert.deepEqual(item, before);
+});
+
+test("Filter exclusions survive tab changes, Copy and Apply while cleared conditions lose negation", async (t) => {
+  t.mock.method(globalThis, "FormData", function (form) {
+    return new TestFormData(form);
+  });
+  const original = {
+    id: "except-filter",
+    name: "Except trusted",
+    chain: "input",
+    action: "drop",
+    enabled: true,
+    protocol: "tcp",
+    src_address: "10.0.0.1",
+    src_country: "MD",
+    dst_ports: "443",
+    negate: ["src_country", "dst_ports"],
+  };
+  const before = globalThis.structuredClone(original);
+  const ctx = editorContext(original);
+  const action = (name, data = {}) =>
+    handleRouterAction({ dataset: { action: name, ...data } }, ctx);
+  const mounted = (values, selected = {}) => ({
+    ...form(values),
+    querySelectorAll(selector) {
+      if (selector !== "[data-rule-negate]") return [];
+      return Object.entries(selected).map(([field, pressed]) => ({
+        dataset: { ruleNegate: field },
+        getAttribute: () => String(pressed),
+      }));
+    },
+  });
+  await action("router-edit", { kind: "filter", id: original.id });
+  assert.match(ctx.body, /data-rule-negate="src_address" aria-pressed="false"/);
+  ctx.currentForm = mounted(
+    { src_address: "10.0.0.2", dst_ports: "" },
+    { src_address: false, dst_ports: true },
+  );
+  await action("router-negate", { ruleNegate: "src_address" });
+  assert.match(ctx.body, /data-rule-negate="src_address" aria-pressed="true"/);
+  ctx.currentForm = mounted(
+    { src_address: "10.0.0.2", dst_ports: "" },
+    { src_address: true, dst_ports: false },
+  );
+  await action("router-editor-tab", { tab: "advanced" });
+  assert.match(ctx.body, /data-rule-negate="src_country" aria-pressed="true"/);
+  ctx.currentForm = mounted({ src_country: "RO" }, { src_country: true });
+  await action("router-editor-copy");
+  ctx.currentForm = mounted({ src_country: "RO" }, { src_country: true });
+  await action("router-apply");
+  assert.equal(ctx.saved.filter_rules.length, 2);
+  const copy = ctx.saved.filter_rules[1];
+  assert.notEqual(copy.id, original.id);
+  assert.deepEqual(copy.negate, ["src_country", "src_address"]);
+  assert.equal(copy.src_address, "10.0.0.2");
+  assert.equal(copy.src_country, "RO");
+  assert.equal(copy.dst_ports, "");
+  assert.deepEqual(ctx.saved.filter_rules[0], before);
+  assert.deepEqual(original, before);
+});
+
+test("read accounts see existing exclusions but cannot forge an inversion action", async (t) => {
+  t.mock.method(globalThis, "FormData", function () {
+    assert.fail("Read access must not collect disabled editor controls");
+  });
+  const item = {
+    id: "read-except",
+    name: "Protected",
+    chain: "input",
+    action: "drop",
+    src_address: "10.0.0.1",
+    negate: ["src_address"],
+  };
+  const before = globalThis.structuredClone(item);
+  const ctx = editorContext(item, false);
+  await handleRouterAction(
+    { dataset: { action: "router-edit", kind: "filter", id: item.id } },
+    ctx,
+  );
+  assert.match(
+    ctx.body,
+    /data-rule-negate="src_address" aria-pressed="true"[^>]*disabled/,
+  );
+  const body = ctx.body;
+  await handleRouterAction(
+    { dataset: { action: "router-negate", ruleNegate: "src_address" } },
+    ctx,
+  );
+  assert.equal(ctx.body, body);
+  assert.equal(ctx.saved, undefined);
+  assert.deepEqual(item, before);
+});
+
+test("Filter table exposes negative protocol, source, country and port conditions safely", () => {
+  const html = renderRouterView(
+    "filter",
+    context({
+      filter_rules: [
+        {
+          id: "except-visible",
+          name: "Except <trusted>",
+          enabled: true,
+          chain: "input",
+          action: "drop",
+          protocol: "tcp",
+          src_address: "10.0.0.1",
+          src_country: "MD",
+          dst_ports: "443",
+          negate: ["src_address", "src_country", "protocol", "dst_ports"],
+        },
+      ],
+    }),
+  );
+  for (const condition of ["! 10.0.0.1", "! MD", "! tcp", "! 443"])
+    assert.ok(html.includes(condition), condition);
+  assert.match(html, /rule-negation-badge/);
+  assert.ok(!html.includes("<trusted>"));
 });
 
 test("Filter table makes country and Fail2ban conditions visible without opening rules", () => {

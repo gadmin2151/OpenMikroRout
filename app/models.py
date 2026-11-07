@@ -11,6 +11,7 @@ from app.config_migrations import migrate_legacy_address_lists
 from app.discovery_models import DiscoverySettings, ScanSettings
 from app.fail2ban_models import F2BConfiguration, RuleProtection, profile_id
 from app.ipv4 import domain_name
+from app.match_expansion import MAX_RULE_EXPANSION, address_list_matches
 from app.network_models import NetworkConfiguration
 from app.system_lists import (
     GeoIPSettings,
@@ -21,7 +22,21 @@ from app.system_lists import (
 )
 
 MAX_COMPILED_RULES = 4096
-MAX_RULE_EXPANSION = 256
+
+MatchField = Literal[
+    "protocol",
+    "src_address",
+    "dst_address",
+    "src_list",
+    "dst_list",
+    "src_country",
+    "dst_country",
+    "src_ports",
+    "dst_ports",
+    "in_interface",
+    "out_interface",
+    "connection_states",
+]
 
 
 class Model(BaseModel):
@@ -100,7 +115,13 @@ class RuleMatch(Model):
     connection_states: list[Literal["NEW", "ESTABLISHED", "RELATED", "INVALID", "UNTRACKED"]] = (
         Field(default_factory=list, max_length=5)
     )
+    negate: list[MatchField] = Field(default_factory=list, max_length=12)
     comment: str = Field(default="", max_length=200)
+
+    @field_validator("negate")
+    @classmethod
+    def unique_negations(cls, values: list[MatchField]) -> list[MatchField]:
+        return list(dict.fromkeys(values))
 
     @field_validator("src_address", "dst_address")
     @classmethod
@@ -129,6 +150,9 @@ class RuleMatch(Model):
 
     @model_validator(mode="after")
     def validate_matches(self) -> Self:
+        for key in self.negate:
+            if not getattr(self, key) or key == "protocol" and self.protocol == "any":
+                raise ValueError(f"Negation requires a non-empty {key} match")
         if self.src_address and self.src_list or self.dst_address and self.dst_list:
             raise ValueError("Choose either an address or an address list for each side")
         if (
@@ -140,6 +164,8 @@ class RuleMatch(Model):
             raise ValueError("Choose either an interface or an interface list for each side")
         if (self.src_ports or self.dst_ports) and self.protocol not in ("tcp", "udp"):
             raise ValueError("Ports require the TCP or UDP protocol")
+        if "protocol" in self.negate and (self.src_ports or self.dst_ports):
+            raise ValueError("Port matches require a positive TCP or UDP protocol")
         return self
 
 
@@ -168,6 +194,8 @@ class NatRule(RuleMatch):
     def validate_combination(self) -> Self:
         if self.to_ports and self.protocol not in ("tcp", "udp"):
             raise ValueError("Ports require the TCP or UDP protocol")
+        if self.to_ports and "protocol" in self.negate:
+            raise ValueError("Translation ports require a positive TCP or UDP protocol")
         if self.chain == "srcnat" and self.action not in ("src-nat", "masquerade", "accept"):
             raise ValueError("srcnat supports src-nat, masquerade or accept")
         if self.chain != "srcnat" and self.action not in ("dst-nat", "redirect", "accept"):
@@ -257,11 +285,17 @@ class Configuration(Model):
             if rule.f2b_profile and rule.f2b_profile not in profiles:
                 raise ValueError(f"Unknown Fail2ban profile: {rule.f2b_profile}")
             expansion = 1
-            for ref in (rule.src_list, rule.dst_list):
+            for field in ("src_list", "dst_list"):
+                ref = getattr(rule, field)
                 if ref and ref not in lists and ref not in systems:
                     raise ValueError(f"Unknown address list: {ref}")
                 if ref in lists:
-                    expansion *= len(lists[ref].addresses)
+                    expansion *= len(
+                        address_list_matches(
+                            lists[ref].addresses,
+                            negate=field in rule.negate,
+                        )
+                    )
             for ref in (rule.in_interface_list, rule.out_interface_list):
                 if ref and ref not in interfaces:
                     raise ValueError(f"Unknown interface list: {ref}")

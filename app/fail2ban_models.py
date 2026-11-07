@@ -28,6 +28,10 @@ class F2BServiceScope(LinkModel):
     """Resolved endpoint selectors; only generated profiles can carry this scope."""
 
     chains: list[Literal["input", "forward"]] = Field(default_factory=list, max_length=2)
+    sources: list[Annotated[str, Field(max_length=18)]] | None = Field(default=None, max_length=256)
+    excluded_source_sets: list[Annotated[str, Field(max_length=27)]] = Field(
+        default_factory=list, max_length=2
+    )
     destinations: list[Annotated[str, Field(max_length=18)]] = Field(
         default_factory=list, max_length=256
     )
@@ -46,7 +50,12 @@ class F2BServiceScope(LinkModel):
     def valid_destinations(cls, values: list[str]) -> list[str]:
         return ipv4_networks(values)
 
-    @field_validator("destination_sets")
+    @field_validator("sources")
+    @classmethod
+    def valid_sources(cls, values: list[str] | None) -> list[str] | None:
+        return ipv4_networks(values) if values is not None else None
+
+    @field_validator("destination_sets", "excluded_source_sets")
     @classmethod
     def valid_sets(cls, values: list[str]) -> list[str]:
         for value in values:

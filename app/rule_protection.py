@@ -9,6 +9,7 @@ from app.fail2ban_models import (
     F2BProfile,
     F2BServiceScope,
 )
+from app.match_expansion import address_list_matches
 from app.system_lists import is_system_list
 
 if TYPE_CHECKING:
@@ -67,6 +68,11 @@ def managed_profiles(config: "Configuration") -> list[F2BProfile]:
                 raise ValueError(f"At most {MAX_INLINE_PROFILES} rules can own Fail2ban protection")
             if rule.protocol != "tcp":
                 raise ValueError("Automatic Fail2ban protection currently requires TCP")
+            if set(rule.negate) - {"src_address", "src_list", "src_country"}:
+                raise ValueError(
+                    "Automatic Fail2ban protection supports negation only for source "
+                    "addresses, source address lists and source countries"
+                )
             identifier = rule_profile_id(rule.id)
             if identifier in identifiers:
                 raise ValueError(
@@ -74,6 +80,33 @@ def managed_profiles(config: "Configuration") -> list[F2BProfile]:
                 )
             identifiers.add(identifier)
             scope = F2BServiceScope(in_interfaces=_interfaces(config, rule, "in"))
+            ignored: list[str] = []
+            excluded_countries: list[str] = []
+            if "src_address" in rule.negate:
+                ignored = [rule.src_address]
+            elif "src_list" in rule.negate:
+                if is_system_list(rule.src_list):
+                    if rule.src_list.startswith("geo_"):
+                        excluded_countries.append(rule.src_list.removeprefix("geo_"))
+                    elif policy.event_source != "connections":
+                        raise ValueError(
+                            "Dynamic source-list negation requires connection-based protection"
+                        )
+                    else:
+                        scope.excluded_source_sets.append(rule.src_list)
+                else:
+                    addresses = next(
+                        (item for item in config.address_lists if item.name == rule.src_list), None
+                    )
+                    if addresses is None:
+                        raise ValueError(f"Unknown address list: {rule.src_list}")
+                    ignored = list(addresses.addresses)
+            if "src_country" in rule.negate:
+                excluded_countries.append(rule.src_country)
+            if ignored:
+                if len(ignored) > 128:
+                    raise ValueError("Automatic protection supports at most 128 excluded networks")
+                scope.sources = address_list_matches(ignored, negate=True)
             if table == "nat":
                 if rule.chain != "dstnat" or rule.action not in ("dst-nat", "redirect"):
                     raise ValueError(
@@ -119,6 +152,7 @@ def managed_profiles(config: "Configuration") -> list[F2BProfile]:
                 )
             matches += (
                 max(1, len(scope.destinations))
+                * (len(scope.sources) if scope.sources is not None else 1)
                 * max(1, len(scope.in_interfaces))
                 * max(1, len(scope.out_interfaces))
                 * max(1, len(scope.chains))
@@ -130,7 +164,7 @@ def managed_profiles(config: "Configuration") -> list[F2BProfile]:
                     id=identifier,
                     name=rule.name,
                     service=policy.event_source,
-                    enabled=rule.enabled,
+                    enabled=rule.enabled and scope.sources != [],
                     chain=cast(Literal["input", "forward"], chain),
                     ports=ports,
                     in_interface=scope.in_interfaces[0] if len(scope.in_interfaces) == 1 else "",
@@ -141,6 +175,8 @@ def managed_profiles(config: "Configuration") -> list[F2BProfile]:
                     rule_id=rule.id,
                     rule_table=cast(Literal["nat", "filter"], table),
                     scope=scope,
+                    ignore_addresses=ignored,
+                    exclude_countries=excluded_countries,
                 )
             )
     return result

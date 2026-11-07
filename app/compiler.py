@@ -5,6 +5,7 @@ import re
 import shlex
 from collections.abc import Iterator
 
+from app.match_expansion import address_list_matches
 from app.models import Configuration, NatRule, RuleMatch
 from app.system_lists import is_system_list, kernel_set_name, resolved_system_lists
 
@@ -57,26 +58,35 @@ def match_tokens(
 ) -> list[str]:
     tokens: list[str] = []
     if rule.protocol != "any":
-        tokens += ["-p", rule.protocol]
-    for flag, value in (
-        ("-s", source),
-        ("-d", destination),
-        ("-i", incoming),
-        ("-o", outgoing),
+        tokens += [*(["!"] if "protocol" in rule.negate else []), "-p", rule.protocol]
+    for key, flag, value in (
+        ("src_address", "-s", source),
+        ("dst_address", "-d", destination),
+        ("in_interface", "-i", incoming),
+        ("out_interface", "-o", outgoing),
     ):
         if value:
-            tokens += [flag, value]
-    for flag, value in (("--sports", rule.src_ports), ("--dports", rule.dst_ports)):
+            tokens += [*(["!"] if key in rule.negate else []), flag, value]
+    for key, flag, value in (
+        ("src_ports", "--sports", rule.src_ports),
+        ("dst_ports", "--dports", rule.dst_ports),
+    ):
         if value:
-            tokens += ["-m", "multiport", flag, value.replace("-", ":")]
+            tokens += [
+                "-m",
+                "multiport",
+                *(["!"] if key in rule.negate else []),
+                flag,
+                value.replace("-", ":"),
+            ]
     set_matches = [
-        (rule.src_list, "src", False),
-        (rule.dst_list, "dst", False),
+        (rule.src_list, "src", "src_list" in rule.negate),
+        (rule.dst_list, "dst", "dst_list" in rule.negate),
     ]
     if rule.src_country:
-        set_matches.append((f"geo_{rule.src_country}", "src", False))
+        set_matches.append((f"geo_{rule.src_country}", "src", "src_country" in rule.negate))
     if rule.dst_country:
-        set_matches.append((f"geo_{rule.dst_country}", "dst", False))
+        set_matches.append((f"geo_{rule.dst_country}", "dst", "dst_country" in rule.negate))
     if rule.f2b_profile:
         set_matches.append((f"f2b_{rule.f2b_profile}", "src", rule.f2b_match == "not_banned"))
     for ref, direction, invert in dict.fromkeys(set_matches):
@@ -90,7 +100,13 @@ def match_tokens(
                 direction,
             ]
     if rule.connection_states:
-        tokens += ["-m", "conntrack", "--ctstate", ",".join(rule.connection_states)]
+        tokens += [
+            "-m",
+            "conntrack",
+            *(["!"] if "connection_states" in rule.negate else []),
+            "--ctstate",
+            ",".join(rule.connection_states),
+        ]
     tokens += ["-m", "comment", "--comment", f"{marker}:{rule.id}"]
     return tokens
 
@@ -101,6 +117,10 @@ def expanded_matches(config: Configuration, rule: RuleMatch) -> Iterator[tuple[s
     interfaces = {item.name: item.members for item in config.network.interface_lists}
     sources = lists[rule.src_list] if rule.src_list else [rule.src_address]
     destinations = lists[rule.dst_list] if rule.dst_list else [rule.dst_address]
+    if rule.src_list and not is_system_list(rule.src_list):
+        sources = address_list_matches(sources, negate="src_list" in rule.negate)
+    if rule.dst_list and not is_system_list(rule.dst_list):
+        destinations = address_list_matches(destinations, negate="dst_list" in rule.negate)
     incoming = interfaces[rule.in_interface_list] if rule.in_interface_list else [rule.in_interface]
     outgoing = (
         interfaces[rule.out_interface_list] if rule.out_interface_list else [rule.out_interface]

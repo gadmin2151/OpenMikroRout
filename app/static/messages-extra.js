@@ -1,4 +1,26 @@
 export const messagesExtra = {
+  "Автоматическая защита поддерживает отрицание только источника: адрес, список адресов или страна.":
+    [
+      "Автоматическая защита поддерживает отрицание только источника: адрес, список адресов или страна.",
+      "Automatic protection supports negation only for the source address, address list or country.",
+    ],
+  "Отрицание условия: {field}": [
+    "Отрицание условия: {field}",
+    "Negate condition: {field}",
+  ],
+  "Отрицание условий: {fields}": [
+    "Отрицание условий: {fields}",
+    "Negated conditions: {fields}",
+  ],
+  "Все, кроме указанного": [
+    "Все, кроме указанного",
+    "Everything except the specified value",
+  ],
+  "Кнопка ! исключает указанное значение. Для списка исключаются все его адреса.":
+    [
+      "Кнопка ! исключает указанное значение. Для списка исключаются все его адреса.",
+      "The ! button excludes the specified value. For a list, all of its addresses are excluded.",
+    ],
   "Address / Prefix": ["Адрес / префикс", "Address / prefix"],
   "Bridge Port": ["Порт моста", "Bridge port"],
   "Bridge Ports": ["Порты моста", "Bridge ports"],

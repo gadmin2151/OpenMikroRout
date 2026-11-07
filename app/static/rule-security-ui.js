@@ -86,6 +86,7 @@ export function renderRuleFail2ban(ctx, item) {
   const number = (label, name, value, min, max) =>
     html`<label class="field"><span>${t(label)}</span><input type="number" name="protection_${name}" aria-label="${t(label)}" min="${min}" max="${max}" step="1" required value="${ctx.e(value)}"></label>`;
   return html`<div class="winbox-form rule-security-fields">
+    ${item.negate?.length ? html`<div class="field-note">Автоматическая защита поддерживает отрицание только источника: адрес, список адресов или страна.</div>` : ""}
     <label class="checkbox-label"><input type="checkbox" name="protection_enabled" ${protection.enabled ? "checked" : ""} ${!service.supported && !protection.enabled ? "disabled" : ""}>Автоматическая блокировка</label>
     ${!service.supported ? html`<div class="field-note">Доступно для TCP: dstnat → dst-nat / redirect и Filter input / forward. Укажите порты сервиса в General / Action.</div>` : ""}
     <div class="field"><span>Сервис из правила</span><output>${ctx.e(service.destination)} : ${ctx.e(service.ports)} · TCP</output></div>

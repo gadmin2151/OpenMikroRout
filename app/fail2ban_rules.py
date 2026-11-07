@@ -112,20 +112,34 @@ def f2b_anchor(hook: str) -> list[str]:
 def service_match_tokens(profile: F2BProfile) -> Iterator[list[str]]:
     """The same bounded endpoint scope is shared by bans and event collection."""
     scope = profile.scope
+    sources = scope.sources if scope and scope.sources is not None else [""]
+    if not sources:
+        return
     destinations = scope.destinations if scope else [profile.destination]
     incoming = scope.in_interfaces if scope else [profile.in_interface]
     outgoing = scope.out_interfaces if scope else []
-    for destination, interface_in, interface_out, country in itertools.product(
-        destinations or [""], incoming or [""], outgoing or [""], profile.include_countries or [""]
+    for source, destination, interface_in, interface_out, country in itertools.product(
+        sources,
+        destinations or [""],
+        incoming or [""],
+        outgoing or [""],
+        profile.include_countries or [""],
     ):
         tokens = ["-p", "tcp"]
-        for flag, value in (("-i", interface_in), ("-o", interface_out), ("-d", destination)):
+        for flag, value in (
+            ("-s", source),
+            ("-i", interface_in),
+            ("-o", interface_out),
+            ("-d", destination),
+        ):
             if value:
                 tokens += [flag, value]
         tokens += ["-m", "multiport", "--dports", ",".join(map(str, profile.ports))]
         if scope:
             for name in scope.destination_sets:
                 tokens += ["-m", "set", "--match-set", kernel_set_name(name), "dst"]
+            for name in scope.excluded_source_sets:
+                tokens += ["-m", "set", "!", "--match-set", kernel_set_name(name), "src"]
         if country:
             tokens += ["-m", "set", "--match-set", kernel_set_name(f"geo_{country}"), "src"]
         for excluded in profile.exclude_countries:
@@ -146,7 +160,7 @@ def profile_hooks(profile: F2BProfile) -> list[str]:
 
 def reply_match_tokens(match: list[str]) -> list[str]:
     """The reply must leave the same service endpoint and reverse its selectors."""
-    reverse = {"-i": "-o", "-o": "-i", "-d": "-s", "--dports": "--sports"}
+    reverse = {"-i": "-o", "-o": "-i", "-d": "-s", "-s": "-d", "--dports": "--sports"}
     result = match.copy()
     for index, token in enumerate(match):
         if token in reverse:
