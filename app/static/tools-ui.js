@@ -1,7 +1,14 @@
 import { t, html } from "./i18n.js";
+import { readDiagnosticStream } from "./live-stream.js";
 let result = null;
+let active = null;
+let liveOutput = "";
+let liveMeta = "";
 let input = { tool: "ping", target: "", port: "443" };
 export function resetTools() {
+  active?.abort();
+  active = null;
+  liveOutput = liveMeta = "";
   result = null;
   input = { tool: "ping", target: "", port: "443" };
 }
@@ -28,45 +35,115 @@ export function handleToolsInput(event, ctx) {
 }
 
 export function renderTools(ctx) {
-  const disabled = !ctx.canWrite() || ctx.offline;
-  return html`<div class="feature-page tools-page"><div class="feature-heading"><div><h2>Network Tools</h2><p>Проверьте доступность, разрешение DNS и маршрут с самого роутера.</p></div>${ctx.icon("terminal")}</div><form id="tools-form" class="tools-form ${input.tool === "tcp" ? "is-tcp" : ""}"><label class="field"><span>Tool</span><select name="tool" ${disabled ? "disabled" : ""}>${tools.map(([id, label]) => html`<option value="${id}" ${input.tool === id ? "selected" : ""}>${t(label)}</option>`).join("")}</select></label><label class="field tools-target"><span>IPv4 / DNS name</span><input name="target" value="${ctx.e(input.target)}" placeholder="1.1.1.1 или vpn.example.com" maxlength="253" required ${disabled ? "disabled" : ""}></label><label class="field tools-port ${input.tool === "tcp" ? "" : "hidden"}"><span>TCP Port</span><input name="port" type="number" value="${ctx.e(input.port)}" min="1" max="65535" required ${disabled || input.tool !== "tcp" ? "disabled" : ""}><small>Используется только TCP Connect</small></label><button class="primary" data-action="tools-run" ${disabled ? "disabled" : ""}>${ctx.icon("activity")}Запустить</button></form><div class="tools-result"><div class="tools-result-heading"><strong>Результат</strong><span id="tools-result-meta">${result ? ctx.e(html`${result.tool.toUpperCase()} · ${result.elapsed_ms} мс · ${result.demo ? "DEMO" : result.success ? t("OK") : t("недоступно")}`) : t("До 20 секунд · один запуск за раз")}</span></div><pre id="tools-output" tabindex="0" aria-live="polite">${result ? ctx.e(result.output || t("Ответ без данных.")) : t("Выберите инструмент и укажите адрес. Результат появится здесь.")}</pre></div><p class="feature-note">Ping: 4 пакета. Traceroute: до 12 переходов. TCP Connect проверяет соединение без отправки данных. Для запуска нужна группа full. DNS использует системный резолвер роутера.</p></div>`;
+  const disabled = !ctx.canWrite() || ctx.offline || !!active;
+  return html`<div class="feature-page tools-page"><div class="feature-heading"><div><h2>Network Tools</h2><p>Проверьте доступность, разрешение DNS и маршрут с самого роутера.</p></div>${ctx.icon("terminal")}</div><form id="tools-form" class="tools-form ${input.tool === "tcp" ? "is-tcp" : ""}"><label class="field"><span>Tool</span><select name="tool" ${disabled ? "disabled" : ""}>${tools.map(([id, label]) => html`<option value="${id}" ${input.tool === id ? "selected" : ""}>${t(label)}</option>`).join("")}</select></label><label class="field tools-target"><span>IPv4 / DNS name</span><input name="target" value="${ctx.e(input.target)}" placeholder="1.1.1.1 или vpn.example.com" maxlength="253" required ${disabled ? "disabled" : ""}></label><label class="field tools-port ${input.tool === "tcp" ? "" : "hidden"}"><span>TCP Port</span><input name="port" type="number" value="${ctx.e(input.port)}" min="1" max="65535" required ${disabled || input.tool !== "tcp" ? "disabled" : ""}><small>Используется только TCP Connect</small></label><div class="tools-live-actions"><button class="primary" data-action="tools-run" ${disabled ? "disabled" : ""}>${ctx.icon("activity")}Запустить</button><button type="button" data-action="tools-cancel" ${active ? "" : "hidden"}>Отменить</button></div></form><div class="tools-result"><div class="tools-result-heading"><strong>Результат</strong><span id="tools-result-meta">${liveMeta ? ctx.e(liveMeta) : result ? ctx.e(html`${result.tool.toUpperCase()} · ${result.elapsed_ms} мс · ${result.demo ? "DEMO" : result.success ? t("OK") : t("недоступно")}`) : t("До 20 секунд · один запуск за раз")}</span></div><pre id="tools-output" tabindex="0" aria-live="polite">${liveOutput ? ctx.e(liveOutput) : result ? ctx.e(result.output || t("Ответ без данных.")) : t("Выберите инструмент и укажите адрес. Результат появится здесь.")}</pre></div><p class="feature-note">Ping: 4 пакета. Traceroute: до 12 переходов. TCP Connect проверяет соединение без отправки данных. Для запуска нужна группа full. DNS использует системный резолвер роутера.</p></div>`;
+}
+
+function updateTools(ctx) {
+  const form = document.querySelector("#tools-form");
+  if (!form) return;
+  const output = document.querySelector("#tools-output");
+  const meta = document.querySelector("#tools-result-meta");
+  if (output) {
+    const follow =
+      output.scrollHeight - output.scrollTop - output.clientHeight < 32;
+    output.textContent =
+      liveOutput ||
+      (active ? t("Ожидание ответа роутера") : result?.output || "");
+    if (follow) output.scrollTop = output.scrollHeight;
+  }
+  if (meta) meta.textContent = liveMeta;
+  for (const control of form.querySelectorAll("input,select,button")) {
+    if (control.dataset.action === "tools-cancel") {
+      control.hidden = !active;
+      control.disabled = false;
+    } else
+      control.disabled =
+        !!active ||
+        !ctx.canWrite() ||
+        ctx.offline ||
+        (control.name === "port" && input.tool !== "tcp");
+  }
 }
 
 export async function handleToolsAction(button, ctx) {
-  if (button.dataset.action !== "tools-run") return false;
+  const action = button.dataset.action;
+  if (!["tools-run", "tools-cancel"].includes(action)) return false;
   if (!ctx.canWrite())
     throw new Error(t("Для сетевой диагностики нужна группа full."));
+  if (action === "tools-cancel") {
+    active?.abort();
+    return true;
+  }
+  if (active) return true;
   const form = document.querySelector("#tools-form");
   if (!form?.reportValidity()) return true;
   const data = new FormData(form);
-  await ctx.run(async () => {
-    const generation = ctx.generation;
-    const output = document.querySelector("#tools-output");
-    const meta = document.querySelector("#tools-result-meta");
-    output.textContent = t("Выполняется диагностика…");
-    meta.textContent = t("Ожидание ответа роутера");
-    try {
-      const value = await ctx.api("tools/run", {
-        method: "POST",
-        body: JSON.stringify({
-          tool: data.get("tool"),
-          target: String(data.get("target") || "").trim(),
-          port: data.has("port") ? Number(data.get("port")) : 443,
-        }),
-      });
-      if (generation !== ctx.getGeneration()) return;
-      result = value;
-      if (output.isConnected) {
-        output.textContent = value.output || t("Ответ без данных.");
-        meta.textContent = html`${value.tool.toUpperCase()} · ${value.elapsed_ms} мс · ${value.demo ? "DEMO" : value.success ? t("OK") : t("недоступно")}`;
-      }
-    } catch (error) {
-      if (generation === ctx.getGeneration() && output.isConnected) {
-        output.textContent = error.message;
-        meta.textContent = t("Диагностика не завершена");
-      }
+  const generation = ctx.generation;
+  const controller = new AbortController();
+  active = controller;
+  result = null;
+  liveOutput = "";
+  liveMeta = t("Выполняется диагностика…");
+  updateTools(ctx);
+  let finished = false;
+  try {
+    const response = await ctx.api("tools/stream", {
+      method: "POST",
+      responseType: "stream",
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]),
+      body: JSON.stringify({
+        tool: data.get("tool"),
+        target: String(data.get("target") || "").trim(),
+        port: data.has("port") ? Number(data.get("port")) : 443,
+      }),
+    });
+    await readDiagnosticStream(
+      response,
+      (event) => {
+        if (generation !== ctx.getGeneration() || active !== controller) {
+          controller.abort();
+          return;
+        }
+        if (finished) throw new Error(t("Некорректный ответ диагностики."));
+        if (event.type === "output") {
+          if (typeof event.text !== "string")
+            throw new Error(t("Некорректный ответ диагностики."));
+          liveOutput = (liveOutput + event.text).slice(0, 32768);
+        } else if (event.type === "completed") {
+          if (!event.result || typeof event.result.output !== "string")
+            throw new Error(t("Некорректный ответ диагностики."));
+          result = event.result;
+          liveOutput = result.output.slice(0, 32768);
+          liveMeta = html`${result.tool.toUpperCase()} · ${result.elapsed_ms} мс · ${result.demo ? "DEMO" : result.success ? t("OK") : t("недоступно")}`;
+          finished = true;
+        } else if (event.type === "error") {
+          throw new Error(
+            typeof event.message === "string"
+              ? event.message
+              : t("Диагностика не завершена"),
+          );
+        }
+        updateTools(ctx);
+      },
+      controller.signal,
+    );
+    if (!finished && generation === ctx.getGeneration())
+      throw new Error(t("Поток диагностики прерван. Повторите проверку."));
+  } catch (error) {
+    if (generation !== ctx.getGeneration() || active !== controller)
+      return true;
+    if (controller.signal.aborted) liveMeta = t("Диагностика отменена");
+    else {
+      liveMeta = t("Диагностика не завершена");
+      liveOutput += (liveOutput ? "\n" : "") + error.message;
       throw error;
     }
-  });
+  } finally {
+    if (active === controller) {
+      active = null;
+      if (generation === ctx.getGeneration()) updateTools(ctx);
+    }
+  }
   return true;
 }

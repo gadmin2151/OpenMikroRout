@@ -337,9 +337,11 @@ async function api(path, options = {}) {
     },
   });
   const data =
-    response.ok && responseType === "blob"
-      ? await response.blob()
-      : await response.json();
+    response.ok && responseType === "stream"
+      ? response
+      : response.ok && responseType === "blob"
+        ? await response.blob()
+        : await response.json();
   if (response.status === 401 && path !== "login") {
     if (generation === authGeneration) {
       clearSession();

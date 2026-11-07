@@ -2,7 +2,9 @@
 
 import ipaddress
 import json
+import math
 import os
+import re
 import selectors
 import shutil
 import sqlite3
@@ -27,6 +29,9 @@ MAX_PORT_RESULTS = 4096
 ACTIVE = ("queued", "running")
 SETTINGS_CHECK_SECONDS = 1
 TOPOLOGY_CHECK_SECONDS = 5
+LIVE_UPDATE_SECONDS = 0.5
+MAX_CONSOLE_LINE = 1024
+OPEN_PORT = re.compile(r"Discovered open port ([0-9]{1,5})/(tcp|udp) on ([0-9.]+)")
 
 
 def validated_target(
@@ -68,7 +73,11 @@ def validated_target(
 
 
 def scan_command(
-    binary: str, request: ScanRequest, settings: ScanSettings, target: str
+    binary: str,
+    request: ScanRequest,
+    settings: ScanSettings,
+    target: str,
+    xml_output: str = "-",
 ) -> list[str]:
     arguments = [
         binary,
@@ -84,8 +93,10 @@ def scan_command(
         "--stats-every",
         "1s",
         "-oX",
-        "-",
+        xml_output,
     ]
+    if xml_output != "-":
+        arguments.append("-v")
     if request.kind == "network":
         arguments += ["-sn", "-PR"]
     else:
@@ -101,6 +112,28 @@ def scan_command(
     return [*arguments, target]
 
 
+def parse_port(element: ET.Element) -> dict[str, Any] | None:
+    try:
+        port = int(element.get("portid", "0"))
+    except ValueError:
+        return None
+    if not 1 <= port <= 65535 or element.get("protocol") not in ("tcp", "udp"):
+        return None
+    state, service = element.find("state"), element.find("service")
+    return {
+        "port": port,
+        "protocol": element.get("protocol"),
+        "state": clean_text(state.get("state", "unknown") if state is not None else "unknown", 32),
+        "reason": clean_text(state.get("reason", "") if state is not None else "", 100),
+        "service": clean_text(service.get("name", "") if service is not None else "", 100),
+        "product": clean_text(service.get("product", "") if service is not None else ""),
+        "version": clean_text(service.get("version", "") if service is not None else ""),
+        "os_guess": clean_text(service.get("ostype", "") if service is not None else "", 100),
+        "method": clean_text(service.get("method", "") if service is not None else "", 32),
+        "confidence": clean_text(service.get("conf", "") if service is not None else "", 8),
+    }
+
+
 def parse_host(element: ET.Element) -> dict[str, Any]:
     addresses, mac, vendor = [], "", ""
     for row in element.findall("address")[:32]:
@@ -111,34 +144,8 @@ def parse_host(element: ET.Element) -> dict[str, Any]:
             vendor = clean_text(row.get("vendor", ""))
     status = element.find("status")
     hostname = element.find("hostnames/hostname")
-    ports = []
     all_ports = element.findall("ports/port")
-    for row in all_ports[:MAX_PORT_RESULTS]:
-        try:
-            port = int(row.get("portid", "0"))
-        except ValueError:
-            continue
-        if not 1 <= port <= 65535 or row.get("protocol") not in ("tcp", "udp"):
-            continue
-        state, service = row.find("state"), row.find("service")
-        ports.append(
-            {
-                "port": port,
-                "protocol": row.get("protocol"),
-                "state": clean_text(
-                    state.get("state", "unknown") if state is not None else "unknown", 32
-                ),
-                "reason": clean_text(state.get("reason", "") if state is not None else "", 100),
-                "service": clean_text(service.get("name", "") if service is not None else "", 100),
-                "product": clean_text(service.get("product", "") if service is not None else ""),
-                "version": clean_text(service.get("version", "") if service is not None else ""),
-                "os_guess": clean_text(
-                    service.get("ostype", "") if service is not None else "", 100
-                ),
-                "method": clean_text(service.get("method", "") if service is not None else "", 32),
-                "confidence": clean_text(service.get("conf", "") if service is not None else "", 8),
-            }
-        )
+    ports = [port for row in all_ports[:MAX_PORT_RESULTS] if (port := parse_port(row))]
     extra = []
     for row in element.findall("ports/extraports")[:16]:
         try:
@@ -165,6 +172,147 @@ def parse_host(element: ET.Element) -> dict[str, Any]:
         "other_ports": extra,
         "ports_truncated": len(all_ports) > MAX_PORT_RESULTS,
     }
+
+
+class ScanOutput:
+    """Bounded incremental observations; final XML replaces preliminary port alerts."""
+
+    def __init__(
+        self, request: ScanRequest, settings: ScanSettings, target: str, result: dict[str, Any]
+    ) -> None:
+        self.request, self.settings, self.target, self.result = request, settings, target, result
+        self.parser = ET.XMLPullParser(events=("start", "end"))
+        self.host_element: ET.Element | None = None
+        self.hosts: dict[str, dict[str, Any]] = {}
+        self.port_indexes: dict[str, dict[tuple[int, str], int]] = {}
+        self.completed: set[str] = set()
+        self.console = b""
+        self.discard_line = False
+        self.tail = b""
+        self.progress = 0.0
+
+    def address(self, element: ET.Element) -> str:
+        for row in element.findall("address")[:32]:
+            if (
+                row.get("addrtype") == "ipv4"
+                and (address := row.get("addr", ""))
+                and self.allowed(address)
+            ):
+                return address
+        return ""
+
+    def allowed(self, address: str) -> bool:
+        if not valid_address(address):
+            return False
+        if self.request.kind == "ports":
+            return address == self.target
+        return ipaddress.IPv4Address(address) in ipaddress.IPv4Network(self.target)
+
+    def host(self, address: str) -> dict[str, Any] | None:
+        if address not in self.hosts:
+            if len(self.hosts) >= self.settings.max_hosts:
+                return None
+            row = parse_host(
+                ET.fromstring(f'<host><address addrtype="ipv4" addr="{address}"/></host>')
+            )
+            row["state"] = "up"
+            self.hosts[address] = row
+            self.port_indexes[address] = {}
+            self.result["hosts"].append(row)
+        return self.hosts[address]
+
+    def port(self, address: str, port: dict[str, Any]) -> None:
+        if address in self.completed or (host := self.host(address)) is None:
+            return
+        key = (int(port["port"]), str(port["protocol"]))
+        index = self.port_indexes[address].get(key)
+        if index is not None:
+            host["ports"][index] = port
+        elif len(host["ports"]) < MAX_PORT_RESULTS:
+            self.port_indexes[address][key] = len(host["ports"])
+            host["ports"].append(port)
+        else:
+            host["ports_truncated"] = True
+
+    def interactive(self, chunk: bytes) -> None:
+        # Only fixed-format alerts for this pinned target are accepted. Arbitrary
+        # diagnostic lines and service banners never become observations or commands.
+        for piece in chunk.splitlines(keepends=True):
+            ended = piece.endswith(b"\n")
+            if not self.discard_line:
+                self.console += piece
+                if len(self.console) > MAX_CONSOLE_LINE:
+                    self.console = b""
+                    self.discard_line = True
+            if not ended:
+                continue
+            if not self.discard_line:
+                match = OPEN_PORT.fullmatch(self.console.decode("ascii", errors="replace").strip())
+                if (
+                    match
+                    and self.request.kind == "ports"
+                    and match[2] == ("udp" if self.request.profile == "udp" else "tcp")
+                    and self.allowed(match[3])
+                ):
+                    element = ET.fromstring(
+                        f'<port portid="{match[1]}" protocol="{match[2]}">'
+                        '<state state="open"/><service method="discovery"/></port>'
+                    )
+                    if parsed := parse_port(element):
+                        self.port(match[3], parsed)
+            self.console, self.discard_line = b"", False
+
+    def task(self, element: ET.Element) -> None:
+        task = clean_text(element.get("task", ""), 100)
+        if task:
+            self.result["task"] = task
+            lower = task.lower()
+            if "service" in lower:
+                self.result["phase"] = "services"
+            elif any(part in lower for part in ("arp", "ping", "host discovery")):
+                self.result["phase"] = "discovering"
+            else:
+                self.result["phase"] = "scanning"
+        if element.tag == "taskbegin":
+            self.progress = 0.0
+        elif element.tag == "taskprogress":
+            value = float(element.get("percent", "0"))
+            if math.isfinite(value):
+                self.progress = min(99, max(0, value))
+        elif element.tag == "taskend":
+            self.result["phase"] = "finalizing"
+        self.result["phase_progress"] = self.progress
+
+    def xml(self, chunk: bytes) -> None:
+        checked = (self.tail + chunk).upper()
+        if b"\0" in checked or b"<!ENTITY" in checked or b"<!DOCTYPE NMAPRUN [" in checked:
+            raise DiscoveryError("Unsupported XML declaration in scan output")
+        self.tail = chunk[-64:]
+        self.parser.feed(chunk)
+        for event, element in self.parser.read_events():
+            if event == "start":
+                if element.tag == "host":
+                    self.host_element = element
+                continue
+            if element.tag in ("taskbegin", "taskprogress", "taskend"):
+                self.task(element)
+                element.clear()
+            elif element.tag == "port" and self.host_element is not None:
+                address = self.address(self.host_element)
+                if address and (parsed := parse_port(element)):
+                    self.port(address, parsed)
+            elif element.tag in ("host", "hosthint"):
+                address = self.address(element)
+                if address and (host := self.host(address)) is not None:
+                    parsed = parse_host(element)
+                    if element.tag == "hosthint":
+                        parsed["ports"] = host["ports"]
+                    host.update(parsed)
+                    if element.tag == "host":
+                        self.completed.add(address)
+                if element.tag == "host":
+                    self.host_element = None
+                element.clear()
 
 
 class ScanService:
@@ -219,6 +367,8 @@ class ScanService:
         result["request"] = json.loads(result["request"])
         if detail:
             result["result"] = json.loads(result["result"])
+            if result["state"] not in ACTIVE:
+                result["result"]["phase"] = result["state"]
         else:
             result.pop("result", None)
         return result
@@ -293,6 +443,8 @@ class ScanService:
                     "hosts": [],
                     "demo": self.demo,
                     "partial": True,
+                    "phase": "queued",
+                    "elapsed_seconds": 0,
                     "note": "No response does not prove that a host is absent",
                 }
                 db.execute(
@@ -333,7 +485,9 @@ class ScanService:
                     time.time(),
                     json.dumps(result),
                     clean_text(error, 500),
-                    min(100, max(0, progress)),
+                    min(100 if state == "completed" else 99, max(0, progress))
+                    if math.isfinite(progress)
+                    else 0,
                     identifier,
                 ),
             )
@@ -359,6 +513,8 @@ class ScanService:
             "hosts": [],
             "demo": self.demo,
             "partial": True,
+            "phase": "starting",
+            "elapsed_seconds": 0,
             "note": "No response does not prove that a host is absent",
         }
         try:
@@ -367,6 +523,7 @@ class ScanService:
                 result.update(
                     {
                         "partial": False,
+                        "phase": "completed",
                         "note": "Деморежим: сканирование не запускалось; сеть не опрашивалась",
                     }
                 )
@@ -385,7 +542,11 @@ class ScanService:
             ET.ParseError,
             subprocess.SubprocessError,
         ) as exc:
-            self._update(identifier, "cancelled" if event.is_set() else "error", result, str(exc))
+            state = "cancelled" if event.is_set() else "error"
+            result.update(partial=True, phase=state)
+            self._update(
+                identifier, state, result, str(exc), float(result.get("phase_progress", 0))
+            )
         finally:
             with self.lock:
                 self.cancelled.pop(identifier, None)
@@ -401,22 +562,34 @@ class ScanService:
         event: threading.Event,
         result: dict[str, Any],
     ) -> None:
-        process = subprocess.Popen(
-            scan_command(binary, request, settings, target),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env={"PATH": os.defpath, "LC_ALL": "C"},
-        )
+        # '-oX -' suppresses interactive open-port alerts. A private inherited pipe
+        # preserves XML and interactive stdout independently, without temporary files.
+        xml_read, xml_write = os.pipe()
+        try:
+            process = subprocess.Popen(
+                scan_command(binary, request, settings, target, f"/dev/fd/{xml_write}"),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(xml_write,),
+                env={"PATH": os.defpath, "LC_ALL": "C"},
+            )
+        except BaseException:
+            os.close(xml_read)
+            raise
+        finally:
+            os.close(xml_write)
         assert process.stdout is not None and process.stderr is not None
-        parser = ET.XMLPullParser(events=("end",))
-        total, progress, tail, error_output = 0, 0.0, b"", bytearray()
-        started, saved = time.monotonic(), 0.0
+        output = ScanOutput(request, settings, target, result)
+        total, error_output = 0, bytearray()
+        started = saved = time.monotonic()
         settings_checked = started
         topology_checked = started
+        xml_stream = os.fdopen(xml_read, "rb", buffering=0)
         try:
             with selectors.DefaultSelector() as selector:
-                selector.register(process.stdout, selectors.EVENT_READ, "xml")
+                selector.register(xml_stream, selectors.EVENT_READ, "xml")
+                selector.register(process.stdout, selectors.EVENT_READ, "interactive")
                 selector.register(process.stderr, selectors.EVENT_READ, "error")
                 while selector.get_map():
                     if event.is_set():
@@ -452,38 +625,29 @@ class ScanService:
                             raise DiscoveryError("Scan output limit reached; results are partial")
                         if key.data == "error":
                             error_output.extend(chunk[: max(0, 4096 - len(error_output))])
-                            continue
-                        checked = (tail + chunk).upper()
-                        if (
-                            b"\0" in checked
-                            or b"<!ENTITY" in checked
-                            or b"<!DOCTYPE NMAPRUN [" in checked
-                        ):
-                            raise DiscoveryError("Unsupported XML declaration in scan output")
-                        tail = chunk[-64:]
-                        parser.feed(chunk)
-                        for _, element in parser.read_events():
-                            if element.tag == "host":
-                                host = parse_host(element)
-                                if host["addresses"] and len(result["hosts"]) < settings.max_hosts:
-                                    result["hosts"].append(host)
-                                element.clear()
-                            elif element.tag == "taskprogress":
-                                progress = float(element.get("percent", "0"))
-                                element.clear()
-                        if time.monotonic() - saved >= 1:
-                            self._update(identifier, "running", result, progress=progress)
-                            saved = time.monotonic()
+                        elif key.data == "interactive":
+                            output.interactive(chunk)
+                        else:
+                            output.xml(chunk)
+                    now = time.monotonic()
+                    if now - saved >= LIVE_UPDATE_SECONDS:
+                        result["elapsed_seconds"] = round(now - started, 1)
+                        self._update(identifier, "running", result, progress=output.progress)
+                        saved = now
             process.wait(timeout=2)
-            parser.close()
             if process.returncode != 0:
                 raise DiscoveryError(
                     "Nmap failed: "
                     + clean_text(error_output.decode("utf-8", errors="replace"), 350)
                 )
-            result["partial"] = any(host["ports_truncated"] for host in result["hosts"])
+            output.parser.close()
+            result["partial"] = any(host["ports_truncated"] for host in result["hosts"]) or bool(
+                set(output.hosts) - output.completed
+            )
+            result.update(phase="completed", elapsed_seconds=round(time.monotonic() - started, 1))
             self._update(identifier, "completed", result, progress=100)
         finally:
+            result["elapsed_seconds"] = round(time.monotonic() - started, 1)
             if process.poll() is None:
                 process.terminate()
                 try:
@@ -493,6 +657,7 @@ class ScanService:
             process.wait(timeout=2)
             process.stdout.close()
             process.stderr.close()
+            xml_stream.close()
 
     def close(self) -> None:
         with self.lock:

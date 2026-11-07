@@ -7,17 +7,19 @@ import platform
 import shutil
 import socket
 import threading
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID
 
+import anyio
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.types import Receive, Scope, Send
 
 from app.auth import (
     AuthError,
@@ -39,7 +41,7 @@ from app.backups import BackupService
 from app.compiler import FirewallError
 from app.connections import ConnectionMonitor, ConnectionQuery, ConnectionSnapshot
 from app.demo import demo_config
-from app.diagnostics import DiagnosticRequest, NetworkDiagnostics
+from app.diagnostics import DIAGNOSTIC_WALL_SECONDS, DiagnosticRequest, NetworkDiagnostics
 from app.fail2ban_container import ContainerFail2ban
 from app.firewall import Conflict, DemoDriver, Driver, FirewallService, LinuxDriver
 from app.models import Configuration, ConfirmRequest, LoginRequest, RevisionRequest, SaveRequest
@@ -55,12 +57,37 @@ from app.updates import UpdateApply, UpdateError, UpdateJob, UpdateService, Upda
 from app.version import VERSION
 from app.web_assets import StaticTextCompression, WebAssets
 from app.web_domain import PanelHostMiddleware
+from app.wireguard import WireGuardError
 from app.wireguard_api import wireguard_router
 from app.wireguard_vault import WireGuardVault
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 REQUEST_BODY_SECONDS = 30.0
+
+
+class DiagnosticStreamResponse(StreamingResponse):
+    """Close the diagnostic on disconnect, send failure and a stalled consumer."""
+
+    def __init__(self, events: AsyncGenerator[str, None]) -> None:
+        self.events = events
+        super().__init__(
+            events,
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            async with asyncio.timeout(DIAGNOSTIC_WALL_SECONDS + 1):
+                await super().__call__(scope, receive, send)
+        except TimeoutError:
+            log.warning("Diagnostic stream exceeded its wall-clock limit")
+        finally:
+            # The generator may be suspended at a yield while ASGI send fails or
+            # blocks; do not rely on garbage collection to terminate the process.
+            with anyio.CancelScope(shield=True):
+                await self.events.aclose()
 
 
 def environment(name: str, legacy: str, default: str = "") -> str:
@@ -254,6 +281,7 @@ def create_app(
     app.state.connections = connections
     app.state.updates = updates
     app.state.telemetry_history = telemetry_history
+    app.state.diagnostics = diagnostics
     app.state.security_services = security_services
     app.add_middleware(
         PanelHostMiddleware, allowed_hosts=settings.allowed_hosts, domains=service.panel_domains
@@ -404,8 +432,32 @@ def create_app(
     )
 
     @app.post("/api/tools/run", dependencies=[Depends(full_access)])
-    def diagnostic(body: DiagnosticRequest) -> dict[str, Any]:
-        return diagnostics.run(body)
+    def diagnostic(body: DiagnosticRequest, request: Request) -> dict[str, Any]:
+        result = diagnostics.run(body)
+        full_access(request)
+        return result
+
+    @app.post("/api/tools/stream", dependencies=[Depends(full_access)])
+    def diagnostic_stream(body: DiagnosticRequest, request: Request) -> DiagnosticStreamResponse:
+        async def events() -> AsyncGenerator[str, None]:
+            iterator = diagnostics.stream(body)
+            try:
+                async for event in iterator:
+                    if await request.is_disconnected():
+                        return
+                    # This is a live session, not the cached role from the initial
+                    # request. Logout, disablement or demotion stops further output.
+                    await run_in_threadpool(full_access, request)
+                    if event is not None:
+                        yield json.dumps(event, ensure_ascii=False) + "\n"
+            except (AuthError, HTTPException, WireGuardError) as exc:
+                message = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+                yield json.dumps({"type": "error", "message": message}, ensure_ascii=False) + "\n"
+            finally:
+                with anyio.CancelScope(shield=True):
+                    await iterator.aclose()
+
+        return DiagnosticStreamResponse(events())
 
     @app.exception_handler(AuthError)
     async def auth_handler(_: Request, exc: AuthError) -> JSONResponse:
