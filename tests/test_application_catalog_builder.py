@@ -390,3 +390,140 @@ def test_local_source_cache_is_pinned_and_cannot_follow_links(tmp_path: Path) ->
     (root / "data/link").symlink_to(root / "data/test")
     with pytest.raises(builder.CatalogBuildError, match="links"):
         fetch(builder.V2FLY_BASE + "data/link", 100)
+
+
+def kagi_data(
+    rows: list[dict[str, object]], monkeypatch: pytest.MonkeyPatch
+) -> tuple[bytes, bytes]:
+    raw = json.dumps(rows).encode()
+    notice = b"MIT License\nCopyright fixture\nPermission granted\n"
+    monkeypatch.setattr(builder, "KAGI_DATA_SHA256", hashlib.sha256(raw).hexdigest())
+    monkeypatch.setattr(builder, "KAGI_LICENSE_SHA256", hashlib.sha256(notice).hexdigest())
+    return raw, notice
+
+
+def kagi_row(host: str, name: str = "Named Service", **extra: object) -> dict[str, object]:
+    return {"d": host, "s": name, "u": f"https://{host}/search?q={{{{s}}}}", "c": "Tech", **extra}
+
+
+def test_kagi_named_websites_preserve_base_and_merge_host_aliases_without_apex_guessing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = CatalogBundle.model_validate(
+        {
+            "version": "v1",
+            "serial": 1,
+            "entries": [
+                entry(
+                    "app.base",
+                    domains=["already.example.com"],
+                    block_validated=True,
+                    allow_over_port_deny=True,
+                )
+            ],
+        }
+    )
+    raw, notice = kagi_data(
+        [
+            kagi_row("www.alpha.example.com", "Alpha    Tools"),
+            kagi_row("alpha.example.com", "Alpha", c="Online Services"),
+            kagi_row("www.beta.example.com", "Beta", ad="example.com"),
+            kagi_row("child.already.example.com", "Covered"),
+            kagi_row("notalready.example.com", "Different DNS label"),
+            kagi_row("tenant.github.io", "Tenant docs"),
+            kagi_row("ignored.example.com", "News", c="News"),
+        ],
+        monkeypatch,
+    )
+    result, report = builder.add_kagi_web_services(base, raw, notice)
+    assert result.entries[:1] == base.entries
+    by_id = {row.id: row for row in result.entries}
+    alpha = by_id["app.kagi.alpha.example.com"]
+    assert alpha.domains == ["alpha.example.com", "www.alpha.example.com"]
+    assert alpha.name.en == "Alpha"
+    assert by_id["app.kagi.beta.example.com"].domains == ["www.beta.example.com"]
+    assert by_id["app.kagi.tenant.github.io"].domains == ["tenant.github.io"]
+    assert "app.kagi.notalready.example.com" in by_id
+    assert report["added_named_web_services"] == 4
+    assert report["skipped_rows"]["covered_by_existing_suffix"] == 1
+    assert report["merged_display_aliases"] == 1
+    assert all(
+        not row.block_validated and not row.allow_over_port_deny for row in result.entries[1:]
+    )
+    assert all("not installed-app or DPI" in row.coverage for row in result.entries[1:])
+    assert all(row.category == "web-services" for row in result.entries[1:])
+    rebuilt, _ = builder.add_kagi_web_services(base, raw, notice)
+    assert rebuilt == result
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost",
+        "host.local",
+        "host.invalid",
+        "127.0.0.1",
+        "127.1",
+        "0177.0.0.1",
+        "0x7f.0.0.1",
+        "co.uk",
+        "github.io",
+        "readthedocs.io",
+    ],
+)
+def test_kagi_rejects_local_ip_and_known_namespace_roots(host: str) -> None:
+    with pytest.raises(ValueError):
+        builder.public_hostname(host)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["bad\nname", "bad\x85name", "bad\u202ename", "bad\u200bname", "bad\u034fname", "x" * 129],
+)
+def test_kagi_rejects_control_bidi_invisible_or_overlong_names(name: str) -> None:
+    with pytest.raises(ValueError):
+        builder.website_name(name)
+
+
+def test_kagi_collapses_unicode_whitespace_and_validates_url_hostname_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert builder.website_name("  Named\u00a0\u2002Service   ") == "Named Service"
+    base = CatalogBundle.model_validate(
+        {"version": "v1", "serial": 1, "entries": [entry("app.base")]}
+    )
+    raw, notice = kagi_data(
+        [
+            kagi_row("one.example.com", u="https://one.example.com.evil.test/search"),
+            kagi_row("two.example.com", u="javascript:alert(1)"),
+            kagi_row("three.example.com", u="https://user:pass@three.example.com/search"),
+            kagi_row("four.example.com", "Nice\u202eName"),
+            kagi_row("valid.example.com", u="https://search.valid.example.com/search"),
+        ],
+        monkeypatch,
+    )
+    result, report = builder.add_kagi_web_services(base, raw, notice)
+    assert len(result.entries) == 2 and result.entries[-1].domains == ["valid.example.com"]
+    assert report["skipped_rows"]["invalid_or_conflicting_hostname"] == 4
+
+
+def test_kagi_hash_license_collision_and_policy_bounds_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = CatalogBundle.model_validate(
+        {"version": "v1", "serial": 1, "entries": [entry("app.base")]}
+    )
+    raw, notice = kagi_data([kagi_row("new.example.com")], monkeypatch)
+    with pytest.raises(builder.CatalogBuildError, match="data hash"):
+        builder.add_kagi_web_services(base, raw + b" ", notice)
+    with pytest.raises(builder.CatalogBuildError, match="license hash"):
+        builder.add_kagi_web_services(base, raw, notice + b" ")
+    monkeypatch.setattr(builder, "MAX_PRIVATE_IDENTITIES", 1)
+    with pytest.raises(builder.CatalogBuildError, match="4096"):
+        builder.add_kagi_web_services(base, raw, notice)
+    monkeypatch.setattr(builder, "MAX_PRIVATE_IDENTITIES", 4096)
+    collision = CatalogBundle.model_validate(
+        {"version": "v1", "serial": 1, "entries": [entry("app.kagi.new.example.com")]}
+    )
+    with pytest.raises(builder.CatalogBuildError, match="collides"):
+        builder.add_kagi_web_services(collision, raw, notice)

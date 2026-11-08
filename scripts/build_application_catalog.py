@@ -14,12 +14,14 @@ import os
 import re
 import stat
 import sys
+import unicodedata
 import urllib.request
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -45,6 +47,56 @@ MAX_FULL_SOURCE_FILES = 4096
 MAX_FULL_SOURCE_BYTES = 32 * 1024 * 1024
 FULL_DOMAINS_PER_APP = 64
 NDPI_COMMIT = "cd1d03a52f0c968f1835110d70f5da652171a5d5"
+KAGI_COMMIT = "c24dcfc55dc5f3828d9e549449c82131a1fbffce"
+KAGI_BASE = f"https://raw.githubusercontent.com/kagisearch/bangs/{KAGI_COMMIT}/"
+KAGI_DATA_SHA256 = "b621b513f7786f20065ca73b991bfc91ac3fdedf7162f698021adca53b2a8bb1"
+KAGI_LICENSE_SHA256 = "f7ae822220cdcc928762458983fddbf1d517f1c81f1455940fbf3bc960e24cf3"
+MAX_KAGI_BYTES = 4 * 1024 * 1024
+MAX_PRIVATE_IDENTITIES = 4096
+# Conservative roots excluded from this reviewed, hash-pinned directory profile.
+# This list deliberately does not claim to implement the complete Public Suffix List.
+WEBSITE_NAMESPACE_ROOTS = frozenset(
+    {
+        "co.uk",
+        "org.uk",
+        "ac.uk",
+        "gov.uk",
+        "com.au",
+        "net.au",
+        "org.au",
+        "edu.au",
+        "co.jp",
+        "ne.jp",
+        "or.jp",
+        "co.nz",
+        "org.nz",
+        "co.in",
+        "firm.in",
+        "com.br",
+        "com.cn",
+        "net.cn",
+        "org.cn",
+        "com.hk",
+        "com.tw",
+        "co.kr",
+        "co.za",
+        "com.sg",
+        "github.io",
+        "gitlab.io",
+        "readthedocs.io",
+        "readthedocs.org",
+        "blogspot.com",
+        "wordpress.com",
+        "pages.dev",
+        "workers.dev",
+        "vercel.app",
+        "netlify.app",
+        "herokuapp.com",
+        "appspot.com",
+        "cloudfront.net",
+        "azurewebsites.net",
+    }
+)
 PROVIDER_LISTS = frozenset(
     {
         "akamai",
@@ -663,6 +715,221 @@ def full_catalog(
     return result, report
 
 
+def kagi_source(relative: str, directory: Path | None = None) -> bytes:
+    if relative not in {"data/bangs.json", "LICENSE"}:
+        raise CatalogBuildError("Only fixed Kagi data and license paths are allowed")
+    limit = MAX_KAGI_BYTES if relative == "data/bangs.json" else 16384
+    if directory is not None:
+        if directory.is_symlink() or not directory.is_dir():
+            raise CatalogBuildError("Kagi cache must be a real directory")
+        root = directory.resolve(strict=True)
+        path = root / relative
+        if path.is_symlink() or not path.resolve(strict=True).is_relative_to(root):
+            raise CatalogBuildError("Kagi cache links cannot escape the source root")
+        return read_file(path, limit)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    request = urllib.request.Request(
+        KAGI_BASE + relative,
+        headers={"Accept-Encoding": "identity", "User-Agent": "OMR-Catalog/1"},
+    )
+    with opener.open(request, timeout=10) as response:
+        if (
+            response.status != 200
+            or response.headers.get("Content-Encoding", "identity") != "identity"
+        ):
+            raise CatalogBuildError("Unexpected Kagi source response")
+        raw = response.read(limit + 1)
+    if not isinstance(raw, bytes) or len(raw) > limit:
+        raise CatalogBuildError("Kagi source exceeds its size limit")
+    return raw
+
+
+def public_hostname(value: str) -> str:
+    candidate = domain_name(value)
+    if not re.search(r"[a-z]", candidate.rsplit(".", 1)[-1]):
+        raise ValueError("A website hostname requires an alphabetic DNS suffix")
+    if (
+        candidate in WEBSITE_NAMESPACE_ROOTS
+        or "." not in candidate
+        or candidate.endswith(
+            (".local", ".localhost", ".invalid", ".test", ".example", ".internal", ".onion")
+        )
+    ):
+        raise ValueError("Hostname must be public DNS")
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        return candidate
+    raise ValueError("A website hint cannot be an IP literal")
+
+
+def website_name(value: object) -> str:
+    if not isinstance(value, str) or len(value) > 4096:
+        raise ValueError("Invalid website display name")
+    if any(
+        unicodedata.category(character) in {"Cc", "Cf", "Cs"} or character == "\u034f"
+        for character in value
+    ):
+        raise ValueError("Website names cannot contain control or invisible characters")
+    result = " ".join(value.split())
+    if not 1 <= len(result) <= 128:
+        raise ValueError("Website display name exceeds its bound")
+    return result
+
+
+def add_kagi_web_services(
+    bundle: CatalogBundle, raw: bytes, license_raw: bytes
+) -> tuple[CatalogBundle, dict[str, Any]]:
+    """Append named website hints without inventing installed-app/DPI coverage."""
+    if len(raw) > MAX_KAGI_BYTES or hashlib.sha256(raw).hexdigest() != KAGI_DATA_SHA256:
+        raise CatalogBuildError("Pinned Kagi data hash mismatch")
+    if len(license_raw) > 16384 or hashlib.sha256(license_raw).hexdigest() != KAGI_LICENSE_SHA256:
+        raise CatalogBuildError("Pinned Kagi MIT license hash mismatch")
+    rows = json.loads(raw)
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 20000:
+        raise CatalogBuildError("Invalid bounded Kagi directory")
+    existing_suffixes = {
+        domain
+        for entry in bundle.entries
+        if entry.kind == "application"
+        for domain in entry.domains
+    }
+    groups: dict[str, dict[str, set[str]]] = {}
+    skipped: Counter[str] = Counter()
+    categories = {"Tech", "Online Services"}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise CatalogBuildError("Invalid Kagi directory row")
+        if row.get("c") not in categories:
+            skipped["other_category"] += 1
+            continue
+        label, declared_host, template = row.get("s"), row.get("d"), row.get("u")
+        if (
+            not isinstance(declared_host, str)
+            or not isinstance(template, str)
+            or len(template) > 4096
+        ):
+            skipped["invalid_name_or_url"] += 1
+            continue
+        try:
+            name = website_name(label)
+            host = public_hostname(declared_host)
+            url = urlsplit(template)
+            if (
+                url.scheme not in {"http", "https"}
+                or url.username
+                or url.password
+                or not url.hostname
+            ):
+                raise ValueError("Unsupported website URL")
+            endpoint = public_hostname(url.hostname)
+            if endpoint != host and not endpoint.endswith("." + host):
+                raise ValueError("Website hostname and search endpoint differ")
+        except ValueError:
+            skipped["invalid_or_conflicting_hostname"] += 1
+            continue
+        labels = host.split(".")
+        if any(".".join(labels[offset:]) in existing_suffixes for offset in range(len(labels))):
+            skipped["covered_by_existing_suffix"] += 1
+            continue
+        # Strip www only for identity grouping. Matching hints retain the original
+        # host, and never use Kagi's optional apex/ad override or a guessed eTLD.
+        canonical = host.removeprefix("www.")
+        group = groups.setdefault(canonical, {"hosts": set(), "names": set(), "categories": set()})
+        group["hosts"].add(host)
+        group["names"].add(name)
+        group["categories"].add(row["c"])
+    document = bundle.model_dump(mode="json")
+    ids = {entry.id for entry in bundle.entries}
+    additions: list[dict[str, Any]] = []
+    aliases = 0
+    for host, group in sorted(groups.items()):
+        identifier = source_id("kagi", host)
+        if identifier in ids:
+            raise CatalogBuildError("Kagi generated ID collides with an existing identity")
+        ids.add(identifier)
+        names = sorted(group["names"], key=lambda name: (len(name), name.casefold(), name))
+        name = names[0]
+        hints = sorted(group["hosts"])
+        if len(hints) > 256:
+            raise CatalogBuildError("A Kagi identity exceeds the hostname bound")
+        document["entries"].append(
+            {
+                "id": identifier,
+                "kind": "application",
+                "name": {"ru": name, "en": name},
+                "category": "web-services",
+                "domains": hints,
+                "domain_provider_refs": ["kagi:" + hashlib.sha256(host.encode()).hexdigest()[:32]],
+                "coverage": (
+                    "Named website hostname suffix only; not installed-app or DPI identity; "
+                    "other app endpoints, encrypted/unknown traffic may not match"
+                ),
+                "license_profile": "MIT Kagi directory; hostname engine availability required",
+                "observable": True,
+                "block_validated": False,
+                "allow_over_port_deny": False,
+            }
+        )
+        additions.append(
+            {
+                "id": identifier,
+                "source_hosts": hints,
+                "name_aliases": names,
+                "source_categories": sorted(group["categories"]),
+            }
+        )
+        aliases += max(0, len(names) - 1)
+    private_count = sum(row["kind"] in ("application", "protocol") for row in document["entries"])
+    if private_count > MAX_PRIVATE_IDENTITIES:
+        raise CatalogBuildError(
+            "Optional Kagi expansion exceeds the 4096 native policy identity bound"
+        )
+    notice = license_raw.decode("utf-8", errors="strict")
+    metadata = {
+        "id": "kagi-named-web-services",
+        "commit": KAGI_COMMIT,
+        "license": "MIT",
+        "source_url": KAGI_BASE + "data/bangs.json",
+        "source_sha256": KAGI_DATA_SHA256,
+        "license_sha256": KAGI_LICENSE_SHA256,
+        "interpretation": "Website hostname hints; not DPI/installed-app signatures or permissions",
+        "license_notice_format": "framed-text-v1; concatenate contents between BEGIN/END-NOTICE",
+    }
+    for index, offset in enumerate(range(0, len(notice), 450), 1):
+        metadata[f"license_notice_{index:03}"] = (
+            "BEGIN-NOTICE\n" + notice[offset : offset + 450] + "\nEND-NOTICE"
+        )
+    document["sources"].append(metadata)
+    result = CatalogBundle.model_validate(document)
+    if result.entries[: len(bundle.entries)] != bundle.entries:
+        raise CatalogBuildError("Kagi expansion changed an existing catalog entry")
+    if len(result.model_dump_json().encode()) > MAX_CATALOG_BYTES:
+        raise CatalogBuildError("Optional Kagi expansion exceeds the catalog byte bound")
+    return result, {
+        "repository": "https://github.com/kagisearch/bangs",
+        "commit": KAGI_COMMIT,
+        "source_sha256": KAGI_DATA_SHA256,
+        "license": "MIT",
+        "license_notice": notice,
+        "source_rows": len(rows),
+        "selected_categories": sorted(categories),
+        "added_named_web_services": len(additions),
+        "merged_display_aliases": aliases,
+        "native_policy_identities": private_count,
+        "native_policy_limit": MAX_PRIVATE_IDENTITIES,
+        "entries_total": len(result.entries),
+        "skipped_rows": dict(sorted(skipped.items())),
+        "entries": additions,
+        "capabilities_promoted_by_import": False,
+        "scope": "Listed website hostnames/subdomains; not all endpoints or app processes",
+        "hostname_review": (
+            "Pinned reviewed input; conservative namespace-root rejects; "
+            "not complete PSL validation"
+        ),
+    }
+
+
 def load_key(path: Path) -> Ed25519PrivateKey:
     if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) & 0o077:
         raise CatalogBuildError("Signing key must be a private regular file (0600)")
@@ -688,6 +955,8 @@ def build_catalog(
     fetcher: Fetcher = fetch_source,
     expand_sources: bool = False,
     ndpi_capabilities: Path | None = None,
+    with_kagi_web_services: bool = False,
+    kagi_source_dir: Path | None = None,
 ) -> dict[str, Any]:
     if serial <= 0:
         raise CatalogBuildError(
@@ -707,6 +976,7 @@ def build_catalog(
     )
     domain_report = None
     full_report = None
+    kagi_report = None
     if with_domain_hints or expand_sources:
         loader = DomainHints(read_pin(), fetcher, full_catalog=expand_sources)
         bundle, domain_report = add_domain_hints(bundle, loader)
@@ -718,6 +988,12 @@ def build_catalog(
                 raise CatalogBuildError("Engine capabilities must be a bounded object")
             bundle, full_report = full_catalog(bundle, loader, capabilities)
             domain_report["skipped_rows"] = dict(sorted(loader.skipped.items()))
+    if with_kagi_web_services:
+        bundle, kagi_report = add_kagi_web_services(
+            bundle,
+            kagi_source("data/bangs.json", kagi_source_dir),
+            kagi_source("LICENSE", kagi_source_dir),
+        )
     raw = (
         json.dumps(
             bundle.model_dump(mode="json"),
@@ -745,6 +1021,7 @@ def build_catalog(
         "signing_public_key_sha256": hashlib.sha256(public).hexdigest(),
         "domain_hints": domain_report,
         "full_sources": full_report,
+        "kagi_web_services": kagi_report,
         "capabilities_promoted_by_import": False,
     }
     artifacts = {
@@ -788,6 +1065,8 @@ def main() -> None:
     parser.add_argument("--expand-sources", action="store_true")
     parser.add_argument("--ndpi-capabilities", type=Path)
     parser.add_argument("--domain-source-dir", type=Path)
+    parser.add_argument("--with-kagi-web-services", action="store_true")
+    parser.add_argument("--kagi-source-dir", type=Path)
     args = parser.parse_args()
     try:
         result = build_catalog(
@@ -799,6 +1078,8 @@ def main() -> None:
             with_domain_hints=args.with_domain_hints,
             expand_sources=args.expand_sources,
             ndpi_capabilities=args.ndpi_capabilities,
+            with_kagi_web_services=args.with_kagi_web_services,
+            kagi_source_dir=args.kagi_source_dir,
             fetcher=local_source_fetcher(args.domain_source_dir)
             if args.domain_source_dir
             else fetch_source,
