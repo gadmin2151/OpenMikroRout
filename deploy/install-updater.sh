@@ -66,7 +66,7 @@ else
 fi
 install -d -m 755 "$maintenance" "$maintenance/app" /opt/openmikrorout-releases
 install -d -m 700 /var/backups/openmikrorout /var/lib/openmikrorout/updates
-for module in __init__.py updates.py update_worker.py totp.py version.py; do
+for module in __init__.py updates.py update_worker.py totp.py version.py third_party_license.py ndpi-license-6.0.txt; do
   install -m 644 "$source_dir/app/$module" "$maintenance/app/$module"
 done
 python3 -m venv "$maintenance/.venv"

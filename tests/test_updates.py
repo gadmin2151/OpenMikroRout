@@ -591,3 +591,67 @@ def test_update_api_roles_reauthentication_and_maintenance_lock(tmp_path: Path) 
             == 423
         )
         assert client.get("/api/updates").status_code == 200
+
+
+def test_nested_application_catalog_backup_includes_uncheckpointed_wal(tmp_path: Path) -> None:
+    config, source = installation(tmp_path)
+    nested = config.data_dir / "applications"
+    nested.mkdir()
+    with closing(sqlite3.connect(nested / "catalog.sqlite3")) as writer:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("CREATE TABLE catalogs (version TEXT)")
+        writer.execute("INSERT INTO catalogs VALUES ('signed-data-v2')")
+        writer.commit()
+        assert (nested / "catalog.sqlite3-wal").is_file()
+        backup = config.backup_dir / "nested"
+        UpdateWorker(config, Control(config), client=source)._backup(backup)
+        copied = backup / "data/applications/catalog.sqlite3"
+        with closing(sqlite3.connect(copied)) as reader:
+            assert reader.execute("SELECT version FROM catalogs").fetchall() == [
+                ("signed-data-v2",)
+            ]
+        assert copied.stat().st_mode & 0o777 == 0o600
+        assert not list((backup / "data").rglob("*.sqlite3-wal"))
+        assert not list((backup / "data").rglob("*.sqlite3-shm"))
+
+
+def test_backup_rejects_nested_symbolic_link_before_copy(tmp_path: Path) -> None:
+    config, source = installation(tmp_path)
+    external = tmp_path / "external.sqlite3"
+    external.write_text("do not copy")
+    nested = config.data_dir / "applications"
+    nested.mkdir()
+    (nested / "catalog.sqlite3").symlink_to(external)
+    backup = config.backup_dir / "nested-link"
+    with pytest.raises(UpdateError, match="symbolic link"):
+        UpdateWorker(config, Control(config), client=source)._backup(backup)
+    assert not (backup / "data").exists()
+
+
+def test_verified_native_release_requires_license_before_installer_and_cutover(
+    tmp_path: Path,
+) -> None:
+    from app.third_party_license import LicenseError
+
+    config, source = installation(tmp_path)
+    control = Control(config)
+    installer_calls: list[Path] = []
+    worker = UpdateWorker(
+        config,
+        control,
+        client=source,
+        installer=lambda target, manifest: installer_calls.append(target),
+    )
+    with (
+        patch(
+            "app.third_party_license.require_installation_acceptance",
+            side_effect=LicenseError("explicit acceptance required"),
+        ) as gate,
+        pytest.raises(UpdateError, match="explicit acceptance"),
+    ):
+        worker.run()
+    gate.assert_called_once()
+    assert installer_calls == [] and control.calls == []
+    assert installed_version(config.install_dir) == "0.3.0"
+    assert private_json(config.state_dir / "job.json")["phase"] == "failed"
+    assert not (config.backup_dir / ("c" * 32)).exists()

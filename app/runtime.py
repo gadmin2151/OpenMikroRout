@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from app.application_guard import quarantine
+from app.application_policy import active as applications_active
 from app.compiler import FirewallError
 from app.fail2ban_attempts import ConnectionAttemptCollector
 from app.fail2ban_models import F2BConfiguration
@@ -21,6 +23,7 @@ from app.rule_protection import effective_fail2ban
 from app.system_list_runtime import SystemListRuntime
 
 if TYPE_CHECKING:
+    from app.application_runtime import ApplicationRuntime
     from app.wireguard_vault import WireGuardVault
 
 
@@ -63,6 +66,7 @@ class RouterRuntime:
         system_lists: SystemListRuntime | None = None,
         fail2ban: Fail2banService | None = None,
         attempts: ConnectionAttemptCollector | None = None,
+        applications: "ApplicationRuntime | None" = None,
     ) -> None:
         self.network = network
         self.links = links
@@ -72,6 +76,8 @@ class RouterRuntime:
         self.system_lists = system_lists
         self.fail2ban = fail2ban
         self.attempts = attempts
+        self.applications = applications
+        self.applications_failed = False
 
     def prepare(self, target: Configuration, *, create: bool = True) -> None:
         if self.system_lists:
@@ -87,6 +93,7 @@ class RouterRuntime:
 
     def restore_guards(self, applied: Configuration) -> None:
         """Protect the confirmed configuration before any fallible startup dependency."""
+        quarantine(self.filters, applied)
         if self.vpn_routes:
             self.vpn_routes.restore_guards(applied.network)
         self.filters.restore(wireguard_guard_patch(self.filters.snapshot(), applied))
@@ -107,6 +114,8 @@ class RouterRuntime:
             snapshot["fail2ban"] = self.fail2ban.snapshot(effective_fail2ban(previous))
         if self.attempts:
             snapshot["connection_attempts"] = effective_fail2ban(previous).model_dump(mode="json")
+        if self.applications:
+            snapshot["applications"] = self.applications.snapshot(previous)
         return snapshot
 
     def check(
@@ -123,13 +132,29 @@ class RouterRuntime:
         if self.vpn_routes:
             self.vpn_routes.check(previous.network, target.network)
         self.network.check(previous.network, target.network)
-        self.filters.restore(filter_patch(self.filters.snapshot(), target), test=True)
+        epoch = None
+        if self.applications:
+            self.applications.check(target)
+            epoch = self.applications.epoch_for(target)
+            if applications_active(previous) or applications_active(target):
+                self.applications.mangle_apply(
+                    self.applications.mangle_snapshot(), target, epoch, test=True
+                )
+        self.filters.restore(
+            filter_patch(self.filters.snapshot(), target, application_epoch=epoch), test=True
+        )
 
     def preview(self, previous: Configuration, target: Configuration) -> dict[str, Any]:
         preview = {
             "links": self.links.preview(previous.network, target.network),
             "network": self.network.preview(previous.network, target.network),
-            "filter_script": filter_patch(self.filters.snapshot(), target),
+            "filter_script": filter_patch(
+                self.filters.snapshot(),
+                target,
+                application_epoch=self.applications.epoch_for(target)
+                if self.applications
+                else None,
+            ),
         }
         if self.wireguard:
             preview["wireguard"] = self.wireguard.preview(previous.network, target.network)
@@ -141,9 +166,17 @@ class RouterRuntime:
             preview["fail2ban"] = self.fail2ban.preview(
                 effective_fail2ban(previous), effective_fail2ban(target)
             )
+        if self.applications:
+            preview["applications"] = {
+                "enabled": target.applications.enabled,
+                "mode": target.applications.mode,
+                "rules": len(target.applications.rules),
+                "kernel_verified": self.applications.capabilities()["kernel_verified"],
+            }
         return preview
 
     def apply(self, previous: Configuration, target: Configuration) -> None:
+        quarantine(self.filters, previous, target)
         if self.vpn_routes:
             self.vpn_routes.protect(previous.network, target.network)
         self.filters.restore(wireguard_guard_patch(self.filters.snapshot(), target, previous))
@@ -160,7 +193,14 @@ class RouterRuntime:
             self.vpn_routes.apply(previous.network, target.network)
         self.network.apply(previous.network, target.network)
         self.links.finalize(previous.network, target.network)
-        self.filters.restore(filter_patch(self.filters.snapshot(), target))
+        epoch = None
+        if self.applications:
+            self.applications.apply(target)
+            epoch = self.applications.epoch_for(target)
+            if applications_active(previous) or applications_active(target):
+                self.applications.mangle_apply(self.applications.mangle_snapshot(), target, epoch)
+            self.applications_failed = False
+        self.filters.restore(filter_patch(self.filters.snapshot(), target, application_epoch=epoch))
         if self.fail2ban:
             self.fail2ban.apply(effective_fail2ban(previous), effective_fail2ban(target))
         if self.vpn_routes:
@@ -168,6 +208,10 @@ class RouterRuntime:
 
     def rollback(self, snapshot: dict[str, Any]) -> None:
         errors: list[str] = []
+        previous_app = None
+        if self.applications and "applications" in snapshot:
+            previous_app = Configuration.model_validate(snapshot["applications"]["configuration"])
+            quarantine(self.filters, self.applications.config, previous_app)
         # Establish confinement before restoring any dependency or relaxing filter state.
         if "vpn_routes" in snapshot and self.vpn_routes:
             self.vpn_routes.protect_rollback(snapshot["vpn_routes"])
@@ -196,7 +240,10 @@ class RouterRuntime:
         if "filter" in snapshot:
             try:
                 payload = filter_rollback(
-                    self.filters.snapshot(), snapshot["filter"], keep_wireguard_guards=True
+                    self.filters.snapshot(),
+                    snapshot["filter"],
+                    keep_wireguard_guards=True,
+                    keep_application_guards=previous_app is not None,
                 )
                 self.filters.restore(payload, test=True)
                 self.filters.restore(payload)
@@ -227,10 +274,32 @@ class RouterRuntime:
                 self.links.rollback(snapshot["links"])
             except (FirewallError, OSError) as exc:
                 errors.append(f"Link recovery: {exc}")
+        if self.applications and previous_app is not None:
+            try:
+                was_active = applications_active(self.applications.config)
+                self.applications.rollback(snapshot["applications"])
+                if was_active or applications_active(previous_app):
+                    self.applications.mangle_apply(
+                        self.applications.mangle_snapshot(),
+                        previous_app,
+                        self.applications.epoch_for(previous_app),
+                    )
+                self.applications_failed = False
+            except (FirewallError, OSError, ValueError) as exc:
+                errors.append(f"Application recovery: {exc}")
         if errors:
             raise FirewallError("; ".join(errors)[:1500])
         if "filter" in snapshot:
-            self.filters.restore(filter_rollback(self.filters.snapshot(), snapshot["filter"]))
+            if previous_app is not None and self.applications and applications_active(previous_app):
+                self.filters.restore(
+                    filter_patch(
+                        self.filters.snapshot(),
+                        previous_app,
+                        application_epoch=self.applications.epoch_for(previous_app),
+                    )
+                )
+            else:
+                self.filters.restore(filter_rollback(self.filters.snapshot(), snapshot["filter"]))
         if "vpn_routes" in snapshot and self.vpn_routes:
             self.vpn_routes.finish_rollback(snapshot["vpn_routes"])
 
@@ -240,12 +309,42 @@ class RouterRuntime:
             result["wireguard"] = self.wireguard.status()
         if self.vpn_routes:
             result["vpn_routes"] = self.vpn_routes.status()
+        if self.applications:
+            result["applications"] = self.applications.status()
         return result
 
     def counters(self) -> dict[str, dict[str, int]]:
         return filter_counters(self.filters.snapshot(with_counters=True))
 
+    def shutdown_applications(self) -> None:
+        if self.applications:
+            quarantine(self.filters, self.applications.config)
+            self.applications.close()
+
+    def guard_application_health(self) -> None:
+        applications = self.applications
+        if (
+            applications
+            and applications.config.applications.enabled
+            and not self.applications_failed
+            and (applications_active(applications.config) or applications.process is not None)
+            and not applications.status()["healthy"]
+        ):
+            enforcing = applications_active(applications.config)
+            if enforcing:
+                quarantine(self.filters, applications.config)
+            self.applications_failed = True
+            applications.stop()
+            applications.error = (
+                "Application engine failed or license changed; scope quarantined"
+                if enforcing
+                else "Application observer stopped: engine, profile, license or integrity changed"
+            )
+
     def maintain(self) -> None:
+        self.guard_application_health()
+        if self.applications:
+            self.applications.maintain()
         if self.wireguard:
             self.wireguard.maintain()
 

@@ -1,0 +1,697 @@
+{
+  "format": 1,
+  "status": "design-seed-not-a-production-catalog",
+  "observation_date": "2026-11-08",
+  "sources": [
+    {
+      "id": "ndpi",
+      "version": "6.0",
+      "commit": "1a5293396337f9a72dfee1fa070b2c4b0a0a3aaf"
+    },
+    {
+      "id": "v2fly",
+      "version": "20261108011013",
+      "commit": "e8d7a10a15bf662c927a40a3aa680bae86379608"
+    }
+  ],
+  "family_count": 15,
+  "entry_count": 37,
+  "runtime_activated": false,
+  "interpretation": "Verified source mappings only; labels do not establish reliable detection, process identity, licensing approval or enforcement support.",
+  "entries": [
+    {
+      "id": "app.telegram",
+      "kind": "family",
+      "name": {
+        "ru": "Telegram",
+        "en": "Telegram"
+      },
+      "category": "messaging",
+      "children": ["app.telegram.general", "app.telegram.calls"],
+      "domain_provider_refs": ["v2fly:telegram"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.telegram.general",
+      "kind": "application",
+      "parent": "app.telegram",
+      "name": {
+        "ru": "Telegram · Основной сервис",
+        "en": "Telegram · General"
+      },
+      "category": "messaging",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_TELEGRAM",
+        "native_id": 185
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.telegram.calls",
+      "kind": "application",
+      "parent": "app.telegram",
+      "name": {
+        "ru": "Telegram · Звонки",
+        "en": "Telegram · Calls"
+      },
+      "category": "messaging",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_TELEGRAM_VOIP",
+        "native_id": 355
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.youtube",
+      "kind": "family",
+      "name": {
+        "ru": "YouTube",
+        "en": "YouTube"
+      },
+      "category": "video",
+      "children": [
+        "app.youtube.main",
+        "app.youtube.upload",
+        "app.youtube.kids"
+      ],
+      "domain_provider_refs": ["v2fly:youtube"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.youtube.main",
+      "kind": "application",
+      "parent": "app.youtube",
+      "name": {
+        "ru": "YouTube · Основной сервис",
+        "en": "YouTube · General"
+      },
+      "category": "video",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_YOUTUBE",
+        "native_id": 124
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.youtube.upload",
+      "kind": "application",
+      "parent": "app.youtube",
+      "name": {
+        "ru": "YouTube · Загрузка видео",
+        "en": "YouTube · Upload"
+      },
+      "category": "video",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_YOUTUBE_UPLOAD",
+        "native_id": 136
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.youtube.kids",
+      "kind": "application",
+      "parent": "app.youtube",
+      "name": {
+        "ru": "YouTube · Детский сервис",
+        "en": "YouTube · Kids"
+      },
+      "category": "video",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_YOUTUBE_KIDS",
+        "native_id": 473
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.whatsapp",
+      "kind": "family",
+      "name": {
+        "ru": "WhatsApp",
+        "en": "WhatsApp"
+      },
+      "category": "messaging",
+      "children": [
+        "app.whatsapp.general",
+        "app.whatsapp.calls",
+        "app.whatsapp.files"
+      ],
+      "domain_provider_refs": ["v2fly:whatsapp"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.whatsapp.general",
+      "kind": "application",
+      "parent": "app.whatsapp",
+      "name": {
+        "ru": "WhatsApp · Основной сервис",
+        "en": "WhatsApp · General"
+      },
+      "category": "messaging",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_WHATSAPP",
+        "native_id": 142
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.whatsapp.calls",
+      "kind": "application",
+      "parent": "app.whatsapp",
+      "name": {
+        "ru": "WhatsApp · Звонки",
+        "en": "WhatsApp · Calls"
+      },
+      "category": "messaging",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_WHATSAPP_CALL",
+        "native_id": 45
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.whatsapp.files",
+      "kind": "application",
+      "parent": "app.whatsapp",
+      "name": {
+        "ru": "WhatsApp · Файлы",
+        "en": "WhatsApp · Files"
+      },
+      "category": "messaging",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_WHATSAPP_FILES",
+        "native_id": 242
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.discord",
+      "kind": "family",
+      "name": {
+        "ru": "Discord",
+        "en": "Discord"
+      },
+      "category": "messaging",
+      "children": ["app.discord.general", "app.discord.calls"],
+      "domain_provider_refs": ["v2fly:discord"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.discord.general",
+      "kind": "application",
+      "parent": "app.discord",
+      "name": {
+        "ru": "Discord · Основной сервис",
+        "en": "Discord · General"
+      },
+      "category": "messaging",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_DISCORD",
+        "native_id": 58
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.discord.calls",
+      "kind": "application",
+      "parent": "app.discord",
+      "name": {
+        "ru": "Discord · Звонки",
+        "en": "Discord · Calls"
+      },
+      "category": "messaging",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_DISCORD_CALL",
+        "native_id": 489
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.teams",
+      "kind": "family",
+      "name": {
+        "ru": "Microsoft Teams",
+        "en": "Microsoft Teams"
+      },
+      "category": "conferencing",
+      "children": ["app.teams.general", "app.teams.calls"],
+      "domain_provider_refs": [],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.teams.general",
+      "kind": "application",
+      "parent": "app.teams",
+      "name": {
+        "ru": "Microsoft Teams · Основной сервис",
+        "en": "Microsoft Teams · General"
+      },
+      "category": "conferencing",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_MSTEAMS",
+        "native_id": 250
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.teams.calls",
+      "kind": "application",
+      "parent": "app.teams",
+      "name": {
+        "ru": "Microsoft Teams · Звонки",
+        "en": "Microsoft Teams · Calls"
+      },
+      "category": "conferencing",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_MSTEAMS_CALL",
+        "native_id": 38
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.tiktok",
+      "kind": "family",
+      "name": {
+        "ru": "TikTok",
+        "en": "TikTok"
+      },
+      "category": "video",
+      "children": ["app.tiktok.main"],
+      "domain_provider_refs": ["v2fly:tiktok"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.tiktok.main",
+      "kind": "application",
+      "parent": "app.tiktok",
+      "name": {
+        "ru": "TikTok · Основной сервис",
+        "en": "TikTok · General"
+      },
+      "category": "video",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_TIKTOK",
+        "native_id": 49
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.steam",
+      "kind": "family",
+      "name": {
+        "ru": "Steam",
+        "en": "Steam"
+      },
+      "category": "gaming",
+      "children": ["app.steam.main"],
+      "domain_provider_refs": ["v2fly:steam"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.steam.main",
+      "kind": "application",
+      "parent": "app.steam",
+      "name": {
+        "ru": "Steam · Основной сервис",
+        "en": "Steam · General"
+      },
+      "category": "gaming",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_STEAM",
+        "native_id": 74
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.zoom",
+      "kind": "family",
+      "name": {
+        "ru": "Zoom",
+        "en": "Zoom"
+      },
+      "category": "conferencing",
+      "children": ["app.zoom.main"],
+      "domain_provider_refs": ["v2fly:zoom"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.zoom.main",
+      "kind": "application",
+      "parent": "app.zoom",
+      "name": {
+        "ru": "Zoom · Основной сервис",
+        "en": "Zoom · General"
+      },
+      "category": "conferencing",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_ZOOM",
+        "native_id": 189
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.netflix",
+      "kind": "family",
+      "name": {
+        "ru": "Netflix",
+        "en": "Netflix"
+      },
+      "category": "video",
+      "children": ["app.netflix.main"],
+      "domain_provider_refs": ["v2fly:netflix"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.netflix.main",
+      "kind": "application",
+      "parent": "app.netflix",
+      "name": {
+        "ru": "Netflix · Основной сервис",
+        "en": "Netflix · General"
+      },
+      "category": "video",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_NETFLIX",
+        "native_id": 133
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.signal",
+      "kind": "family",
+      "name": {
+        "ru": "Signal",
+        "en": "Signal"
+      },
+      "category": "messaging",
+      "children": ["app.signal.main"],
+      "domain_provider_refs": ["v2fly:signal"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.signal.main",
+      "kind": "application",
+      "parent": "app.signal",
+      "name": {
+        "ru": "Signal · Основной сервис",
+        "en": "Signal · General"
+      },
+      "category": "messaging",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_SIGNAL",
+        "native_id": 39
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.facebook",
+      "kind": "family",
+      "name": {
+        "ru": "Facebook",
+        "en": "Facebook"
+      },
+      "category": "social",
+      "children": ["app.facebook.main"],
+      "domain_provider_refs": ["v2fly:facebook"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.facebook.main",
+      "kind": "application",
+      "parent": "app.facebook",
+      "name": {
+        "ru": "Facebook · Основной сервис",
+        "en": "Facebook · General"
+      },
+      "category": "social",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_FACEBOOK",
+        "native_id": 119
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.instagram",
+      "kind": "family",
+      "name": {
+        "ru": "Instagram",
+        "en": "Instagram"
+      },
+      "category": "social",
+      "children": ["app.instagram.main"],
+      "domain_provider_refs": ["v2fly:instagram"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.instagram.main",
+      "kind": "application",
+      "parent": "app.instagram",
+      "name": {
+        "ru": "Instagram · Основной сервис",
+        "en": "Instagram · General"
+      },
+      "category": "social",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_INSTAGRAM",
+        "native_id": 211
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.twitch",
+      "kind": "family",
+      "name": {
+        "ru": "Twitch",
+        "en": "Twitch"
+      },
+      "category": "video",
+      "children": ["app.twitch.main"],
+      "domain_provider_refs": ["v2fly:twitch"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.twitch.main",
+      "kind": "application",
+      "parent": "app.twitch",
+      "name": {
+        "ru": "Twitch · Основной сервис",
+        "en": "Twitch · General"
+      },
+      "category": "video",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_TWITCH",
+        "native_id": 195
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.spotify",
+      "kind": "family",
+      "name": {
+        "ru": "Spotify",
+        "en": "Spotify"
+      },
+      "category": "audio",
+      "children": ["app.spotify.main"],
+      "domain_provider_refs": ["v2fly:spotify"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.spotify.main",
+      "kind": "application",
+      "parent": "app.spotify",
+      "name": {
+        "ru": "Spotify · Основной сервис",
+        "en": "Spotify · General"
+      },
+      "category": "audio",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_SPOTIFY",
+        "native_id": 156
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    },
+    {
+      "id": "app.github",
+      "kind": "family",
+      "name": {
+        "ru": "GitHub",
+        "en": "GitHub"
+      },
+      "category": "development",
+      "children": ["app.github.main"],
+      "domain_provider_refs": ["v2fly:github"],
+      "coverage": "mapping-only-not-packet-validated",
+      "allow_over_port_deny": false,
+      "block_validated": false,
+      "children_selection": "explicit-expanded-and-pinned-at-rule-save"
+    },
+    {
+      "id": "app.github.main",
+      "kind": "application",
+      "parent": "app.github",
+      "name": {
+        "ru": "GitHub · Основной сервис",
+        "en": "GitHub · General"
+      },
+      "category": "development",
+      "engine_mapping": {
+        "engine": "ndpi",
+        "version": "6.0",
+        "symbol": "NDPI_PROTOCOL_GITHUB",
+        "native_id": 203
+      },
+      "coverage": "mapping-only-not-packet-validated",
+      "license_profile": "engine-component-review-required",
+      "allow_over_port_deny": false,
+      "block_validated": false
+    }
+  ],
+  "notice_files": ["APPLICATION-CATALOG-NOTICES.md"]
+}

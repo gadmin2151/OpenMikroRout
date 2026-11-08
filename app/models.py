@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.application_models import ApplicationConfiguration
 from app.config_migrations import migrate_legacy_address_lists
 from app.discovery_models import DiscoverySettings, ScanSettings
 from app.fail2ban_models import F2BConfiguration, RuleProtection, profile_id
@@ -218,9 +219,29 @@ class NatRule(RuleMatch):
 class FilterRule(RuleMatch):
     chain: Literal["input", "forward", "output"] = "forward"
     action: Literal["accept", "drop", "reject"] = "accept"
+    application_override_eligible: bool = False
 
     @model_validator(mode="after")
     def validate_hook(self) -> Self:
+        if self.application_override_eligible and (
+            self.chain != "forward"
+            or self.action not in ("drop", "reject")
+            or self.protocol not in ("tcp", "udp")
+            or "protocol" in self.negate
+            or not (self.src_ports or self.dst_ports)
+            or bool(set(self.negate) & {"src_ports", "dst_ports", "connection_states"})
+            or bool(set(self.connection_states) & {"INVALID", "UNTRACKED"})
+            or self.protection.enabled
+            or self.f2b_profile
+            or self.src_country
+            or self.dst_country
+            or is_system_list(self.src_list)
+            or is_system_list(self.dst_list)
+        ):
+            raise ValueError(
+                "Only ordinary positive TCP/UDP FORWARD port DENY rules "
+                "can allow application exceptions"
+            )
         if self.chain == "input" and (self.out_interface or self.out_interface_list):
             raise ValueError("The input chain does not have an outgoing interface")
         if self.chain == "output" and (self.in_interface or self.in_interface_list):
@@ -229,6 +250,8 @@ class FilterRule(RuleMatch):
 
 
 class Configuration(Model):
+    applications: ApplicationConfiguration = Field(default_factory=ApplicationConfiguration)
+
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy(cls, value: object) -> object:
@@ -305,6 +328,33 @@ class Configuration(Model):
                 raise ValueError(f"Rule '{rule.name}' expands beyond 256 address combinations")
             if rule.enabled:
                 count += expansion
+        for application_rule in self.applications.rules:
+            for reference in (application_rule.src_list, application_rule.dst_list):
+                if reference and reference not in lists:
+                    raise ValueError("Application scopes require an existing explicit address list")
+            for reference in (
+                application_rule.in_interface_list,
+                application_rule.out_interface_list,
+            ):
+                if reference and reference not in interfaces:
+                    raise ValueError("Unknown application interface list")
+        if self.applications.enabled and self.applications.mode == "enforce":
+            combinations = len(self.applications.interfaces) * len(
+                self.applications.source_networks
+            )
+            if combinations > 64:
+                raise ValueError(
+                    "Application enforcement supports at most 64 interface/network combinations"
+                )
+            count += (
+                20 * combinations
+                + 1
+                + sum(
+                    12 * combinations + 1
+                    for rule in self.filter_rules
+                    if rule.enabled and rule.application_override_eligible
+                )
+            )
         if count > MAX_COMPILED_RULES:
             raise ValueError("Configuration expands beyond 4096 iptables rules")
         return self

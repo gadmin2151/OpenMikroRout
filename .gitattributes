@@ -1,0 +1,2 @@
+# Preserve the upstream terms byte-for-byte for the pinned consent SHA-256.
+app/ndpi-license-6.0.txt -whitespace

@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from app.application_catalog import CATALOG_SCHEMA
+from app.application_runtime import FLOW_SCHEMA
 from app.connections import CONNECTION_FILTERS
 from app.discovery import DISCOVERY_FILTER_FIELDS
 from app.fail2ban_events import ban_filter_fields
@@ -19,6 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # Fixed source imports the same schema exports and operator resolver used by the
 # browser. No request data, source-text parsing, eval or generated JS is involved.
 NODE_SCHEMA_SNAPSHOT = """
+import {
+  applicationCatalogQuerySchema, applicationConnectionQuerySchema,
+} from './app/static/applications-ui.js';
 import { connectionQuerySchema } from './app/static/connections-ui.js';
 import { hostQuerySchema } from './app/static/discovery-ui.js';
 import {
@@ -36,6 +41,8 @@ const snapshot = (schema) => schema.map((field) => ({
     String(Array.isArray(option) ? option[0] : option)),
 }));
 process.stdout.write(JSON.stringify({
+  applications_catalog: snapshot(applicationCatalogQuerySchema),
+  applications_connections: snapshot(applicationConnectionQuerySchema),
   connections: snapshot(connectionQuerySchema),
   hosts: snapshot(hostQuerySchema),
   bans: snapshot(banQuerySchema),
@@ -47,6 +54,8 @@ process.stdout.write(JSON.stringify({
 """
 
 BACKEND_SCHEMAS: dict[str, dict[str, FieldSpec]] = {
+    "applications_catalog": CATALOG_SCHEMA,
+    "applications_connections": FLOW_SCHEMA,
     "connections": CONNECTION_FILTERS,
     "hosts": {name: field.spec for name, field in DISCOVERY_FILTER_FIELDS.items()},
     "bans": {name: field.spec for name, field in ban_filter_fields(1.0).items()},

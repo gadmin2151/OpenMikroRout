@@ -335,18 +335,28 @@ class UpdateWorker:
     def _backup(self, path: Path) -> None:
         path.mkdir(parents=True, mode=0o700)
         destination = path / "data"
+        for entry in self.config.data_dir.rglob("*"):
+            if (
+                "updates" not in entry.relative_to(self.config.data_dir).parts
+                and entry.is_symlink()
+            ):
+                raise UpdateError("A data snapshot cannot follow a symbolic link")
         shutil.copytree(
             self.config.data_dir,
             destination,
             ignore=shutil.ignore_patterns("updates", "*.sqlite3-wal", "*.sqlite3-shm", "*.lock"),
         )
-        for source in self.config.data_dir.glob("*.sqlite3"):
+        for source in self.config.data_dir.rglob("*.sqlite3"):
+            relative = source.relative_to(self.config.data_dir)
+            if "updates" in relative.parts:
+                continue
+            destination_db = destination / relative
             with (
                 closing(sqlite3.connect(source)) as original,
-                closing(sqlite3.connect(destination / source.name)) as target,
+                closing(sqlite3.connect(destination_db)) as target,
             ):
                 original.backup(target)
-            (destination / source.name).chmod(0o600)
+            destination_db.chmod(0o600)
         sync_snapshot(path)
 
     def _restore_data(self, backup: Path) -> None:
@@ -478,6 +488,12 @@ class UpdateWorker:
         metadata = private_json(target / "release.json")
         if metadata != {"version": manifest.version, "commit": manifest.commit}:
             raise UpdateError("Build metadata does not match the signed manifest")
+        from app.third_party_license import LicenseError, require_installation_acceptance
+
+        try:
+            require_installation_acceptance(target)
+        except LicenseError as exc:
+            raise UpdateError(str(exc)) from exc
         self._phase(job, "installing", "Готовим отдельное окружение новой версии.")
         self.installer(target, manifest)
         sync_snapshot(target)

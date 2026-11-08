@@ -4910,3 +4910,281 @@ fieldset {
     width: 100%;
   }
 }
+
+/* Applications uses the classic workspace and common configuration draft. */
+.apps-page,
+.apps-page fieldset,
+.apps-rule-editor fieldset,
+.apps-settings {
+  min-width: 0;
+}
+.apps-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+}
+.apps-tabs > button {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  padding: 11px 2px;
+  background: transparent;
+  color: var(--muted);
+}
+.apps-tabs > button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 650;
+}
+.apps-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 13px 15px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-alt);
+}
+.apps-status > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.apps-status span {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.apps-status-warning {
+  background: #faf7ed;
+  border-color: #e7ddbd;
+}
+.apps-mode,
+.apps-decision {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: var(--surface-alt);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.apps-decision.allow {
+  background: #e9f3ed;
+  color: #21684e;
+}
+.apps-decision.block {
+  background: #f9ebec;
+  color: #913e46;
+}
+.apps-toolbar,
+.apps-toolbar .toolbar-start {
+  flex-wrap: wrap;
+}
+.apps-toolbar .toolbar-start button {
+  min-width: 32px;
+  padding: 7px 9px;
+}
+.apps-refresh {
+  display: flex;
+  justify-content: flex-end;
+  margin: 10px 0;
+}
+.apps-page .table-scroll {
+  max-width: 100%;
+}
+.apps-rules-table {
+  min-width: 850px;
+}
+.apps-catalog-table {
+  min-width: 660px;
+}
+.apps-connections-table {
+  min-width: 1080px;
+}
+.apps-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+.apps-capability {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 5px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.apps-capability.available {
+  background: #e9f3ed;
+  color: #21684e;
+}
+.apps-capability.unavailable {
+  color: var(--muted);
+}
+.apps-settings > fieldset,
+.apps-rule-editor > fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.apps-settings > fieldset > legend {
+  padding: 0;
+  margin-bottom: 16px;
+  font-weight: 650;
+}
+.apps-settings details {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-alt);
+}
+.apps-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.apps-settings details[open] > summary {
+  margin-bottom: 14px;
+}
+.apps-settings .settings-actions {
+  margin-top: 16px;
+}
+.apps-catalog-update {
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 18px;
+}
+.apps-entry-detail dl {
+  display: grid;
+  grid-template-columns: 145px minmax(0, 1fr);
+  gap: 12px 15px;
+  padding: 15px 0;
+}
+.apps-entry-detail dt {
+  color: var(--muted);
+}
+.apps-entry-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.apps-rule-editor .security-form-grid {
+  margin-bottom: 14px;
+}
+.apps-rule-editor .field {
+  grid-template-columns: 130px minmax(0, 1fr);
+}
+.apps-rule-editor .dialog-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.apps-rule-editor .checkbox-field {
+  display: block;
+}
+.apps-picker .checkbox-select-options {
+  max-height: 280px;
+  overflow-y: auto;
+}
+.apps-picker .checkbox-select-toolbar {
+  flex-wrap: wrap;
+}
+.apps-picker .checkbox-select-option {
+  align-items: start;
+}
+.apps-picker .checkbox-select-option > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.apps-picker output {
+  font-variant-numeric: tabular-nums;
+}
+.apps-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+.apps-selected > span {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.apps-selected button {
+  padding: 3px 5px;
+  font-size: 11px;
+}
+@media (max-width: 620px) {
+  .apps-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 10px;
+  }
+  .apps-tabs > button {
+    padding: 10px 4px;
+    white-space: normal;
+  }
+  .apps-settings .security-form-grid,
+  .apps-rule-editor .security-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .apps-rule-editor .field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .apps-rule-editor .field > span {
+    text-align: left;
+  }
+  .apps-entry-detail dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .apps-entry-detail dd {
+    margin-bottom: 8px;
+  }
+  .apps-toolbar {
+    align-items: stretch;
+  }
+}
+.update-license {
+  display: block;
+  min-width: 0;
+}
+.update-license > div {
+  min-width: 0;
+}
+.update-license p,
+.update-license a {
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+.update-license pre {
+  max-width: 100%;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-alt);
+}
+.update-license-required {
+  border-color: #e7ddbd;
+  background: #faf7ed;
+}
+.update-license details {
+  margin-top: 10px;
+}
+.update-license-profile {
+  color: var(--accent);
+}

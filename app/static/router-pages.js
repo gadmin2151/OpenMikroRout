@@ -325,6 +325,12 @@ const itemSchemas = {
       ["in_interface_list", t("In. Interface List"), "interface-list", ""],
       ["out_interface_list", t("Out. Interface List"), "interface-list", ""],
       ["connection_states", t("Connection State"), "states", []],
+      [
+        "application_override_eligible",
+        t("Allow приложений выше этого запрета порта"),
+        "bool",
+        false,
+      ],
       ["enabled", t("Enabled"), "bool", true],
       ["comment", t("Comment"), "text", ""],
     ],
@@ -715,6 +721,7 @@ function showEntityEditor(
     "in_interface_list",
     "out_interface_list",
     "connection_states",
+    "application_override_eligible",
   ]);
   const security = new Set(["f2b_profile", "f2b_match"]);
   const fields = itemSchemas[kind].fields.filter(([key]) => {

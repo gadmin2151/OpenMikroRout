@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from app.application_policy import security_scope as application_security_scope
 from app.compiler import FirewallError, counters, patch, rollback_patch
 from app.models import Configuration
 from app.rule_protection import managed_profiles
@@ -370,16 +371,36 @@ class FirewallService:
             config = self.store.read("config")
             applied = self.store.read("applied")
             pending = self.store.read("pending")
+            typed_config = Configuration.model_validate(config)
+            typed_applied = Configuration.model_validate(applied)
             return {
                 "config": config,
                 "revision": self.store.read("revision"),
                 "dirty": config != applied or bool(self.store.read("restore_plan")),
                 "security_dirty": any(
                     config.get(key) != applied.get(key)
-                    for key in ("fail2ban", "geoip", "system_lists", "discovery", "scanning")
+                    for key in (
+                        "fail2ban",
+                        "geoip",
+                        "system_lists",
+                        "discovery",
+                        "scanning",
+                        "applications",
+                    )
                 )
-                or managed_profiles(Configuration.model_validate(config))
-                != managed_profiles(Configuration.model_validate(applied)),
+                or [
+                    (index, rule.model_dump(mode="json"))
+                    for index, rule in enumerate(typed_config.filter_rules)
+                    if rule.application_override_eligible
+                ]
+                != [
+                    (index, rule.model_dump(mode="json"))
+                    for index, rule in enumerate(typed_applied.filter_rules)
+                    if rule.application_override_eligible
+                ]
+                or application_security_scope(typed_config)
+                != application_security_scope(typed_applied)
+                or managed_profiles(typed_config) != managed_profiles(typed_applied),
                 "runtime_error": self.store.read("runtime_error"),
                 "restore_accounts": bool((self.store.read("restore_plan") or {}).get("accounts")),
                 "pending": {key: pending[key] for key in ("deadline", "token", "error")}

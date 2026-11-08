@@ -55,6 +55,19 @@ export function navigationItems({ state, interfaces = [], canWrite }) {
       count("wireguard_interfaces"),
       ["wireguard", "wireguard_peers"],
     ),
+    item(
+      "applications_rules",
+      t("Applications"),
+      "grid",
+      t("Приложения · правила · соединения"),
+      (config.applications?.rules || []).length,
+      [
+        "applications_rules",
+        "applications_catalog",
+        "applications_connections",
+        "applications_settings",
+      ],
+    ),
     group("ip", t("IP"), "network", t("IPv4 · адреса и сервисы"), [
       item(
         "addresses",

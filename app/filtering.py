@@ -5,6 +5,19 @@ import shlex
 import shutil
 from typing import Protocol
 
+from app.application_policy import (
+    APP_CHAIN,
+    app_anchor,
+    denial_chain,
+    denial_rules,
+    guard_rules,
+)
+from app.application_policy import (
+    active as applications_active,
+)
+from app.application_policy import (
+    owned_chain as application_owned_chain,
+)
 from app.compiler import FirewallError, expanded_matches, match_tokens
 from app.fail2ban_rules import F2B_CHAINS, f2b_anchor, f2b_rules, profile_hooks
 from app.models import Configuration
@@ -43,13 +56,29 @@ def inspect(snapshot: str) -> tuple[list[str], set[str]]:
             continue
         tokens = shlex.split(line)
         chain = tokens[1]
-        if chain in (*CHAINS.values(), *F2B_CHAINS.values(), *WG_CHAINS.values()):
+        if chain in (
+            *CHAINS.values(),
+            *F2B_CHAINS.values(),
+            *WG_CHAINS.values(),
+        ) or application_owned_chain(chain):
             if "--comment" not in tokens or not tokens[tokens.index("--comment") + 1].startswith(
                 MARKER
             ):
                 raise FirewallError(f"Reserved chain {chain} contains an unmanaged rule")
             rules.append(line)
         for flag in ("-j", "-g"):
+            if flag in tokens and application_owned_chain(tokens[tokens.index(flag) + 1]):
+                target = tokens[tokens.index(flag) + 1]
+                if target == APP_CHAIN:
+                    if tokens != app_anchor():
+                        raise FirewallError("An unmanaged rule references the application guard")
+                    if "applications" in hooks:
+                        raise FirewallError("Duplicate application guard anchor")
+                    hooks.add("applications")
+                elif chain not in CHAINS.values():
+                    raise FirewallError(
+                        "An unmanaged rule references an application port exception"
+                    )
             if flag in tokens and tokens[tokens.index(flag) + 1] in WG_CHAINS.values():
                 if chain not in WG_CHAINS or tokens != wg_anchor(chain):
                     raise FirewallError("An unmanaged rule references a reserved WireGuard chain")
@@ -75,7 +104,7 @@ def inspect(snapshot: str) -> tuple[list[str], set[str]]:
     return rules, hooks
 
 
-def compiled_filters(config: Configuration) -> list[str]:
+def compiled_filters(config: Configuration, application_epoch: int | None = None) -> list[str]:
     result: list[str] = []
     for rule in config.filter_rules:
         if not rule.enabled:
@@ -86,7 +115,11 @@ def compiled_filters(config: Configuration) -> list[str]:
                 CHAINS[rule.chain],
                 *match_tokens(rule, source, destination, incoming, outgoing, "openmikrorout"),
                 "-j",
-                rule.action.upper(),
+                denial_chain(rule)
+                if applications_active(config)
+                and application_epoch is not None
+                and rule.application_override_eligible
+                else rule.action.upper(),
             ]
             result.append(" ".join(tokens))
     return result
@@ -133,12 +166,41 @@ def wireguard_guard_rollback(current: str, previous: str) -> str:
     )
 
 
-def filter_patch(snapshot: str, config: Configuration) -> str:
+def _application_declarations(
+    snapshot: str, config: Configuration | None = None, epoch: int | None = None
+) -> list[str]:
+    names = {
+        line.split()[0][1:]
+        for line in snapshot.splitlines()
+        if line.startswith(":") and application_owned_chain(line.split()[0][1:])
+    }
+    if config is not None and applications_active(config):
+        names.add(APP_CHAIN)
+        if epoch is not None:
+            names.update(
+                denial_chain(rule)
+                for rule in config.filter_rules
+                if rule.enabled and rule.application_override_eligible
+            )
+    return [f":{name} - [0:0]" for name in sorted(names)]
+
+
+def filter_patch(
+    snapshot: str, config: Configuration, *, application_epoch: int | None = None
+) -> str:
     _, hooks = inspect(snapshot)
     protection = effective_fail2ban(config)
     lines = ["*filter", *(f":{chain} - [0:0]" for chain in CHAINS.values())]
     lines += _f2b_declarations(snapshot, protection.enabled)
-    lines += compiled_filters(config)
+    lines += _application_declarations(snapshot, config, application_epoch)
+    lines += compiled_filters(config, application_epoch)
+    lines += guard_rules(config, application_epoch)
+    lines += denial_rules(config, application_epoch)
+    application_jump = app_anchor()
+    if "applications" in hooks:
+        lines.append(" ".join(["-D", *application_jump[1:]]))
+    if applications_active(config):
+        lines.append(" ".join(["-I", "FORWARD", "1", *application_jump[2:]]))
     lines += _wireguard_patch(snapshot, access_rules(config), hooks)
     lines += f2b_rules(protection)
     lines += [" ".join(anchor(hook, chain)) for hook, chain in HOOKS.items() if hook not in hooks]
@@ -154,12 +216,27 @@ def filter_patch(snapshot: str, config: Configuration) -> str:
     return "\n".join([*lines, "COMMIT", ""])
 
 
-def filter_rollback(current: str, previous: str, *, keep_wireguard_guards: bool = False) -> str:
+def filter_rollback(
+    current: str,
+    previous: str,
+    *,
+    keep_wireguard_guards: bool = False,
+    keep_application_guards: bool = False,
+) -> str:
     _, current_hooks = inspect(current)
     rules, old_hooks = inspect(previous)
     lines = ["*filter", *(f":{chain} - [0:0]" for chain in CHAINS.values())]
     lines += _f2b_declarations(current + previous, False)
-    lines += [line for line in rules if line not in snapshot_access_rules(previous)]
+    lines += _application_declarations(current + previous)
+    lines += [
+        line
+        for line in rules
+        if line not in snapshot_access_rules(previous)
+        and not (keep_application_guards and line.startswith(f"-A {APP_CHAIN} "))
+    ]
+    if keep_application_guards:
+        current_rules, _ = inspect(current)
+        lines += [line for line in current_rules if line.startswith(f"-A {APP_CHAIN} ")]
     guard_rules = (
         rollback_access_rules(current, previous)
         if keep_wireguard_guards
@@ -179,6 +256,11 @@ def filter_rollback(current: str, previous: str, *, keep_wireguard_guards: bool 
             lines.append(" ".join(["-D", *tokens[1:]]))
         if f"f2b:{hook}" in old_hooks:
             lines.append(" ".join(["-I", hook, "1", *tokens[2:]]))
+    application_jump = app_anchor()
+    if "applications" in current_hooks:
+        lines.append(" ".join(["-D", *application_jump[1:]]))
+    if "applications" in old_hooks or (keep_application_guards and "applications" in current_hooks):
+        lines.append(" ".join(["-I", "FORWARD", "1", *application_jump[2:]]))
     return "\n".join([*lines, "COMMIT", ""])
 
 

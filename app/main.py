@@ -21,6 +21,9 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.types import Message, Receive, Scope, Send
 
+from app.application_api import application_router
+from app.application_catalog import ApplicationCatalog
+from app.application_runtime import ApplicationRuntime
 from app.auth import (
     AuthError,
     AuthService,
@@ -59,6 +62,7 @@ from app.security_services import SecurityServices
 from app.storage import Store
 from app.telemetry import TelemetryCollector, TelemetrySnapshot
 from app.telemetry_history import HistoryResponse, TelemetryHistory
+from app.third_party_license import require_installation_acceptance
 from app.totp import CredentialProof, TotpEnrollment, TotpRecovery, TotpStatus
 from app.updates import UpdateApply, UpdateError, UpdateJob, UpdateService, UpdateStatus
 from app.version import VERSION
@@ -67,6 +71,10 @@ from app.web_domain import PanelHostMiddleware
 from app.wireguard import WireGuardError
 from app.wireguard_api import wireguard_router
 from app.wireguard_vault import WireGuardVault
+
+# The previous stock updater verifies a staged release by importing this module.
+# Reject its new native payload before cutover unless the administrator consented.
+require_installation_acceptance(Path(__file__).resolve().parent.parent)
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -114,6 +122,20 @@ def environment(name: str, legacy: str, default: str = "") -> str:
 
 @dataclass
 class Settings:
+    application_binary: Path | None = field(
+        default_factory=lambda: (
+            Path(os.environ["OMR_APPLICATION_BINARY"])
+            if os.environ.get("OMR_APPLICATION_BINARY")
+            else None
+        )
+    )
+    application_catalog_key: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get(
+                "OMR_APPLICATION_CATALOG_KEY", "/etc/openmikrorout/catalog-public-key.pem"
+            )
+        )
+    )
     updates_enabled: bool = field(
         default_factory=lambda: os.environ.get("OMR_UPDATES_ENABLED", "0") == "1"
     )
@@ -189,12 +211,22 @@ def create_app(
         settings.data_dir, applied, settings.mode == "demo" or injected_driver, wireguard_vault
     )
 
+    applications = ApplicationRuntime(
+        settings.data_dir,
+        ApplicationCatalog(settings.data_dir, settings.application_catalog_key),
+        demo=settings.mode == "demo" or injected_driver,
+        binary=settings.application_binary,
+    )
+    applications.config = applied.model_copy(deep=True)
+    runtime.applications = applications
+
     def validate_private_references(config: Configuration) -> None:
         try:
             wireguard_vault.validate(config.network)
+            applications.validate_config(config)
         except (ValueError, RuntimeError) as exc:
             raise Conflict(
-                "WireGuard key references are missing or do not match their public keys"
+                "Private key references or application policy are invalid: " + str(exc)[:300]
             ) from exc
 
     service = FirewallService(
@@ -235,6 +267,9 @@ def create_app(
             try:
                 service.recover()
                 with service.lock:
+                    # Engine failure protection remains active during timed Apply
+                    # confirmation and while an update is merely queued.
+                    runtime.guard_application_health()
                     if not store.read("pending") and not updates.active():
                         runtime.maintain()
                 backups.prune()
@@ -259,6 +294,7 @@ def create_app(
                 if settings.mode == "linux" and not injected_driver:
                     service.restore_confirmed()
             except (FirewallError, OSError) as exc:
+                runtime.shutdown_applications()
                 security_services.attempts.close()
                 companion.stop()
                 store.write({"runtime_error": str(exc)}, "startup_failed", str(exc))
@@ -284,6 +320,7 @@ def create_app(
                     if store.read("pending"):
                         service.rollback("Service stopped before confirmation")
                 finally:
+                    runtime.shutdown_applications()
                     security_services.close()
                     companion.stop()
 
@@ -303,6 +340,7 @@ def create_app(
     app.state.diagnostics = diagnostics
     app.state.packet_capture = packet_capture
     app.state.security_services = security_services
+    app.state.application_runtime = applications
     app.add_middleware(
         PanelHostMiddleware, allowed_hosts=settings.allowed_hosts, domains=service.panel_domains
     )
@@ -445,6 +483,7 @@ def create_app(
             raise HTTPException(403, "Full access is required")
         return user
 
+    app.include_router(application_router(service, applications, authenticated, full_access))
     app.include_router(wireguard_router(service, wireguard_vault, auth, full_access, authenticated))
     app.include_router(backup_router(service, backups, auth, full_access, authenticated))
     app.include_router(

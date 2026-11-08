@@ -45,6 +45,7 @@ Linux tools. No cloud account is required.
 
 | Area                        | Included                                                                                                                                                    |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Applications** | nDPI 6.0 with Rules / Catalog / Connections / Settings, signed catalogs, Observe and kernel-verified Enforce. Scoped Allow overrides eligible port denials; explicit nDPI license acceptance required |
 | **Security** | Src./Dst. Country and a Fail2ban condition tab in NAT/Filter editors; shared profiles, expiring ban lists and the local GeoIP database remain in Security. Ban collection is disabled by default |
 | **Hosts & Scan** | ARP/DHCP/LLDP/CDP/MNDP inventory and bounded asynchronous network/port scans with cancellation |
 | **WireGuard VPN**           | Server, client and site-to-site; setup wizards, `.conf` import, peers, Allowed IPs, PSK, client profiles and QR codes                                       |
@@ -198,3 +199,11 @@ and verifies demo startup. Network tests cover WireGuard handshakes, IPv4 traffi
 kill switches, DNS and configuration recovery. Node.js / pnpm are development tools for the UI.
 
 <p align="center"><sub>OpenMikroRout · Your network. Your rules.<br>A WinBox-inspired interface, powered by standard Linux networking tools.</sub></p>
+
+## License
+
+OpenMikroRout is licensed under **GPL-3.0-or-later** with additional permission to link nDPI. See [LICENSE](LICENSE).
+Third-party libraries and data retain their own licenses and notices.
+Application detection uses nDPI 6.0 and requires explicit acceptance of its
+third-party terms and intended-use profile before installation.
+[Applications setup and limitations](docs/APPLICATIONS.md).

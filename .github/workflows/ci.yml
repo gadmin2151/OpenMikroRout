@@ -8,6 +8,21 @@ permissions:
   contents: read
 
 jobs:
+  applications-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build pinned nDPI 6 and test the production classifier
+        run: docker build --file native/Dockerfile.build --target verification --tag openmikrorout-native:ci .
+      - name: Verify first-packet metadata, priority, and failure recovery in disposable namespaces
+        run: |
+          docker run --rm --network none --privileged --memory 768m --cpus 2 \
+            -e OMR_RUN_NATIVE_KERNEL_TESTS=1 openmikrorout-native:ci \
+            python native/tests/test_kernel.py --binary /source/native/build/omr-app-supervisor \
+            --backend-quarantine --json
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -31,9 +46,10 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
       - name: Python quality and tests
         run: |
-          .venv/bin/ruff format --check app tests scripts
-          .venv/bin/ruff check app tests scripts
+          .venv/bin/ruff format --check app tests scripts native
+          .venv/bin/ruff check app tests scripts native
           .venv/bin/mypy app tests scripts
+          .venv/bin/mypy native
           .venv/bin/pytest -q
           .venv/bin/python -m pip check
       - name: Isolated Linux network tests

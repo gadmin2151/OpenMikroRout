@@ -1,4 +1,378 @@
 export const messagesExtra = {
+  "Allow приложений выше этого запрета порта": [
+    "Allow приложений выше этого запрета порта",
+    "Application Allow overrides this port deny",
+  ],
+  "Условия nDPI": ["Условия nDPI", "nDPI terms"],
+  "Лицензия nDPI": ["Лицензия nDPI", "nDPI license"],
+  "Без прямого и косвенного дохода": [
+    "Без прямого и косвенного дохода",
+    "No direct or indirect revenue",
+  ],
+  "Коммерческое соглашение с ntop": [
+    "Коммерческое соглашение с ntop",
+    "Commercial agreement with ntop",
+  ],
+  "Только LGPL core · ограниченное распознавание": [
+    "Только LGPL core · ограниченное распознавание",
+    "LGPL core only · reduced detection coverage",
+  ],
+  "Ядро nDPI распространяется по LGPLv3. Дополнительные компоненты ntop бесплатны только при отсутствии прямого и косвенного дохода от их использования. Для использования с доходом требуется коммерческое соглашение с ntop.":
+    [
+      "Ядро nDPI распространяется по LGPLv3. Дополнительные компоненты ntop бесплатны только при отсутствии прямого и косвенного дохода от их использования. Для использования с доходом требуется коммерческое соглашение с ntop.",
+      "The nDPI core is LGPLv3. Additional ntop components are free only when their use creates no direct or indirect revenue. Revenue-generating use requires a commercial agreement with ntop.",
+    ],
+  "Принятие условий не предоставляет коммерческую лицензию ntop. Профиль LGPL-only исключает дополнительные компоненты и уменьшает покрытие.":
+    [
+      "Принятие условий не предоставляет коммерческую лицензию ntop. Профиль LGPL-only исключает дополнительные компоненты и уменьшает покрытие.",
+      "Accepting the terms does not grant a commercial ntop license. The LGPL-only profile excludes the additional components and reduces detection coverage.",
+    ],
+  "Принятый профиль:": ["Принятый профиль:", "Accepted profile:"],
+  "Для установки требуется явное принятие условий администратором сервера.": [
+    "Для установки требуется явное принятие условий администратором сервера.",
+    "Installation requires explicit acceptance by the server administrator.",
+  ],
+  "Выполните в каталоге OpenMikroRout на сервере:": [
+    "Выполните в каталоге OpenMikroRout на сервере:",
+    "Run in the OpenMikroRout directory on the server:",
+  ],
+  "Отказ отменяет установку и сохраняет существующую систему. Веб-панель не записывает согласие в /etc.":
+    [
+      "Отказ отменяет установку и сохраняет существующую систему. Веб-панель не записывает согласие в /etc.",
+      "Declining cancels installation and preserves the existing system. The web panel does not write acceptance to /etc.",
+    ],
+  "Прочитать условия nDPI": ["Прочитать условия nDPI", "Read the nDPI terms"],
+  "Оригинальное уведомление поставщика": [
+    "Оригинальное уведомление поставщика",
+    "Original vendor notice",
+  ],
+  "Примите условия nDPI на сервере: sudo ./deploy/accept-ndpi-license.sh": [
+    "Примите условия nDPI на сервере: sudo ./deploy/accept-ndpi-license.sh",
+    "Accept nDPI terms on the server: sudo ./deploy/accept-ndpi-license.sh",
+  ],
+  "Ошибка анализа отдельного потока": [
+    "Ошибка анализа отдельного потока",
+    "Single-flow analysis failure",
+  ],
+  "Отказ обработчика всегда закрывает управляемую область. Эта настройка относится только к ошибке анализа отдельного потока.":
+    [
+      "Отказ обработчика всегда закрывает управляемую область. Эта настройка относится только к ошибке анализа отдельного потока.",
+      "A worker failure always blocks the managed scope. This setting applies only to a single-flow analysis failure.",
+    ],
+  Блокировка: ["Блокировка", "Blocking"],
+  "Пробный пропуск": ["Пробный пропуск", "Classification probe"],
+  "Ожидание готовности движка": [
+    "Ожидание готовности движка",
+    "Waiting for engine readiness",
+  ],
+  "Счётчики относятся к анализируемым пакетам и не являются полными счётчиками соединения.":
+    [
+      "Счётчики относятся к анализируемым пакетам и не являются полными счётчиками соединения.",
+      "Counters cover analyzed packets and are not complete connection counters.",
+    ],
+  "Версия каталога для применения": [
+    "Версия каталога для применения",
+    "Catalog version to apply",
+  ],
+  "Смена версии входит в общий черновик и требует Apply.": [
+    "Смена версии входит в общий черновик и требует Apply.",
+    "Changing the version is part of the shared draft and requires Apply.",
+  ],
+  "Подписанные обновления каталога не настроены: требуется доверенный ключ данных на сервере.":
+    [
+      "Подписанные обновления каталога не настроены: требуется доверенный ключ данных на сервере.",
+      "Signed catalog updates are not configured: a trusted data key is required on the server.",
+    ],
+  Режим: ["Режим", "Mode"],
+  Applications: ["Приложения", "Applications"],
+  Приложения: ["Приложения", "Applications"],
+  "Приложения · правила · соединения": [
+    "Приложения · правила · соединения",
+    "Apps · rules · connections",
+  ],
+  "Правила доступа приложений и сервисов · IPv4 FORWARD.": [
+    "Правила доступа приложений и сервисов · IPv4 FORWARD.",
+    "Application and service access rules · IPv4 FORWARD.",
+  ],
+  "Каталог приложений, источники и проверенное покрытие.": [
+    "Каталог приложений, источники и проверенное покрытие.",
+    "Application catalog, sources and validated coverage.",
+  ],
+  "Прикладные потоки, состояния и наблюдаемые решения роутера.": [
+    "Прикладные потоки, состояния и наблюдаемые решения роутера.",
+    "Application flows, states and observed router decisions.",
+  ],
+  "Движок, управляемые сети и обновления каталога.": [
+    "Движок, управляемые сети и обновления каталога.",
+    "Engine, managed networks and catalog updates.",
+  ],
+  "ID приложения": ["ID приложения", "Application ID"],
+  Приложение: ["Приложение", "Application"],
+  Категория: ["Категория", "Category"],
+  "Проверено наблюдение": ["Проверено наблюдение", "Observation validated"],
+  "Проверена блокировка": ["Проверена блокировка", "Blocking validated"],
+  "Allow выше запрета порта": [
+    "Allow выше запрета порта",
+    "Allow above port deny",
+  ],
+  "Клиент IPv4 / сеть": ["Клиент IPv4 / сеть", "Client IPv4 / network"],
+  Распознавание: ["Распознавание", "Classification"],
+  "Решение приложения": ["Решение приложения", "Application decision"],
+  "Список источников": ["Список источников", "Source address list"],
+  Блокировать: ["Блокировать", "Block"],
+  Разрешить: ["Разрешить", "Allow"],
+  "Обычный Firewall": ["Обычный Firewall", "Normal Firewall"],
+  Определяется: ["Определяется", "Pending"],
+  Определено: ["Определено", "Detected"],
+  "Не определено": ["Не определено", "Unknown"],
+  Недоступно: ["Недоступно", "Unavailable"],
+  Наблюдение: ["Наблюдение", "Observe"],
+  Применение: ["Применение", "Enforce"],
+  Семейство: ["Семейство", "Family"],
+  Провайдер: ["Провайдер", "Provider"],
+  Правила: ["Правила", "Rules"],
+  Каталог: ["Каталог", "Catalog"],
+  "Настройки и обновления": ["Настройки и обновления", "Settings & Updates"],
+  "Движок DPI недоступен": ["Движок DPI недоступен", "DPI engine unavailable"],
+  "Демонстрационный режим": ["Демонстрационный режим", "Demo mode"],
+  "Просмотр каталога и подготовка правил": [
+    "Просмотр каталога и подготовка правил",
+    "Browse the catalog and prepare rules",
+  ],
+  "В демо пакеты хоста не анализируются. Распознавание и блокировка приложений не выполняются.":
+    [
+      "В демо пакеты хоста не анализируются. Распознавание и блокировка приложений не выполняются.",
+      "Demo mode does not inspect host packets. Application detection and blocking are inactive.",
+    ],
+  "Фильтрация приложений выключена": [
+    "Фильтрация приложений выключена",
+    "Application filtering disabled",
+  ],
+  "Режим наблюдения": ["Режим наблюдения", "Observe mode"],
+  "Прикладная фильтрация активна": [
+    "Прикладная фильтрация активна",
+    "Application filtering active",
+  ],
+  "Прикладная фильтрация требует внимания": [
+    "Прикладная фильтрация требует внимания",
+    "Application filtering needs attention",
+  ],
+  "Каталог доступен для подготовки правил. Без совместимого движка распознавание и блокировка не работают.":
+    [
+      "Каталог доступен для подготовки правил. Без совместимого движка распознавание и блокировка не работают.",
+      "The catalog is available for preparing rules. Classification and blocking require a compatible engine.",
+    ],
+  "Allow выше порта": ["Allow выше порта", "Allow above port deny"],
+  "Покрытие подтверждено": ["Покрытие подтверждено", "Coverage validated"],
+  "Покрытие не подтверждено": [
+    "Покрытие не подтверждено",
+    "Coverage not validated",
+  ],
+  "Сортировка текущей страницы": [
+    "Сортировка текущей страницы",
+    "Sort the current page",
+  ],
+  "Клиент / Interface": ["Клиент / Interface", "Client / Interface"],
+  "Любой клиент": ["Любой клиент", "Any client"],
+  Состояния: ["Состояния", "States"],
+  "По этому фильтру правила не найдены.": [
+    "По этому фильтру правила не найдены.",
+    "No rules match this filter.",
+  ],
+  "Добавьте первое правило приложения.": [
+    "Добавьте первое правило приложения.",
+    "Add your first application rule.",
+  ],
+  "Первое совпавшее правило · общий черновик": [
+    "Первое совпавшее правило · общий черновик",
+    "First matching rule · shared draft",
+  ],
+  "Allow пропускает только явно выбранные запреты портов. IP, GeoIP, WireGuard и Fail2ban продолжают проверяться.":
+    [
+      "Allow пропускает только явно выбранные запреты портов. IP, GeoIP, WireGuard и Fail2ban продолжают проверяться.",
+      "Allow skips only explicitly selected port denies. IP, GeoIP, WireGuard and Fail2ban restrictions still apply.",
+    ],
+  "Загрузка каталога…": ["Загрузка каталога…", "Loading catalog…"],
+  "Проверенное покрытие": ["Проверенное покрытие", "Validated coverage"],
+  Сведения: ["Сведения", "Details"],
+  "По этому фильтру приложения не найдены.": [
+    "По этому фильтру приложения не найдены.",
+    "No applications match this filter.",
+  ],
+  "Наличие записи не доказывает распознавание или возможность блокировки.": [
+    "Наличие записи не доказывает распознавание или возможность блокировки.",
+    "A catalog entry does not prove classification or blocking support.",
+  ],
+  "Загрузка прикладных соединений…": [
+    "Загрузка прикладных соединений…",
+    "Loading application connections…",
+  ],
+  "Решение OMR не доказывает доступность удалённого сервиса. Состояние TCP и распознавание приложения показаны отдельно.":
+    [
+      "Решение OMR не доказывает доступность удалённого сервиса. Состояние TCP и распознавание приложения показаны отдельно.",
+      "An OMR decision does not prove remote service availability. TCP state and application classification are shown separately.",
+    ],
+  "Основание / Правило": ["Основание / Правило", "Evidence / Rule"],
+  "Прикладных соединений пока нет.": [
+    "Прикладных соединений пока нет.",
+    "No application connections yet.",
+  ],
+  "Движок недоступен: реальные прикладные потоки не собираются.": [
+    "Движок недоступен: реальные прикладные потоки не собираются.",
+    "Engine unavailable: real application flows are not being collected.",
+  ],
+  "Настройки приложений": ["Настройки приложений", "Application settings"],
+  "Управляемые входные интерфейсы": [
+    "Управляемые входные интерфейсы",
+    "Managed ingress interfaces",
+  ],
+  "Управляемые исходные сети · IPv4 / CIDR": [
+    "Управляемые исходные сети · IPv4 / CIDR",
+    "Managed client networks · IPv4 / CIDR",
+  ],
+  "Исходный клиент потока. Ответные пакеты относятся к тому же соединению.": [
+    "Исходный клиент потока. Ответные пакеты относятся к тому же соединению.",
+    "The original flow client. Reply packets belong to the same connection.",
+  ],
+  "Неопределённое приложение": [
+    "Неопределённое приложение",
+    "Unknown application",
+  ],
+  "Блокировать в управляемой области": [
+    "Блокировать в управляемой области",
+    "Block in managed scope",
+  ],
+  "Отказ движка": ["Отказ движка", "Engine failure"],
+  "Управляются только выбранные транзитные сети. INPUT/OUTPUT и управление PVE не входят в эту область.":
+    [
+      "Управляются только выбранные транзитные сети. INPUT/OUTPUT и управление PVE не входят в эту область.",
+      "Only selected transit networks are managed. Router INPUT/OUTPUT and PVE management are outside this scope.",
+    ],
+  "Enforce недоступен без проверенного совместимого движка. Сохранение черновика не включает блокировку.":
+    [
+      "Enforce недоступен без проверенного совместимого движка. Сохранение черновика не включает блокировку.",
+      "Enforce requires a validated compatible engine. Saving a draft does not activate blocking.",
+    ],
+  "Enforce недоступен без проверенного совместимого движка.": [
+    "Enforce недоступен без проверенного совместимого движка.",
+    "Enforce requires a validated compatible engine.",
+  ],
+  "Приоритет над запретами портов": [
+    "Приоритет над запретами портов",
+    "Priority over port denies",
+  ],
+  "Applications имеют приоритет над этими запретами": [
+    "Applications имеют приоритет над этими запретами",
+    "Applications can override these port denies",
+  ],
+  "Выбираются только обычные TCP/UDP port-DENY в FORWARD. Адресные ограничения и защитные правила сохраняются.":
+    [
+      "Выбираются только обычные TCP/UDP port-DENY в FORWARD. Адресные ограничения и защитные правила сохраняются.",
+      "Only ordinary TCP/UDP FORWARD port denies are selectable. Address restrictions and protective rules remain in force.",
+    ],
+  "Лимиты распознавания": ["Лимиты распознавания", "Classification limits"],
+  "Время определения, мс": ["Время определения, мс", "Classification time, ms"],
+  "Пакетов на определение": [
+    "Пакетов на определение",
+    "Classification packet limit",
+  ],
+  "Байт на определение": ["Байт на определение", "Classification byte limit"],
+  "Pending: всего": ["Pending: всего", "Pending: global limit"],
+  "Pending: на клиента": ["Pending: на клиента", "Pending: per client"],
+  "Пакетов в очереди": ["Пакетов в очереди", "Queue packet limit"],
+  "Deadline решения, мс": ["Deadline решения, мс", "Verdict deadline, ms"],
+  "Определение приложения может потребовать начальные пакеты. Нулевой пропуск неизвестных данных не гарантируется.":
+    [
+      "Определение приложения может потребовать начальные пакеты. Нулевой пропуск неизвестных данных не гарантируется.",
+      "Application classification may require initial packets. Zero transmission of unknown data cannot be guaranteed.",
+    ],
+  "Проверять каталог автоматически": [
+    "Проверять каталог автоматически",
+    "Check the catalog automatically",
+  ],
+  "Каталог и обновления": ["Каталог и обновления", "Catalog & Updates"],
+  "Обновление данных каталога не устанавливает код движка и не активирует новые разрешения автоматически.":
+    [
+      "Обновление данных каталога не устанавливает код движка и не активирует новые разрешения автоматически.",
+      "Catalog data updates do not install engine code or automatically activate new permissions.",
+    ],
+  "Проверить каталог": ["Проверить каталог", "Check catalog"],
+  "Подготовить обновление": ["Подготовить обновление", "Stage update"],
+  "Некорректный ответ приложений.": [
+    "Некорректный ответ приложений.",
+    "Invalid Applications response.",
+  ],
+  "Source и интерфейсы относятся к инициатору потока. Ответные пакеты принадлежат тому же соединению.":
+    [
+      "Source и интерфейсы относятся к инициатору потока. Ответные пакеты принадлежат тому же соединению.",
+      "Source and interface conditions refer to the flow initiator. Reply packets belong to the same connection.",
+    ],
+  "Список назначений": ["Список назначений", "Destination address list"],
+  "Список входных интерфейсов": [
+    "Список входных интерфейсов",
+    "Ingress interface list",
+  ],
+  "Список выходных интерфейсов": [
+    "Список выходных интерфейсов",
+    "Egress interface list",
+  ],
+  выбрано: ["выбрано", "selected"],
+  "Выбрать страницу": ["Выбрать страницу", "Select this page"],
+  "Очистить выбор": ["Очистить выбор", "Clear selection"],
+  приложений: ["приложений", "applications"],
+  "Правило больше не существует.": [
+    "Правило больше не существует.",
+    "The rule no longer exists.",
+  ],
+  "Правило приложения": ["Правило приложения", "Application rule"],
+  "Новое правило приложения": [
+    "Новое правило приложения",
+    "New application rule",
+  ],
+  "Изменения сохраняются в общий черновик.": [
+    "Изменения сохраняются в общий черновик.",
+    "Changes are saved in the shared draft.",
+  ],
+  "Выбор семейства разворачивается в конкретные дочерние приложения при проверке правила. Покрытие видно в каталоге.":
+    [
+      "Выбор семейства разворачивается в конкретные дочерние приложения при проверке правила. Покрытие видно в каталоге.",
+      "A family selection is expanded into pinned application IDs when saved. Coverage is shown in the catalog.",
+    ],
+  "Для DPI Allow нужны NEW и ESTABLISHED. Позднее распознавание не работает с правилом только NEW.":
+    [
+      "Для DPI Allow нужны NEW и ESTABLISHED. Позднее распознавание не работает с правилом только NEW.",
+      "DPI Allow requires NEW and ESTABLISHED. Late classification cannot work with a NEW-only rule.",
+    ],
+  "Правила проверяются сверху вниз до первого совпадения. Для исключения клиента поставьте его Allow выше общего Block.":
+    [
+      "Правила проверяются сверху вниз до первого совпадения. Для исключения клиента поставьте его Allow выше общего Block.",
+      "Rules are evaluated from top to bottom until the first match. Place a client Allow above a general Block to create an exception.",
+    ],
+  "Сначала завершите применение и проверьте связь с сервером.": [
+    "Сначала завершите применение и проверьте связь с сервером.",
+    "Complete the pending application and verify server connectivity first.",
+  ],
+  "IP/DNS-сопоставление не доказывает имя программы. Непроверенные возможности не используются для приоритетного Allow.":
+    [
+      "IP/DNS-сопоставление не доказывает имя программы. Непроверенные возможности не используются для приоритетного Allow.",
+      "IP/DNS matching does not prove a process identity. Unvalidated capabilities cannot grant priority Allow.",
+    ],
+  Покрытие: ["Покрытие", "Coverage"],
+  "Источник / Версия": ["Источник / Версия", "Source / Version"],
+  "Лицензия / Профиль": ["Лицензия / Профиль", "License / Profile"],
+  "Выберите хотя бы одно приложение.": [
+    "Выберите хотя бы одно приложение.",
+    "Select at least one application.",
+  ],
+  "В одном правиле допускается до 64 приложений.": [
+    "В одном правиле допускается до 64 приложений.",
+    "A rule may contain up to 64 applications.",
+  ],
+  "Для DPI Allow нужны NEW и ESTABLISHED.": [
+    "Для DPI Allow нужны NEW и ESTABLISHED.",
+    "DPI Allow requires NEW and ESTABLISHED.",
+  ],
+  копия: ["копия", "copy"],
   "Группы И/ИЛИ задают порядок условий. После изменения или очистки нажмите «Применить фильтр». До 16 условий и 4 уровней.":
     [
       "Группы И/ИЛИ задают порядок условий. После изменения или очистки нажмите «Применить фильтр». До 16 условий и 4 уровней.",

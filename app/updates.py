@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.third_party_license import LicenseError, acceptance_status, load_acceptance
 from app.totp import CredentialProof
 from app.version import VERSION
 
@@ -124,6 +125,7 @@ class UpdateStatus(BaseModel):
     latest: ReleaseOffer | None = None
     job: UpdateJob | None = None
     error: str = ""
+    ndpi_license: dict[str, Any] | None = None
 
 
 def atomic_json(path: Path, value: Any) -> None:
@@ -396,7 +398,15 @@ class UpdateService:
 
     def status(self) -> UpdateStatus:
         return UpdateStatus(
-            enabled=self.config is not None, latest=self.latest, job=self.job(), error=self.error
+            enabled=self.config is not None,
+            latest=self.latest,
+            job=self.job(),
+            error=self.error,
+            ndpi_license=(
+                acceptance_status()
+                if self.latest and version_tuple(self.latest.version) >= (0, 11, 0)
+                else None
+            ),
         )
 
     def check(self) -> UpdateStatus:
@@ -431,6 +441,11 @@ class UpdateService:
                 or not self.latest.available
             ):
                 raise UpdateError("Check for a newer signed release before updating", 409)
+            if version_tuple(self.manifest.version) >= (0, 11, 0):
+                try:
+                    load_acceptance()
+                except LicenseError as exc:
+                    raise UpdateError(str(exc), 409) from exc
             job = UpdateJob(
                 id=secrets.token_hex(16),
                 version=self.manifest.version,

@@ -1,0 +1,42 @@
+# Native companion build isolation; no PVE host packages or kernel modules are installed.
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS engine
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential autoconf automake libtool pkg-config git ca-certificates \
+    libpcap-dev libjson-c-dev libmnl-dev libnetfilter-queue-dev libpcre2-dev \
+    python3 clang-format iptables iproute2 tcpdump && rm -rf /var/lib/apt/lists/*
+ARG NDPI_COMMIT=cd1d03a52f0c968f1835110d70f5da652171a5d5
+RUN test "$NDPI_COMMIT" = cd1d03a52f0c968f1835110d70f5da652171a5d5 && \
+    git init /build/ndpi && cd /build/ndpi && \
+    git remote add origin https://github.com/ntop/nDPI.git && \
+    git sparse-checkout init --cone && \
+    git sparse-checkout set src m4 utils example tests/dga tests/unit tests/performance rrdtool influxdb fuzz doc && \
+    git fetch --depth 1 --filter=blob:none origin "$NDPI_COMMIT" && \
+    git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "$NDPI_COMMIT"
+RUN cd /build/ndpi && ./autogen.sh && ./configure --prefix=/opt/omr-native --with-only-libndpi \
+    CFLAGS='-O2 -g -fstack-protector-strong -D_FORTIFY_SOURCE=3 -fPIC' && \
+    make -j2 && make install
+ENV PKG_CONFIG_PATH=/opt/omr-native/lib/pkgconfig
+ENV LD_LIBRARY_PATH=/opt/omr-native/lib
+
+FROM engine AS verification
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /source
+COPY requirements-dev.lock /source/requirements-dev.lock
+RUN python3 -m venv /opt/verification && \
+    /opt/verification/bin/pip install --no-cache-dir -r requirements-dev.lock
+ENV PATH=/opt/verification/bin:$PATH
+ENV PYTHONPATH=/source
+COPY app/ /source/app/
+COPY native/ /source/native/
+RUN make -C native -B && make -C native check
+
+FROM engine AS companion
+ARG OMR_SOURCE_COMMIT
+WORKDIR /source
+COPY native/ /source/native/
+RUN make -C native -B
+RUN python3 native/build_bundle.py --binary native/build/omr-app-supervisor \
+    --ndpi-source /build/ndpi --ndpi-prefix /opt/omr-native \
+    --source-commit "$OMR_SOURCE_COMMIT" --output /output/app/native

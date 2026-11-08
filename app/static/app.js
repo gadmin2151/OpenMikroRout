@@ -50,6 +50,15 @@ import {
   handleBackupInput,
   resetBackups,
 } from "./backups-ui.js?v=1";
+import {
+  applicationViews,
+  renderApplications,
+  refreshApplications,
+  resetApplications,
+  handleApplicationsAction,
+  handleApplicationsInput,
+  installApplicationsEvents,
+} from "./applications-ui.js?v=1";
 import { reorderRules } from "./rule-order.js";
 import {
   renderTools,
@@ -228,6 +237,7 @@ let toastTimer,
   pollTimer,
   telemetryTimer,
   countdownTimer,
+  applicationTimer,
   alive = true;
 const isDemo = () => state?.mode === "demo";
 const canWrite = () => hasWriteAccess(state);
@@ -258,6 +268,7 @@ function clearSession() {
   resetCapture();
   resetProtection();
   resetDiscovery();
+  resetApplications();
   resetAllQueryBuilders();
   loginUsername = currentUser()?.username || loginUsername;
   authGeneration++;
@@ -602,6 +613,7 @@ function render() {
     rules = cfg.rules;
   const count = (key) => (network[key] || []).length;
   const [title, description] =
+    applicationViews[view] ||
     protectionViews[view] ||
     discoveryViews[view] ||
     routerViews[view] ||
@@ -714,38 +726,40 @@ function render() {
       ["dns_static", t("Static"), "list", count("dns_static")],
     ];
   else tabs = [];
-  const body = protectionViews[view]
-    ? renderProtection(view, routerContext())
-    : discoveryViews[view]
-      ? renderDiscovery(view, routerContext())
-      : view === "backups"
-        ? renderBackups(routerContext())
-        : view === "tools"
-          ? renderTools(routerContext())
-          : view === "capture"
-            ? renderCapture(routerContext())
-            : ["wireguard", "wireguard_peers"].includes(view)
-              ? renderWireGuard(routerContext(), view === "wireguard_peers")
-              : view === "updates"
-                ? renderUpdates(routerContext())
-                : view === "connections"
-                  ? renderConnections(routerContext())
-                  : view === "security"
-                    ? renderSecurity(routerContext())
-                    : view === "rules"
-                      ? renderRules()
-                      : view === "lists"
-                        ? renderLists()
-                        : view === "interfaces"
-                          ? renderInterfaces()
-                          : view === "audit"
-                            ? renderAudit()
-                            : view === "users"
-                              ? renderUsers(routerContext())
-                              : (view === "filter"
-                                  ? renderF2BRuleSummary(routerContext())
-                                  : "") +
-                                renderRouterView(view, routerContext());
+  const body = applicationViews[view]
+    ? renderApplications(routerContext(), view)
+    : protectionViews[view]
+      ? renderProtection(view, routerContext())
+      : discoveryViews[view]
+        ? renderDiscovery(view, routerContext())
+        : view === "backups"
+          ? renderBackups(routerContext())
+          : view === "tools"
+            ? renderTools(routerContext())
+            : view === "capture"
+              ? renderCapture(routerContext())
+              : ["wireguard", "wireguard_peers"].includes(view)
+                ? renderWireGuard(routerContext(), view === "wireguard_peers")
+                : view === "updates"
+                  ? renderUpdates(routerContext())
+                  : view === "connections"
+                    ? renderConnections(routerContext())
+                    : view === "security"
+                      ? renderSecurity(routerContext())
+                      : view === "rules"
+                        ? renderRules()
+                        : view === "lists"
+                          ? renderLists()
+                          : view === "interfaces"
+                            ? renderInterfaces()
+                            : view === "audit"
+                              ? renderAudit()
+                              : view === "users"
+                                ? renderUsers(routerContext())
+                                : (view === "filter"
+                                    ? renderF2BRuleSummary(routerContext())
+                                    : "") +
+                                  renderRouterView(view, routerContext());
   root.innerHTML = html`<div class="app-shell">
     <aside class="sidebar ${sidebarOpen ? "open" : ""}" id="sidebar">${brandMarkup()}
       <nav class="sidebar-navigation" aria-label="Настройки роутера">${renderNavigation()}</nav>
@@ -755,9 +769,9 @@ function render() {
     <div class="content">${state.runtime_error ? html`<div class="connection-error" role="alert">${icon("info")} Восстановление конфигурации требует внимания: ${e(state.runtime_error)}</div>` : ""}${offline ? html`<div class="connection-error">Данные сервера недоступны. Изменения заблокированы до восстановления соединения.</div>` : ""}
       ${!canWrite() ? html`<div class="read-only-banner">${icon("lock")}Группа read: настройки доступны для просмотра. Изменения выполняют пользователи full.</div>` : ""}
       <div class="page-heading"><div><h1>${e(t(title))}</h1><p>${e(t(description))}</p></div><div class="heading-buttons"><button data-action="preview" title="Предпросмотр конфигурации">${icon("terminal")}<span class="btn-label">Preview</span></button><button data-action="import" title="Импорт конфигурации">${icon("upload")}<span class="btn-label">Импорт</span></button><button data-action="export" title="Экспорт конфигурации">${icon("download")}<span class="btn-label">Export</span></button></div></div>
-      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : html`<div class="configuration-summary" aria-label="Сводка конфигурации">${stat(t("Интерфейсы"), interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat(t("IP-адреса"), count("addresses"), t("Назначены в конфигурации"))}${stat(t("DHCP Servers"), count("dhcp_servers"), html`${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat(t("Firewall Rules"), rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
+      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(applicationViews), ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : html`<div class="configuration-summary" aria-label="Сводка конфигурации">${stat(t("Интерфейсы"), interfaces.length, `${count("bridges")} bridge · ${count("vlans")} VLAN`)}${stat(t("IP-адреса"), count("addresses"), t("Назначены в конфигурации"))}${stat(t("DHCP Servers"), count("dhcp_servers"), html`${count("pools")} пулов · ${(networkStatus.leases || []).length} аренд`)}${stat(t("Firewall Rules"), rules.length + (cfg.filter_rules || []).length, `${rules.length} NAT · ${(cfg.filter_rules || []).length} Filter`)}</div>`}
       <section class="panel ${view === "overview" ? "overview-panel" : ""}">${tabs.length ? html`<div class="panel-tabs">${tabs.map(([id, label, ico, total]) => html`<button class="panel-tab ${view === id ? "active" : ""}" data-action="view" data-view="${id}">${icon(ico)}${t(label)}<span class="tab-count">${total}</span></button>`).join("")}</div>` : ""}${body}</section>
-      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : html`<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? t("Можно спокойно экспериментировать") : t("Применение с контролем связи")}</h3><p>${isDemo() ? t("Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются.") : t("После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию.")}</p></div></div></div></details>`}
+      ${["overview", "users", "security", "updates", "connections", "backups", ...Object.keys(applicationViews), ...Object.keys(protectionViews), ...Object.keys(discoveryViews)].includes(view) ? "" : html`<details class="configuration-help"><summary>Работа с черновиком и применением</summary><div class="info-row"><div class="tip-card">${icon("info")}<div><h3>Один черновик для всего роутера</h3><p>Bridge → VLAN → IP-адрес → DHCP → маршруты и Firewall. Сначала сохраните настройки, затем проверьте общий предпросмотр.</p><button class="text-link" data-action="help">Как это работает ${icon("arrow")}</button></div></div><div class="tip-card">${icon("lock")}<div><h3>${isDemo() ? t("Можно спокойно экспериментировать") : t("Применение с контролем связи")}</h3><p>${isDemo() ? t("Деморежим использует отдельную базу и симуляцию. Сетевые настройки компьютера не меняются.") : t("После применения подтвердите связь в течение 60 секунд. Без подтверждения сервер попытается восстановить предыдущую конфигурацию.")}</p></div></div></div></details>`}
       <div class="page-footer"><span>${icon("shield")}OpenMikroRout · Your network. Your rules.</span><span>Lightweight Linux router · IPv4</span></div>
     </div><div id="statusbar">${renderStatus()}</div></main></div>`;
   const navigation = document.querySelector(".sidebar-navigation");
@@ -1304,13 +1318,14 @@ async function refresh(manual = false) {
   const ids = new Set(next.config.rules.map((rule) => rule.id));
   selected = new Set([...selected].filter((id) => ids.has(id)));
   const settingsForm = document.querySelector(
-    "#router-dns-form,#router-domain-form,#backup-import-form,#f2b-settings,#geo-settings,#discovery-settings,#scan-settings",
+    "#router-dns-form,#router-domain-form,#backup-import-form,#f2b-settings,#geo-settings,#discovery-settings,#scan-settings,#application-settings-form",
   );
   if (
     [
       "dns",
       "web_settings",
       "backups",
+      ...Object.keys(applicationViews),
       ...Object.keys(protectionViews),
       ...Object.keys(discoveryViews),
     ].includes(view) &&
@@ -1369,6 +1384,7 @@ async function refresh(manual = false) {
   await Promise.all([refreshTelemetry(), refreshTelemetryHistory()]);
   await refreshProtection(routerContext());
   await refreshDiscovery(routerContext());
+  if (applicationViews[view]) await refreshApplications(routerContext());
   if (view === "capture") await refreshCapture(routerContext());
   if (view === "connections" && !dialog.open)
     await refreshConnections(routerContext());
@@ -1429,6 +1445,7 @@ async function handleAction(button) {
     }
     return;
   }
+  if (await handleApplicationsAction(button, routerContext())) return;
   if (await handleProtectionAction(button, routerContext())) return;
   if (await handleDiscoveryAction(button, routerContext())) return;
   if (await handleUsersAction(button, routerContext())) return;
@@ -1546,6 +1563,8 @@ async function handleAction(button) {
     window.scrollTo(0, 0);
     await refreshProtection(routerContext());
     await refreshDiscovery(routerContext());
+    if (applicationViews[view])
+      await refreshApplications(routerContext(), { force: true });
     if (view === "capture") await refreshCapture(routerContext());
     if (["wireguard", "wireguard_peers"].includes(view))
       await refreshWireGuard(routerContext());
@@ -2125,10 +2144,11 @@ document.addEventListener("input", (event) => {
   if (handleQueryBuilderInput(event)) return;
   if (handleToolsInput(event, routerContext())) return;
   if (handleCaptureInput(event, routerContext())) return;
+  if (handleApplicationsInput(event, routerContext())) return;
   if (handleProtectionInput(event, routerContext())) return;
   if (handleDiscoveryInput(event, routerContext())) return;
   const settingsForm = event.target.closest(
-    "#router-dns-form,#router-domain-form,#backup-import-form,#f2b-settings,#geo-settings,#discovery-settings,#scan-settings",
+    "#router-dns-form,#router-domain-form,#backup-import-form,#f2b-settings,#geo-settings,#discovery-settings,#scan-settings,#application-settings-form",
   );
   if (settingsForm && canWrite()) settingsForm.dataset.dirty = "true";
 });
@@ -2157,6 +2177,7 @@ document.addEventListener("change", (event) => {
   if (backupForm && canWrite()) backupForm.dataset.dirty = "true";
   if (handleToolsInput(event, routerContext())) return;
   if (handleCaptureInput(event, routerContext())) return;
+  if (handleApplicationsInput(event, routerContext())) return;
   if (handleProtectionInput(event, routerContext())) return;
   if (handleDiscoveryInput(event, routerContext())) return;
   const node = event.target;
@@ -2286,6 +2307,22 @@ function formSubmitAction(event) {
 }
 document.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (
+    ["application-rule-form", "application-settings-form"].includes(
+      event.target.id,
+    )
+  ) {
+    const action =
+      event.target.id === "application-rule-form"
+        ? "apps-rule-save"
+        : "apps-settings-save";
+    const button =
+      event.target.querySelector(`[data-action="${action}"]`) ||
+      dialog.querySelector(`[data-action="${action}"]`);
+    if (button)
+      void handleAction(button).catch((error) => toast(error.message, true));
+    return;
+  }
   if (event.target.id === "preferences-form") {
     const button = event.target.querySelector(
       '[data-action="preferences-save"]',
@@ -2412,6 +2449,7 @@ async function boot() {
   }
 }
 installRouterEvents(routerContext);
+installApplicationsEvents(routerContext);
 void boot();
 async function poll() {
   if (!alive || !state || busy || pollInFlight || document.hidden) return;
@@ -2440,6 +2478,20 @@ function startPolling() {
     if (!busy) void refreshTelemetry(true);
   }, 200);
   countdownTimer = setInterval(updateCountdown, 1000);
+  applicationTimer = setInterval(() => {
+    if (
+      alive &&
+      state &&
+      !busy &&
+      !offline &&
+      !document.hidden &&
+      applicationViews[view] &&
+      !dialog.open
+    )
+      void refreshApplications(routerContext()).catch((error) =>
+        toast(error.message, true),
+      );
+  }, 1000);
 }
 startPolling();
 window
@@ -2449,6 +2501,7 @@ window.addEventListener("pagehide", () => {
   alive = false;
   resetTools();
   resetCapture();
+  resetApplications();
   stopTelemetryAnimation(document.querySelector("#telemetry-overview"));
   telemetryController?.abort();
   fastTelemetryController?.abort();
@@ -2456,6 +2509,7 @@ window.addEventListener("pagehide", () => {
   clearInterval(pollTimer);
   clearInterval(telemetryTimer);
   clearInterval(countdownTimer);
+  clearInterval(applicationTimer);
 });
 window.addEventListener("pageshow", () => {
   if (!alive) {

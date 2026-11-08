@@ -44,6 +44,7 @@ def configuration_summary(config: Configuration) -> dict[str, int]:
         key: len(getattr(config, key))
         for key in ("rules", "filter_rules", "address_lists", "system_lists")
     }
+    result["application_rules"] = len(config.applications.rules)
     for key, value in config.network.model_dump(mode="json").items():
         if isinstance(value, list):
             result[key] = len(value)
@@ -181,7 +182,7 @@ class BackupService:
                     raise ValueError("Invalid export")
                 value = raw["config"]
                 defaults = base.model_dump(mode="json")
-                for key in ("network", "filter_rules", "web_domain"):
+                for key in ("network", "filter_rules", "web_domain", "applications"):
                     value.setdefault(key, defaults[key])
                 config = Configuration.model_validate(value)
             except (ValueError, TypeError, AttributeError, RecursionError) as exc:

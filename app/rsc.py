@@ -31,6 +31,7 @@ SECTIONS = {
 }
 ROOT_LISTS = {"address_lists", "system_lists", "rules", "filter_rules"}
 ROOT_SETTINGS = {
+    "/applications settings": "applications",
     "/security fail2ban": "fail2ban",
     "/security geoip": "geoip",
     "/ip discovery": "discovery",
