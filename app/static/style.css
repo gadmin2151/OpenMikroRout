@@ -4026,7 +4026,8 @@ body.is-readonly .access-note > svg,
 .connections-table .numeric {
   text-align: right;
 }
-.connections-table .connection-sort {
+.connections-table .connection-sort,
+.apps-page .table-sort-button {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
@@ -4042,21 +4043,28 @@ body.is-readonly .access-note > svg,
   font-weight: inherit;
   text-align: left;
   white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
   cursor: pointer;
 }
-.connections-table .connection-sort:hover {
+.connections-table .connection-sort:hover,
+.apps-page .table-sort-button:hover {
   color: var(--accent, #315a7e);
 }
-.connections-table .connection-sort:focus-visible {
+.connections-table .connection-sort:focus-visible,
+.apps-page .table-sort-button:focus-visible {
   outline: 2px solid var(--accent, #315a7e);
   outline-offset: 3px;
 }
-.connections-table .connection-sort span {
+.connections-table .connection-sort span,
+.apps-page .table-sort-button span {
   font-size: 10px;
   opacity: 0.6;
 }
 .connections-table th[aria-sort="ascending"] .connection-sort span,
-.connections-table th[aria-sort="descending"] .connection-sort span {
+.connections-table th[aria-sort="descending"] .connection-sort span,
+.apps-page th[aria-sort="ascending"] .table-sort-button span,
+.apps-page th[aria-sort="descending"] .table-sort-button span {
   opacity: 1;
 }
 @media (max-width: 1000px) {
@@ -4964,6 +4972,18 @@ fieldset {
   background: #faf7ed;
   border-color: #e7ddbd;
 }
+.apps-catalog-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.apps-catalog-counts strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
 .apps-mode,
 .apps-decision {
   display: inline-flex;
@@ -4997,6 +5017,9 @@ fieldset {
 }
 .apps-page .table-scroll {
   max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
 }
 .apps-rules-table {
   min-width: 850px;
@@ -5005,7 +5028,37 @@ fieldset {
   min-width: 660px;
 }
 .apps-connections-table {
-  min-width: 1080px;
+  min-width: 1360px;
+}
+.apps-connections-table,
+.apps-catalog-table {
+  table-layout: auto;
+}
+.apps-connections-table th,
+.apps-catalog-table th {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.apps-connections-table th:first-child,
+.apps-connections-table td:first-child,
+.apps-catalog-table th:first-child,
+.apps-catalog-table td:first-child {
+  width: auto;
+  padding-left: 12px;
+}
+.apps-connections-table .apps-endpoint {
+  min-width: 165px;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+.apps-connections-table .numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.apps-connections-table th.numeric .table-sort-button {
+  justify-content: flex-end;
+  text-align: right;
 }
 .apps-capabilities {
   display: flex;

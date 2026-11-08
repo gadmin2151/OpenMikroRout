@@ -28,6 +28,9 @@ parser.add_argument("--binary", type=Path, required=True)
 parser.add_argument("--json", action="store_true")
 parser.add_argument("--backend-quarantine", action="store_true")
 parser.add_argument(
+    "--observe-only", action="store_true", help="Only passive RX/TX regression proof"
+)
+parser.add_argument(
     "--license-profile",
     choices=("lgpl-only", "not-for-profit", "commercial-license"),
     default="lgpl-only",
@@ -169,6 +172,179 @@ except OSError:print('BLOCKED',flush=True)
 """
 
 
+OBSERVE_SERVER = r"""
+import socket,threading
+udp=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+udp.bind(('198.51.100.2',18081))
+def datagrams():
+ while True:
+  data,peer=udp.recvfrom(1024)
+  if data==b'Q'*31:udp.sendto(b'R'*47,peer)
+threading.Thread(target=datagrams,daemon=True).start()
+tcp=socket.socket();tcp.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+tcp.bind(('198.51.100.2',18080));tcp.listen(4)
+print('READY',flush=True)
+while True:
+ c,_=tcp.accept();c.settimeout(3)
+ try:
+  data=b''
+  while b'\r\n\r\n' not in data and len(data)<4096:
+   part=c.recv(4096)
+   if not part:break
+   data+=part
+  c.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK')
+ finally:c.close()
+"""
+OBSERVE_CLIENT = r"""
+import json,socket
+with socket.create_connection(('198.51.100.2',18080),timeout=3) as tcp:
+ tcp.settimeout(3);port=tcp.getsockname()[1]
+ tcp.sendall(b'GET /direction-proof HTTP/1.1\r\n'
+             b'Host: observe.fixture.example\r\nConnection: close\r\n\r\n')
+ reply=b''
+ while True:
+  part=tcp.recv(4096)
+  if not part:break
+  reply+=part
+ assert reply.endswith(b'OK') and b'observe.fixture.example' not in reply
+with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as udp:
+ udp.bind(('192.0.2.2',0));udp.settimeout(3);udp_port=udp.getsockname()[1]
+ udp.sendto(b'Q'*31,('198.51.100.2',18081))
+ reply,_=udp.recvfrom(1024);assert reply==b'R'*47
+print(json.dumps({'http_port':port,'udp_port':udp_port}),flush=True)
+"""
+
+
+def normalized_kernel(namespace: str) -> str:
+    return "\n".join(
+        re.sub(r"\[\d+:\d+\]", "[0:0]", row)
+        for row in command("iptables-save", namespace=namespace).splitlines()
+        if not row.startswith("#")
+    )
+
+
+def verify_observe_bidirectional() -> dict[str, Any]:
+    """A locally originating request must be visible, and both UDP packets counted."""
+    before = {namespace: normalized_kernel(namespace) for namespace in (client, router, server)}
+    http_server = launch(["python3", "-u", "-c", OBSERVE_SERVER], server)
+    assert line(http_server) == "READY"
+    observer = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="omr-observe-kernel-") as name:
+            folder = Path(name)
+            candidate = policy("block")
+            candidate.update(
+                mode="observe",
+                generation="c" * 64,
+                interfaces=["eth0"],
+                source_networks=["192.0.2.2/32"],
+                rules=[],
+            )
+            candidate["catalog"] = {
+                "version": "observe-proof",
+                "entries": [
+                    {
+                        "id": "app.observe.http",
+                        "kind": "application",
+                        "protocol_names": [],
+                        "domains": ["observe.fixture.example"],
+                        "allow_over_port_deny": False,
+                    }
+                ],
+            }
+            config = folder / "policy.json"
+            config.write_text(json.dumps(candidate))
+            observer = launch(
+                [str(binary), "run", "--policy", str(config), "--state-dir", str(folder)], client
+            )
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                if observer.poll() is not None:
+                    raise AssertionError(
+                        "Observe startup failed: "
+                        + (observer.stderr.read() if observer.stderr else "")
+                    )
+                try:
+                    status = json.loads((folder / "status.json").read_text())
+                    if (
+                        status.get("healthy") is True
+                        and status.get("generation") == candidate["generation"]
+                    ):
+                        break
+                except (OSError, ValueError):
+                    pass
+                time.sleep(0.02)
+            else:
+                raise AssertionError("Observe did not become ready")
+            ports = json.loads(command("python3", "-u", "-c", OBSERVE_CLIENT, namespace=client))
+            expected_bytes = (20 + 8 + 31) + (20 + 8 + 47)
+            http_flow = None
+            udp_flow = None
+            deadline = time.monotonic() + 6
+            while time.monotonic() < deadline:
+                if observer.poll() is not None:
+                    raise AssertionError("Observe stopped during passive capture")
+                try:
+                    snapshot = json.loads((folder / "flows.json").read_text())
+                    assert snapshot.get("generation") == candidate["generation"]
+                    for flow in snapshot.get("items", []):
+                        if (
+                            flow.get("source_port") == ports["http_port"]
+                            and flow.get("protocol") == "tcp"
+                        ):
+                            http_flow = flow
+                        if (
+                            flow.get("source_port") == ports["udp_port"]
+                            and flow.get("protocol") == "udp"
+                        ):
+                            udp_flow = flow
+                    if (
+                        http_flow
+                        and http_flow.get("application_id") == "app.observe.http"
+                        and udp_flow
+                        and udp_flow.get("packets") == 2
+                        and udp_flow.get("bytes") == expected_bytes
+                    ):
+                        break
+                except (OSError, ValueError):
+                    pass
+                time.sleep(0.05)
+            assert udp_flow is not None and udp_flow.get("packets") == 2, (
+                f"Observe must capture locally outgoing UDP AND incoming reply, got {udp_flow}"
+            )
+            assert udp_flow.get("bytes") == expected_bytes, (
+                f"Observe directional IP-byte count differs: {udp_flow}"
+            )
+            assert (
+                http_flow is not None and http_flow.get("application_id") == "app.observe.http"
+            ), (
+                "Observe missed the outgoing HTTP Host; server replies contain no service marker: "
+                f"{http_flow}"
+            )
+            assert http_flow.get("method") == "hostname", http_flow
+            assert http_flow.get("counter_source") == "capture", http_flow
+            assert http_flow.get("counters_complete") is False, http_flow
+            stop(observer)
+            after = {
+                namespace: normalized_kernel(namespace) for namespace in (client, router, server)
+            }
+            assert after == before, "Observe modified isolated iptables rules"
+            return {
+                "outgoing_http_host_detected": True,
+                "incoming_reply_captured": True,
+                "udp_packets": udp_flow["packets"],
+                "udp_ip_bytes": udp_flow["bytes"],
+                "expected_udp_ip_bytes": expected_bytes,
+                "iptables_unchanged": True,
+                "observer_namespace": "client",
+                "production_binary": True,
+            }
+    finally:
+        if observer is not None:
+            stop(observer)
+        stop(http_server)
+
+
 def policy(action: str) -> dict[str, Any]:
     return {
         "schema": 1,
@@ -275,6 +451,22 @@ try:
     command("ip", "-n", client, "route", "add", "default", "via", "192.0.2.1")
     command("ip", "-n", server, "route", "add", "default", "via", "198.51.100.1")
     command("sysctl", "-qw", "net.ipv4.ip_forward=1", namespace=router)
+    observe_proof = verify_observe_bidirectional()
+    if args.observe_only:
+        print(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "observe": observe_proof,
+                    "observe_bidirectional": True,
+                    "namespaces_only": True,
+                    "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+                },
+                sort_keys=True,
+            )
+        )
+        raise SystemExit(0)
+
     compiler_proof = None
     if args.backend_quarantine:
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -421,6 +613,8 @@ try:
             "application_allow": True,
             "failure_recovery": False,
             "classifier_sandbox": True,
+            "observe_bidirectional": True,
+            "observe": observe_proof,
             "first_syn_nested_conntrack_mark": True,
             "routing_skb_mark_preserved": True,
             "real_bittorrent_allow_over_port_deny": True,

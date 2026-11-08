@@ -237,7 +237,12 @@ def test_catalog_sync_fixed_channel_stage_only(tmp_path: Path) -> None:
 
 def test_catalog_does_not_promote_native_port_guess_or_unproved_allow(tmp_path: Path) -> None:
     store = catalog(tmp_path)
-    caps = {"available": True, "enforce": False, "protocols": [{"name": "BitTorrent", "id": 999}]}
+    caps = {
+        "available": True,
+        "enforce": False,
+        "engine": {"name": "ndpi", "version": "6.0.0"},
+        "protocols": [{"name": "BitTorrent", "id": 999}],
+    }
     entries = store.entries("seed-2026-11-08", caps)
     bt = next(row for row in entries if row["id"] == "app.bittorrent")
     assert bt["observable"] and not bt["block_validated"] and not bt["allow_over_port_deny"]

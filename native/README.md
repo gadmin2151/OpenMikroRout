@@ -44,6 +44,15 @@ flows after fast path. Observe interface metadata is capture-based; real
 Netfilter interfaces/states are available in Enforce. Payload, full URLs, secrets
 and cookies are not written to these snapshots.
 
+Observe uses interface-bound `ETH_P_ALL` packet taps so both outgoing requests
+and incoming replies reach the classifier. Network-header parsing then admits
+only scoped IPv4 TCP/UDP; it does not activate NFQUEUE or change firewall rules.
+Catalog protocol names and literal domains are indexed once. The longest DNS
+suffix wins, while shared ambiguous suffixes remain unattributed. Generic
+protocol labels and weak hostname/IP/heuristic evidence cannot bypass strict
+Unknown blocking or grant a port exception. Runtime policies are bounded to
+4,096 concrete application/protocol records and 4 MiB.
+
 ## Build and verification
 
 `Dockerfile.build` pins the distro base and engine commit. Build the `engine`

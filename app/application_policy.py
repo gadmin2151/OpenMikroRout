@@ -273,8 +273,8 @@ def resolve_policy(
         raise ValueError(
             "Application enforcement supports at most 64 interface/network combinations"
         )
-    if sum(entry["kind"] == "application" for entry in catalog_entries) > 2048:
-        raise ValueError("The native policy supports at most 2048 concrete applications")
+    if sum(entry["kind"] in ("application", "protocol") for entry in catalog_entries) > 4096:
+        raise ValueError("The native policy supports at most 4096 applications and protocols")
     policy: dict[str, Any] = {
         "schema": 1,
         "engine_license_profile": engine_license_profile,
@@ -309,19 +309,23 @@ def resolve_policy(
             "entries": [
                 {
                     "id": entry["id"],
+                    "kind": entry["kind"],
                     "protocol_names": entry.get("protocol_names", []),
-                    "domains": entry.get("domains", []),
+                    "domains": entry.get("domains", [])
+                    if entry.get("hostname_extraction_supported")
+                    and engine_license_profile != "lgpl-only"
+                    else [],
                     "allow_over_port_deny": entry.get("allow_over_port_deny", False),
                 }
                 for entry in catalog_entries
-                if entry["kind"] == "application"
+                if entry["kind"] in ("application", "protocol")
             ],
         },
     }
     raw = json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()
-    if len(raw) > 1024 * 1024:
-        raise ValueError("The resolved application policy exceeds 1 MiB")
     policy["generation"] = hashlib.sha256(raw).hexdigest()
+    if len(json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()) > 4 * 1024 * 1024:
+        raise ValueError("The resolved application policy exceeds 4 MiB")
     return policy
 
 

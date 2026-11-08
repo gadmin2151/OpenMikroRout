@@ -3,6 +3,7 @@ import { checkboxSelect } from "./checkbox-select.js";
 import { assertDraftRevision } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
 import { addressListChoices } from "./protection-ui.js?v=3";
+import { queryLimits } from "./query-expression.js";
 import {
   renderQueryBuilder,
   applyQueryBuilder,
@@ -122,12 +123,17 @@ const scopes = [
   "applications-picker",
 ];
 const pageSize = 50;
+const metadataCacheLimit = 1024;
+const metadataBatchLimit = 64;
+const ruleApplicationLimit = 64;
 const connStates = ["NEW", "ESTABLISHED", "RELATED"];
 let status = null;
 let errors = {};
 let pages = {};
 let offsets = { catalog: 0, connections: 0, picker: 0 };
 let catalogEntries = new Map();
+let catalogLabelsKey = null;
+let catalogLabelFailure = null;
 let selection = new Set();
 let request = null;
 let controller = null;
@@ -185,9 +191,118 @@ function entryName(entry) {
     ""
   );
 }
+function cacheEntry(id, entry) {
+  catalogEntries.delete(id);
+  catalogEntries.set(id, entry);
+  for (const key of catalogEntries.keys()) {
+    if (catalogEntries.size <= metadataCacheLimit) break;
+    if (!editor?.selected.has(key)) catalogEntries.delete(key);
+  }
+}
 function remember(data) {
-  for (const entry of array(data?.items))
-    if (typeof entry?.id === "string") catalogEntries.set(entry.id, entry);
+  for (const entry of array(data?.items)) {
+    if (typeof entry?.id !== "string") continue;
+    // Monitor labels and selection need no domain/source blobs from large feeds.
+    const compact = {};
+    for (const key of [
+      "id",
+      "name",
+      "name_ru",
+      "name_en",
+      "kind",
+      "category",
+      "children",
+      "concrete_ids",
+      "leaf_ids",
+      "capabilities",
+      "observable",
+      "block_validated",
+      "allow_over_port_deny",
+    ])
+      if (entry[key] !== undefined) compact[key] = entry[key];
+    cacheEntry(entry.id, compact);
+  }
+}
+function ensureCatalogLabels(ctx) {
+  const key = `${config(ctx).catalog_version || ""}:${getLanguage()}`;
+  if (key !== catalogLabelsKey) {
+    catalogLabelsKey = key;
+    catalogEntries = new Map();
+    catalogLabelFailure = null;
+  }
+}
+async function loadSparseLabels(
+  ctx,
+  identifiers,
+  control,
+  current,
+  force = false,
+) {
+  const missing = [...new Set(identifiers)]
+    .filter(
+      (id) =>
+        typeof id === "string" &&
+        id.length <= 80 &&
+        /^app\.[a-z0-9][a-z0-9_.-]*$/.test(id) &&
+        !catalogEntries.has(id),
+    )
+    .slice(0, metadataBatchLimit);
+  if (!missing.length) return null;
+  if (!force && catalogLabelFailure?.until > Date.now())
+    return catalogLabelFailure.message;
+  const batches = [];
+  for (let offset = 0; offset < missing.length; offset += queryLimits.leaves)
+    batches.push(missing.slice(offset, offset + queryLimits.leaves));
+  const results = await Promise.allSettled(
+    batches.map((ids) => {
+      const expression = {
+        kind: "group",
+        join: "or",
+        children: ids.map((value) => ({
+          kind: "condition",
+          field: "id",
+          op: "eq",
+          value,
+        })),
+      };
+      const query = new URLSearchParams({
+        offset: "0",
+        limit: String(ids.length),
+        expression: JSON.stringify(expression),
+      });
+      return ctx.api(`applications/catalog?${query}`, {
+        signal: control.signal,
+      });
+    }),
+  );
+  if (!current()) return null;
+  let failure = null;
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index],
+      ids = new Set(batches[index]);
+    if (
+      result.status === "fulfilled" &&
+      Array.isArray(result.value?.items) &&
+      result.value.items.length <= ids.size &&
+      result.value.total === result.value.items.length &&
+      result.value.items.every((entry) => ids.has(entry?.id)) &&
+      (!result.value.version ||
+        result.value.version === config(ctx).catalog_version)
+    ) {
+      const entries = result.value.items.filter((entry) => ids.has(entry?.id));
+      remember({ items: entries });
+      const received = new Set(entries.map((entry) => entry.id));
+      for (const id of ids) if (!received.has(id)) cacheEntry(id, null);
+    } else
+      failure =
+        result.status === "rejected"
+          ? result.reason.message
+          : t("Некорректный ответ приложений.");
+  }
+  catalogLabelFailure = failure
+    ? { until: Date.now() + 5000, message: failure }
+    : null;
+  return failure;
 }
 function entrySelectionIds(entry, visited = new Set()) {
   if (!entry || visited.has(entry.id)) return [];
@@ -259,7 +374,7 @@ function statusMarkup(ctx) {
         : status.healthy
           ? t("Прикладная фильтрация активна")
           : t("Прикладная фильтрация требует внимания");
-  return html`<div class="apps-status ${!engineReady() || status.error ? "apps-status-warning" : ""}" role="status"><div><strong>${ctx.e(title)}</strong><span>${ctx.e(status.engine?.name || "DPI")} ${ctx.e(status.engine?.version || "")} · IPv4 FORWARD</span></div><span class="apps-mode">${ctx.e(label(status.mode || config(ctx).mode))}</span></div>${errorMarkup(ctx, errors.status || status.error)}${!engineReady() ? note(ctx, "Каталог доступен для подготовки правил. Без совместимого движка распознавание и блокировка не работают.") : ""}`;
+  return html`<div class="apps-status ${!engineReady() || status.error ? "apps-status-warning" : ""}" role="status"><div><strong>${ctx.e(title)}</strong><span>${ctx.e(status.engine?.name || "DPI")} ${ctx.e(status.engine?.version || "")} · ${ctx.e(status.mode === "observe" ? t("IPv4 · захват интерфейсов") : "IPv4 FORWARD")}</span></div><span class="apps-mode">${ctx.e(label(status.mode || config(ctx).mode))}</span></div>${errorMarkup(ctx, errors.status || status.error)}${!engineReady() ? note(ctx, "Каталог доступен для подготовки правил. Без совместимого движка распознавание и блокировка не работают.") : ""}`;
 }
 function capabilities(ctx, entry) {
   return html`<span class="apps-capabilities">${[
@@ -269,9 +384,18 @@ function capabilities(ctx, entry) {
   ]
     .map(
       ([key, text]) =>
-        html`<span class="apps-capability ${cap(entry, key) ? "available" : "unavailable"}" title="${ctx.e(t(cap(entry, key) ? "Покрытие подтверждено" : "Покрытие не подтверждено"))}">${cap(entry, key) ? "✓" : "—"} ${t(text)}</span>`,
+        html`<span class="apps-capability ${cap(entry, key) ? "available" : "unavailable"}" title="${ctx.e(t(key === "observable" ? (cap(entry, key) ? "Наблюдение доступно" : "Наблюдение недоступно") : cap(entry, key) ? "Покрытие подтверждено" : "Покрытие не подтверждено"))}">${cap(entry, key) ? "✓" : "—"} ${t(text)}</span>`,
     )
     .join("")}</span>`;
+}
+function observationBasis(entry) {
+  if (entry.kind === "family") return t("См. дочерние приложения");
+  const dpi =
+    cap(entry, "observable") && array(entry.protocol_names).length > 0;
+  const hostname = entry.hostname_observable === true;
+  if (dpi && hostname) return t("Протокол DPI и доменные подсказки");
+  if (dpi) return t("Протокол DPI");
+  return t(hostname ? "Имя узла · слабая подсказка" : "Недоступно");
 }
 function pager(ctx, kind, data) {
   const total = Number(data?.total) || 0,
@@ -281,7 +405,7 @@ function pager(ctx, kind, data) {
 function sortable(ctx, kind, key, text) {
   const order = sorting[kind],
     current = order?.key === key;
-  return html`<th scope="col" aria-sort="${current ? order.direction : "none"}"><button type="button" class="connection-sort" data-action="apps-sort" data-kind="${kind}" data-key="${key}" title="Сортировка текущей страницы">${ctx.e(t(text))}<span aria-hidden="true">${current ? (order.direction === "ascending" ? "▲" : "▼") : "↕"}</span></button></th>`;
+  return html`<th scope="col" class="${["packets", "bytes"].includes(key) ? "numeric" : ""}" aria-sort="${current ? order.direction : "none"}"><button type="button" class="connection-sort table-sort-button" data-action="apps-sort" data-kind="${kind}" data-key="${key}" title="Сортировка текущей страницы">${ctx.e(t(text))}<span aria-hidden="true">${current ? (order.direction === "ascending" ? "▲" : "▼") : "↕"}</span></button></th>`;
 }
 function sorted(items, kind) {
   const order = sorting[kind];
@@ -356,7 +480,7 @@ function rulesPage(ctx) {
     ["apps-rule-delete", "Удалить выбранные", "minus"],
     ["apps-rule-enable", "Включить", "check"],
     ["apps-rule-disable", "Отключить", "x"],
-    ["apps-rule-copy", "Создать копию", "copy"],
+    ["apps-rule-copy", "Дублировать правила", "copy"],
     ["apps-rule-up", "Выше", "up"],
     ["apps-rule-down", "Ниже", "arrowdown"],
   ]
@@ -367,11 +491,26 @@ function rulesPage(ctx) {
       "",
     )}</div>${button(ctx, "apps-refresh", "Обновить", "", "refresh")}</div>${note(ctx, "Allow пропускает только явно выбранные запреты портов. IP, GeoIP, WireGuard и Fail2ban продолжают проверяться.")}${renderQueryBuilder("applications-rules", ruleQuerySchema(), { applyAction: "apps-rules-filter" })}<div id="applications-results">${ruleRows(ctx)}</div>`;
 }
+function catalogCounts(ctx, counts) {
+  if (!counts || typeof counts !== "object" || Array.isArray(counts)) return "";
+  return html`<div class="apps-catalog-counts" role="status"><span>${t("Всего в каталоге")}</span>${[
+    ["application", "Приложения"],
+    ["protocol", "Протоколы"],
+    ["family", "Семейства"],
+    ["provider", "Провайдеры"],
+    ["category", "Категории"],
+  ]
+    .map(
+      ([key, text]) =>
+        html`<span>${ctx.e(t(text))} <strong>${ctx.e(Number.isSafeInteger(counts[key]) && counts[key] >= 0 ? number(counts[key]) : "—")}</strong></span>`,
+    )
+    .join("")}</div>`;
+}
 function catalogRows(ctx) {
   const data = pages.catalog;
   if (!data)
     return errorMarkup(ctx, errors.catalog) || note(ctx, "Загрузка каталога…");
-  return html`${errorMarkup(ctx, errors.catalog)}<div class="table-scroll"><table class="rules-table apps-catalog-table"><thead><tr>${sortable(ctx, "catalog", "name", "Приложение")}${sortable(ctx, "catalog", "kind", "Тип")}${sortable(ctx, "catalog", "category", "Категория")}<th>Проверенное покрытие</th><th></th></tr></thead><tbody>${
+  return html`${errorMarkup(ctx, errors.catalog)}${catalogCounts(ctx, data.counts_by_kind)}<div class="table-scroll"><table class="rules-table apps-catalog-table"><thead><tr>${sortable(ctx, "catalog", "name", "Приложение")}${sortable(ctx, "catalog", "kind", "Тип")}${sortable(ctx, "catalog", "category", "Категория")}<th>Возможности</th><th></th></tr></thead><tbody>${
     sorted(array(data.items), "catalog")
       .map(
         (entry) =>
@@ -388,7 +527,8 @@ function connectionsRows(ctx) {
       errorMarkup(ctx, errors.connections) ||
       note(ctx, "Загрузка прикладных соединений…")
     );
-  return html`${errorMarkup(ctx, errors.connections || data.error)}${note(ctx, "Решение OMR не доказывает доступность удалённого сервиса. Состояние TCP и распознавание приложения показаны отдельно.")}${data.counters_scope === "analyzed" ? note(ctx, "Счётчики относятся к анализируемым пакетам и не являются полными счётчиками соединения.") : ""}<div class="table-scroll"><table class="rules-table apps-connections-table"><thead><tr>${[
+  const observing = (status?.mode || config(ctx).mode) === "observe";
+  return html`${errorMarkup(ctx, errors.connections || data.error)}${errorMarkup(ctx, errors.catalogLabels)}${observing ? note(ctx, "Наблюдение пассивное. В выбранной области виден и трафик самого роутера. Потоки до и после NAT могут отображаться отдельно. Правила приложений не применяются.") : note(ctx, "Решение OMR не доказывает доступность удалённого сервиса. Состояние TCP и распознавание приложения показаны отдельно.")}${data.counters_scope === "analyzed" ? note(ctx, "Счётчики относятся к анализируемым пакетам и не являются полными счётчиками соединения.") : ""}<div class="table-scroll"><table class="rules-table apps-connections-table"><thead><tr>${[
     ["application_id", "Приложение"],
     ["source", "Клиент"],
     ["destination", "Назначение"],
@@ -404,7 +544,7 @@ function connectionsRows(ctx) {
     sorted(array(data.items), "connections")
       .map(
         (row) =>
-          html`<tr><td><strong>${ctx.e(entryName(catalogEntries.get(row.application_id)) || row.application_name || row.application_id || t("Не определено"))}</strong><small class="cell-note">${ctx.e(row.interface || "—")}</small></td><td class="mono">${ctx.e(endpoint(row.source, row.source_port))}</td><td class="mono">${ctx.e(endpoint(row.destination, row.destination_port))}<small class="cell-note">${ctx.e(row.translated_destination || "")}</small></td><td>${ctx.e(String(row.protocol || "—").toUpperCase())}</td><td>${ctx.e(label(row.classification_state))}</td><td><span class="apps-decision ${["allow", "block", "probe", "fallback"].includes(row.decision) ? row.decision : ""}">${ctx.e(label(row.decision))}</span><small class="cell-note">${ctx.e(row.observed_verdict || row.effective_verdict || "—")}</small></td><td class="mono">${ctx.e(row.state || "—")}</td><td class="mono">${ctx.e(number(row.packets))}</td><td class="mono">${ctx.e(number(row.bytes))}</td><td>${ctx.e(row.method || "—")}<small class="cell-note">${ctx.e(row.rule_name || row.reason || "—")}</small></td></tr>`,
+          html`<tr><td><strong>${ctx.e(entryName(catalogEntries.get(row.application_id)) || row.application_name || row.application_id || row.protocol_name || t("Не определено"))}</strong>${!row.application_id && row.protocol_name ? html`<small class="cell-note">Протокол DPI вне каталога</small>` : ""}<small class="cell-note">${ctx.e(row.interface || "—")}</small></td><td class="mono apps-endpoint">${ctx.e(endpoint(row.source, row.source_port))}</td><td class="mono apps-endpoint">${ctx.e(endpoint(row.destination, row.destination_port))}<small class="cell-note">${ctx.e(row.translated_destination || "")}</small></td><td>${ctx.e(String(row.protocol || "—").toUpperCase())}<small class="cell-note">${ctx.e(row.protocol_name || "")}</small></td><td>${ctx.e(label(row.classification_state))}</td><td><span class="apps-decision ${observing ? "observe" : ["allow", "block", "probe", "fallback"].includes(row.decision) ? row.decision : ""}">${ctx.e(observing ? t("Наблюдение") : label(row.decision))}</span><small class="cell-note">${ctx.e(observing ? t("Не применяется") : row.observed_verdict || row.effective_verdict || "—")}</small></td><td class="mono">${ctx.e(observing && row.state === "UNKNOWN" ? "—" : row.state || "—")}</td><td class="mono numeric">${ctx.e(number(row.packets))}</td><td class="mono numeric">${ctx.e(number(row.bytes))}</td><td>${ctx.e(row.method || "—")}<small class="cell-note">${ctx.e(row.rule_name || row.reason || "—")}</small></td></tr>`,
       )
       .join("") ||
     html`<tr><td colspan="10" class="users-empty">${engineReady() ? t("Прикладных соединений пока нет.") : t("Движок недоступен: реальные прикладные потоки не собираются.")}</td></tr>`
@@ -481,6 +621,11 @@ function catalogJobMessage() {
     ""
   );
 }
+function settingsModeNotes(ctx, mode) {
+  return mode === "observe"
+    ? html`${note(ctx, "Observe пассивно анализирует выбранные интерфейсы и клиентские сети, включая трафик самого роутера. Сетевые правила не применяются.")}${note(ctx, "При отказе обработчика прекращаются только наблюдения. Трафик продолжает обрабатываться обычным Firewall.")}`
+    : html`${note(ctx, "Управляются только выбранные транзитные сети. INPUT/OUTPUT и управление PVE не входят в эту область.")}${note(ctx, "Отказ обработчика всегда закрывает управляемую область. Эта настройка относится только к ошибке анализа отдельного потока.")}`;
+}
 function settingsPage(ctx) {
   const settings = config(ctx),
     disabled = locked(ctx) ? "disabled" : "";
@@ -502,7 +647,7 @@ function settingsPage(ctx) {
       ["block", "Блокировать в управляемой области"],
       ["firewall", "Обычный Firewall"],
     ],
-  )}</div>${note(ctx, "Управляются только выбранные транзитные сети. INPUT/OUTPUT и управление PVE не входят в эту область.")}${note(ctx, "Отказ обработчика всегда закрывает управляемую область. Эта настройка относится только к ошибке анализа отдельного потока.")}${!enforcementReady() ? note(ctx, "Enforce недоступен без проверенного совместимого движка. Сохранение черновика не включает блокировку.") : ""}<details><summary>Приоритет над запретами портов</summary>${checkboxSelect(
+  )}</div><div id="apps-settings-scope-notes">${settingsModeNotes(ctx, settings.mode)}</div>${!enforcementReady() ? note(ctx, "Enforce недоступен без проверенного совместимого движка. Сохранение черновика не включает блокировку.") : ""}<details><summary>Приоритет над запретами портов</summary>${checkboxSelect(
     {
       name: "override_rule_ids",
       label: "Applications имеют приоритет над этими запретами",
@@ -583,6 +728,7 @@ function paint(ctx, view) {
 export async function refreshApplications(ctx, { force = false } = {}) {
   const view = activeView(ctx);
   if (!view) return;
+  ensureCatalogLabels(ctx);
   if (!force && request && requestView === view) return request;
   if (
     !force &&
@@ -596,15 +742,20 @@ export async function refreshApplications(ctx, { force = false } = {}) {
     currentEpoch = epoch;
   controller = control;
   requestView = view;
+  const current = () =>
+    !control.signal.aborted &&
+    epoch === currentEpoch &&
+    generation === ctx.getGeneration() &&
+    ctx.isCurrentView(view);
   const kind =
     view === "applications_connections"
       ? "connections"
-      : view === "applications_settings"
+      : ["applications_settings", "applications_rules"].includes(view)
         ? null
         : "catalog";
   const query = new URLSearchParams({
     offset: String(view === "applications_rules" ? 0 : offsets[kind] || 0),
-    limit: String(view === "applications_rules" ? 200 : pageSize),
+    limit: String(pageSize),
   });
   if (kind && view !== "applications_rules") {
     const expression = getAppliedExpression(`applications-${kind}`);
@@ -620,13 +771,7 @@ export async function refreshApplications(ctx, { force = false } = {}) {
           ctx.api(`applications/${kind}?${query}`, { signal: control.signal }),
         );
       const results = await Promise.allSettled(tasks);
-      if (
-        control.signal.aborted ||
-        epoch !== currentEpoch ||
-        generation !== ctx.getGeneration() ||
-        !ctx.isCurrentView(view)
-      )
-        return;
+      if (!current()) return;
       if (
         results[0].status === "fulfilled" &&
         results[0].value &&
@@ -654,6 +799,22 @@ export async function refreshApplications(ctx, { force = false } = {}) {
             result.status === "rejected"
               ? result.reason.message
               : t("Некорректный ответ приложений.");
+      }
+      if (kind === "connections" || view === "applications_rules") {
+        const identifiers =
+          kind === "connections"
+            ? array(pages.connections?.items).map((row) => row.application_id)
+            : rules(ctx).flatMap((rule) => array(rule.application_ids));
+        const failure = await loadSparseLabels(
+          ctx,
+          identifiers,
+          control,
+          current,
+          force,
+        );
+        if (!current()) return;
+        if (failure) errors.catalogLabels = failure;
+        else delete errors.catalogLabels;
       }
       lastRefresh[view] = Date.now();
       paint(ctx, view);
@@ -705,7 +866,7 @@ function pickerRows(ctx) {
     items
       .map((entry) => {
         const ids = entrySelectionIds(entry);
-        return html`<label class="checkbox-select-option"><input type="checkbox" data-app-picker="${ctx.e(entry.id)}" name="application_ids" value="${ctx.e(entry.id)}" ${checked(ids.length && ids.every((id) => chosen.has(id)))} ${locked(ctx) || !ids.length ? "disabled" : ""}><span><strong>${ctx.e(entryName(entry))}</strong><small class="cell-note">${ctx.e(entry.id)} · ${ctx.e(label(entry.kind))}${entry.kind === "family" ? html` · ${ids.length} ${t("приложений")}` : ""}</small></span></label>`;
+        return html`<label class="checkbox-select-option"><input type="checkbox" data-app-picker="${ctx.e(entry.id)}" name="application_ids" value="${ctx.e(entry.id)}" ${checked(ids.length && ids.every((id) => chosen.has(id)))} ${locked(ctx) || !ids.length || ids.length > ruleApplicationLimit ? "disabled" : ""} title="${ctx.e(ids.length > ruleApplicationLimit ? t("В одном правиле допускается до 64 приложений.") : "")}"><span><strong>${ctx.e(entryName(entry))}</strong><small class="cell-note">${ctx.e(entry.id)} · ${ctx.e(label(entry.kind))}${entry.kind === "family" ? html` · ${ids.length} ${t("приложений")}` : ""}</small></span></label>`;
       })
       .join("") ||
     html`<span class="checkbox-select-empty">${editor?.page ? t("По этому фильтру приложения не найдены.") : t("Загрузка каталога…")}</span>`
@@ -739,6 +900,7 @@ function validateEditor(ctx, form) {
   return form.reportValidity();
 }
 function openEditor(ctx, id) {
+  ensureCatalogLabels(ctx);
   detailController?.abort();
   detailSerial++;
   const existing = rules(ctx).find((row) => row.id === id);
@@ -774,6 +936,7 @@ function openEditor(ctx, id) {
 }
 async function loadPicker(ctx) {
   if (!editor) return;
+  ensureCatalogLabels(ctx);
   pickerController?.abort();
   const control = new AbortController(),
     serial = editor.serial,
@@ -802,6 +965,18 @@ async function loadPicker(ctx) {
     editor.page = data;
     remember(data);
     pickerError = "";
+    const current = () =>
+      !control.signal.aborted &&
+      epoch === currentEpoch &&
+      generation === ctx.getGeneration() &&
+      editor?.serial === serial;
+    const failure = await loadSparseLabels(
+      ctx,
+      [...editor.selected],
+      control,
+      current,
+    );
+    if (current() && failure) pickerError = failure;
   } catch (error) {
     if (
       !control.signal.aborted &&
@@ -821,6 +996,18 @@ async function loadPicker(ctx) {
       paintPicker(ctx);
     }
   }
+}
+function selectApplications(ctx, identifiers, checked) {
+  if (!editor) return;
+  const next = new Set(editor.selected);
+  for (const id of identifiers) checked ? next.add(id) : next.delete(id);
+  if (next.size > ruleApplicationLimit)
+    pickerError = t("В одном правиле допускается до 64 приложений.");
+  else {
+    editor.selected = next;
+    pickerError = "";
+  }
+  paintPicker(ctx);
 }
 function requireWrite(ctx) {
   if (!ctx.canWrite()) throw new Error(t("Нужна группа full."));
@@ -857,11 +1044,11 @@ export function handleApplicationsInput(event, ctx) {
   }
   if (target?.dataset?.appPicker) {
     if (editor && !locked(ctx)) {
-      for (const id of entrySelectionIds(
-        catalogEntries.get(target.dataset.appPicker),
-      ))
-        target.checked ? editor.selected.add(id) : editor.selected.delete(id);
-      paintPicker(ctx);
+      selectApplications(
+        ctx,
+        entrySelectionIds(catalogEntries.get(target.dataset.appPicker)),
+        target.checked,
+      );
     }
     return true;
   }
@@ -869,7 +1056,13 @@ export function handleApplicationsInput(event, ctx) {
     "#application-rule-form,#application-settings-form",
   );
   if (!form) return false;
-  if (!locked(ctx)) form.dataset.dirty = "true";
+  if (!locked(ctx)) {
+    form.dataset.dirty = "true";
+    if (target.name === "mode") {
+      const notes = document.querySelector("#apps-settings-scope-notes");
+      if (notes) notes.innerHTML = settingsModeNotes(ctx, target.value);
+    }
+  }
   return true;
 }
 export async function handleApplicationsAction(control, ctx) {
@@ -911,7 +1104,7 @@ export async function handleApplicationsAction(control, ctx) {
       ["catalog", "connections"].includes(kind) &&
       Number.isSafeInteger(offset) &&
       offset >= 0 &&
-      offset <= 100000
+      offset <= 10000
     ) {
       offsets[kind] = offset;
       await refreshApplications(ctx, { force: true });
@@ -983,7 +1176,7 @@ export async function handleApplicationsAction(control, ctx) {
     ctx.dialogFrame(
       entryName(entry),
       entry.id,
-      html`<div class="apps-entry-detail">${capabilities(ctx, entry)}<dl><dt>Тип</dt><dd>${ctx.e(label(entry.kind))}</dd><dt>Категория</dt><dd>${ctx.e(entry.category || "—")}</dd><dt>Покрытие</dt><dd>${ctx.e(entry.coverage || t("Покрытие не подтверждено"))}</dd><dt>Источник / Версия</dt><dd class="mono">${ctx.e(entry.source || entry.engine_mapping?.engine || "—")} ${ctx.e(entry.version || entry.engine_mapping?.version || "")}</dd><dt>Лицензия / Профиль</dt><dd>${ctx.e(entry.license_profile || entry.license || "—")}</dd></dl>${note(ctx, "IP/DNS-сопоставление не доказывает имя программы. Непроверенные возможности не используются для приоритетного Allow.")}</div>`,
+      html`<div class="apps-entry-detail">${capabilities(ctx, entry)}<dl><dt>Тип</dt><dd>${ctx.e(label(entry.kind))}</dd><dt>Категория</dt><dd>${ctx.e(entry.category || "—")}</dd><dt>Основание наблюдения</dt><dd>${ctx.e(observationBasis(entry))}</dd><dt>Покрытие</dt><dd>${ctx.e(entry.coverage || t("Покрытие не подтверждено"))}</dd><dt>Источник / Версия</dt><dd class="mono">${ctx.e(entry.source || entry.engine_mapping?.engine || "—")} ${ctx.e(entry.version || entry.engine_mapping?.version || "")}</dd><dt>Лицензия / Профиль</dt><dd>${ctx.e(entry.license_profile || entry.license || "—")}</dd></dl>${note(ctx, "IP/DNS-сопоставление не доказывает имя программы. Непроверенные возможности не используются для приоритетного Allow.")}</div>`,
       button(ctx, "close", "Закрыть"),
     );
     return true;
@@ -994,7 +1187,7 @@ export async function handleApplicationsAction(control, ctx) {
       offsets.picker = 0;
     } else {
       const value = Number(control.dataset.offset);
-      if (!Number.isSafeInteger(value) || value < 0 || value > 100000)
+      if (!Number.isSafeInteger(value) || value < 0 || value > 10000)
         return true;
       offsets.picker = value;
     }
@@ -1012,10 +1205,17 @@ export async function handleApplicationsAction(control, ctx) {
     )
   ) {
     if (!editor) return true;
-    if (action === "apps-picker-all")
-      for (const entry of array(editor.page?.items))
-        for (const id of entrySelectionIds(entry)) editor.selected.add(id);
-    else if (action === "apps-picker-remove")
+    if (action === "apps-picker-all") {
+      selectApplications(
+        ctx,
+        array(editor.page?.items).flatMap((entry) => {
+          const ids = entrySelectionIds(entry);
+          return ids.length <= ruleApplicationLimit ? ids : [];
+        }),
+        true,
+      );
+      return true;
+    } else if (action === "apps-picker-remove")
       editor.selected.delete(control.dataset.id);
     else editor.selected.clear();
     paintPicker(ctx);
@@ -1027,7 +1227,7 @@ export async function handleApplicationsAction(control, ctx) {
     assertDraftRevision(editor.revision, ctx.state.revision);
     if (!editor.selected.size)
       throw new Error(t("Выберите хотя бы одно приложение."));
-    if (editor.selected.size > 64)
+    if (editor.selected.size > ruleApplicationLimit)
       throw new Error(t("В одном правиле допускается до 64 приложений."));
     const values = new FormData(form),
       rule = {
@@ -1203,6 +1403,8 @@ export function resetApplications() {
   offsets = { catalog: 0, connections: 0, picker: 0 };
   lastRefresh = {};
   catalogEntries = new Map();
+  catalogLabelsKey = null;
+  catalogLabelFailure = null;
   selection = new Set();
   sorting = { catalog: null, connections: null };
   pickerError = "";

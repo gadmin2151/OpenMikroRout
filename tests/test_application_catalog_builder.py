@@ -276,3 +276,117 @@ def test_arbitrary_urls_and_redirects_cannot_replace_source_pins() -> None:
         builder.fetch_source("http://127.0.0.1/private", 10)
     with pytest.raises(builder.CatalogBuildError, match="redirects"):
         builder.NoRedirect().redirect_request(None, None, 302, "", {}, "https://example.org")  # type: ignore[arg-type]
+
+
+def full_loader(
+    files: dict[str, bytes], monkeypatch: pytest.MonkeyPatch
+) -> tuple[builder.DomainHints, dict[str, object]]:
+    hints, _ = loader(files, monkeypatch)
+    hints.full_catalog = True
+    declarations = [
+        {"engine_id": 2, "symbol": "NDPI_PROTOCOL_MAIL_POP"},
+        {"engine_id": 7, "symbol": "NDPI_PROTOCOL_HTTP"},
+        {"engine_id": 99, "symbol": "NDPI_PROTOCOL_ALPHA"},
+    ]
+    object.__setattr__(hints.pin, "ndpi", {"entries": declarations, "commit": "a" * 40})
+    capabilities: dict[str, object] = {
+        "engine": {"name": "ndpi", "commit": builder.NDPI_COMMIT},
+        "protocols": [
+            {"id": 2, "name": "POP3"},
+            {"id": 7, "name": "HTTP"},
+            {"id": 99, "name": "Alpha"},
+        ],
+    }
+    return hints, capabilities
+
+
+def test_full_source_import_deduplicates_identities_without_promoting_enforcement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hints, capabilities = full_loader(
+        {
+            "alpha": b"alpha.example.com\ninclude:beta\n",
+            "beta": b"beta.example.com\n",
+            "category-social": b"include:alpha\n",
+            "legacy": b"include:beta\n",
+            "cloudflare": b"cloudflare.example.com\n",
+        },
+        monkeypatch,
+    )
+    initial = CatalogBundle.model_validate(
+        {"serial": 1, "version": "full-v1", "entries": [entry("app.keep")]}
+    )
+    result, report = builder.full_catalog(initial, hints, capabilities)
+    by_id = {row.id: row for row in result.entries}
+    alpha = by_id["app.ndpi.alpha"]
+    assert alpha.kind == "application"
+    assert alpha.domains == ["alpha.example.com"], (
+        "Umbrella includes must not become owned suffixes"
+    )
+    assert alpha.engine_mapping and alpha.engine_mapping.protocol_name == "Alpha"
+    assert by_id["app.ndpi.mail_pop"].engine_mapping.protocol_name == "POP3"  # type: ignore[union-attr]
+    assert by_id["app.v2fly.category-social"].kind == "category"
+    assert by_id["app.v2fly.cloudflare"].kind == "provider"
+    assert by_id["app.v2fly.beta"].domain_provider_refs == ["v2fly:beta", "v2fly:legacy"]
+    assert "app.v2fly.legacy" not in by_id and report["aliases"]["legacy"] == "app.v2fly.beta"
+    assert "app.keep" in by_id
+    assert all(not row.allow_over_port_deny and not row.block_validated for row in result.entries)
+    assert report["source_lists"] == 5 and report["added_ndpi_declarations"] == 3
+    assert report["capabilities_promoted_by_import"] is False
+
+
+def test_full_import_requires_reviewed_engine_and_explicit_source_limit_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hints, capabilities = full_loader({"alpha": b"alpha.example.com\n"}, monkeypatch)
+    initial = CatalogBundle.model_validate(
+        {"serial": 1, "version": "full-v1", "entries": [entry("app.keep")]}
+    )
+    hints.full_catalog = False
+    with pytest.raises(builder.CatalogBuildError, match="explicit"):
+        builder.full_catalog(initial, hints, capabilities)
+    hints.full_catalog = True
+    capabilities["engine"] = {"name": "ndpi", "commit": "0" * 40}
+    with pytest.raises(builder.CatalogBuildError, match="pinned"):
+        builder.full_catalog(initial, hints, capabilities)
+    capabilities["engine"] = {"name": "ndpi", "commit": builder.NDPI_COMMIT}
+    capabilities["protocols"] = [{"id": 2, "name": "POP3"}]
+    with pytest.raises(builder.CatalogBuildError, match="every pinned"):
+        builder.full_catalog(initial, hints, capabilities)
+
+
+def test_full_source_limit_preserves_primary_suffix_and_reports_omissions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = b"google.com\n" + b"\n".join(f"host{i}.example.com".encode() for i in range(100))
+    hints, capabilities = full_loader({"google": raw}, monkeypatch)
+    initial = CatalogBundle.model_validate(
+        {"serial": 1, "version": "full-v1", "entries": [entry("app.keep")]}
+    )
+    result, report = builder.full_catalog(initial, hints, capabilities)
+    google = next(row for row in result.entries if row.id == "app.v2fly.google")
+    assert len(google.domains) == 64 and "google.com" in google.domains
+    assert report["entries"]["google"]["omitted_above_limit"] == 37
+    assert report["truncated_source_lists"] == 1
+
+
+def test_source_ids_are_stable_bounded_and_distinguish_negated_region_tags() -> None:
+    for value in ("category-ai-!cn", "a" * 100, "long-" * 20):
+        identifier = builder.source_id("v2fly", value)
+        assert len(identifier) <= 80 and identifier == builder.source_id("v2fly", value)
+    assert builder.source_id("v2fly", "category-ai-!cn") != builder.source_id(
+        "v2fly", "category-ai-cn"
+    )
+
+
+def test_local_source_cache_is_pinned_and_cannot_follow_links(tmp_path: Path) -> None:
+    root = tmp_path / "source"
+    (root / "data").mkdir(parents=True)
+    (root / "data/test").write_bytes(b"example.com\n")
+    fetch = builder.local_source_fetcher(root)
+    assert fetch(builder.V2FLY_BASE + "data/test", 100) == b"example.com\n"
+    with pytest.raises(builder.CatalogBuildError, match="Unsafe"):
+        fetch(builder.V2FLY_BASE + "data/../../secret", 100)
+    (root / "data/link").symlink_to(root / "data/test")
+    with pytest.raises(builder.CatalogBuildError, match="links"):
+        fetch(builder.V2FLY_BASE + "data/link", 100)

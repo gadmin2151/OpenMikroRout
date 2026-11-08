@@ -6,6 +6,7 @@ let preview = null;
 const labels = {
   rules: "NAT",
   filter_rules: t("Firewall"),
+  application_rules: "Applications",
   address_lists: t("Address Lists"),
   bridges: t("Bridge"),
   vlans: "VLAN",
@@ -35,7 +36,7 @@ export function renderBackups(ctx) {
         .filter((k) => preview.before[k] || preview.after[k])
         .map(
           (k) =>
-            html`<tr><td>${ctx.e(labels[k])}</td><td class="numeric">${ctx.e(preview.before[k] || 0)}</td><td class="numeric">${ctx.e(preview.after[k] || 0)}</td></tr>`,
+            html`<tr><td>${ctx.e(t(labels[k]))}</td><td class="numeric">${ctx.e(preview.before[k] || 0)}</td><td class="numeric">${ctx.e(preview.after[k] || 0)}</td></tr>`,
         )
         .join("")
     : "";

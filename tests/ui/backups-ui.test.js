@@ -6,6 +6,7 @@ import {
   resetBackups,
 } from "../../app/static/backups-ui.js";
 import { isReadAction } from "../../app/static/access-ui.js";
+import { setLanguage } from "../../app/static/i18n.js";
 
 const escape = (value) =>
   String(value ?? "").replace(
@@ -102,6 +103,41 @@ test("preview escapes uploaded text and cannot stage after another session edits
     );
   } finally {
     globalThis.document = previous;
+    resetBackups();
+  }
+});
+
+test("backup preview names application rules in the selected profile language", async () => {
+  const previous = globalThis.document;
+  globalThis.document = { ...inspectFixture(), documentElement: {} };
+  resetBackups();
+  const ctx = {
+    ...context(),
+    api: async () => ({
+      preview_id: "apps-preview",
+      before: { application_rules: 1 },
+      after: { application_rules: 3 },
+      accounts: [],
+      warnings: [],
+      script: "",
+    }),
+  };
+  try {
+    await handleBackupAction({ dataset: { action: "backup-inspect" } }, ctx);
+    for (const language of ["ru", "en"]) {
+      setLanguage(language);
+      const markup = renderBackups(ctx);
+      assert.match(
+        markup,
+        language === "ru"
+          ? /<td>Приложения<\/td><td class="numeric">1<\/td><td class="numeric">3<\/td>/
+          : /<td>Applications<\/td><td class="numeric">1<\/td><td class="numeric">3<\/td>/,
+      );
+      assert.doesNotMatch(markup, /application_rules/);
+    }
+  } finally {
+    globalThis.document = previous;
+    setLanguage("ru");
     resetBackups();
   }
 });

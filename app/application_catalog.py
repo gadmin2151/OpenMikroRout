@@ -1,6 +1,7 @@
 """Bounded, versioned application data; signed downloads never activate policy."""
 
 import base64
+import copy
 import hashlib
 import json
 import re
@@ -9,6 +10,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import Counter, OrderedDict
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
@@ -24,6 +26,10 @@ from app.link_models import LinkModel
 from app.list_filters import FieldSpec, compile_expression, parse_expression
 
 MAX_CATALOG_BYTES = 8 * 1024 * 1024
+# LRU weight is serialized bytes; retained Python objects have additional overhead.
+MAX_CACHE_BYTES = 32 * 1024 * 1024
+MAX_CACHED_BUNDLES = 2
+MAX_CACHED_ROWS = 4
 CATALOG_URL = "https://raw.githubusercontent.com/gadmin2151/OpenMikroRout/catalog-data/catalog.json"
 CATALOG_SIGNATURE_URL = CATALOG_URL.removesuffix(".json") + ".sig"
 CATALOG_SCHEMA = {
@@ -45,6 +51,7 @@ class EngineMapping(LinkModel):
     version: str = Field(max_length=40)
     symbol: str = Field(max_length=100, pattern=r"^NDPI_PROTOCOL_[A-Z0-9_]+$")
     native_id: int = Field(ge=1, le=65535)
+    protocol_name: str = Field(default="", max_length=100)
 
 
 class CatalogNames(LinkModel):
@@ -113,6 +120,11 @@ class ApplicationCatalog:
         self.path = self.directory / "catalog.sqlite3"
         self.public_key = public_key
         self.lock = threading.RLock()
+        self._bundles: OrderedDict[tuple[str, str], tuple[int, CatalogBundle]] = OrderedDict()
+        self._rows: OrderedDict[tuple[str, str, str, str], tuple[int, list[dict[str, Any]]]] = (
+            OrderedDict()
+        )
+        self._cache_bytes = 0
         self.job: dict[str, Any] | None = None
         self.worker: threading.Thread | None = None
         self.last_check = 0.0
@@ -141,12 +153,46 @@ class ApplicationCatalog:
     def connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path, timeout=5)
 
+    def _trim_cache(self) -> None:
+        while (
+            self._cache_bytes > MAX_CACHE_BYTES
+            or len(self._rows) > MAX_CACHED_ROWS
+            or len(self._bundles) > MAX_CACHED_BUNDLES
+        ):
+            if self._rows:
+                _, (size, _) = self._rows.popitem(last=False)
+            else:
+                _, (size, _) = self._bundles.popitem(last=False)
+            self._cache_bytes -= size
+
+    def _bundle(self, version: str) -> tuple[str, CatalogBundle]:
+        with self.lock, closing(self.connect()) as db:
+            metadata = db.execute(
+                "SELECT sha256 FROM catalogs WHERE version=?", (version,)
+            ).fetchone()
+            if metadata is None:
+                raise ValueError("The selected application catalog has not been downloaded")
+            key = (version, metadata[0])
+            if key in self._bundles:
+                self._bundles.move_to_end(key)
+                return metadata[0], self._bundles[key][1]
+            payload = db.execute(
+                "SELECT payload FROM catalogs WHERE version=?", (version,)
+            ).fetchone()[0]
+            raw = payload.encode()
+            if len(raw) > MAX_CATALOG_BYTES or hashlib.sha256(raw).hexdigest() != metadata[0]:
+                raise ValueError(
+                    "The stored immutable application catalog failed integrity verification"
+                )
+            bundle = CatalogBundle.model_validate_json(raw)
+            self._bundles[key] = (len(raw), bundle)
+            self._cache_bytes += len(raw)
+            self._trim_cache()
+            return metadata[0], bundle
+
     def bundle(self, version: str) -> CatalogBundle:
-        with closing(self.connect()) as db:
-            row = db.execute("SELECT payload FROM catalogs WHERE version=?", (version,)).fetchone()
-        if row is None:
-            raise ValueError("The selected application catalog has not been downloaded")
-        return CatalogBundle.model_validate_json(row[0])
+        # Callers receive their own model graph; the bounded cache is never exposed.
+        return self._bundle(version)[1].model_copy(deep=True)
 
     def versions(self) -> list[dict[str, Any]]:
         with closing(self.connect()) as db:
@@ -159,25 +205,112 @@ class ApplicationCatalog:
             for row in rows
         ]
 
-    def entries(
+    def _entries(
         self, version: str, capabilities: dict[str, Any], *, language: str = "ru"
     ) -> list[dict[str, Any]]:
-        protocols = {
-            protocol_key(str(item.get("name", ""))): str(item.get("name", ""))
+        with self.lock:
+            digest, bundle = self._bundle(version)
+            capability_key = hashlib.sha256(
+                json.dumps(
+                    {
+                        key: capabilities.get(key)
+                        for key in (
+                            "available",
+                            "enforce",
+                            "allow_over_port_deny",
+                            "license_profile",
+                            "engine",
+                            "protocols",
+                        )
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            key = (version, digest, capability_key, "en" if language == "en" else "ru")
+            if key in self._rows:
+                self._rows.move_to_end(key)
+                return self._rows[key][1]
+            result = self._normalize_entries(bundle, capabilities, language)
+            size = len(json.dumps(result, separators=(",", ":")).encode())
+            if size <= MAX_CACHE_BYTES:
+                self._rows[key] = (size, result)
+                self._cache_bytes += size
+                self._trim_cache()
+            return result
+
+    @staticmethod
+    def _normalize_entries(
+        bundle: CatalogBundle,
+        capabilities: dict[str, Any],
+        language: str,
+    ) -> list[dict[str, Any]]:
+        actual_names = {
+            str(item.get("name", ""))
             for item in capabilities.get("protocols", [])
-            if isinstance(item, dict)
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
         }
+        protocols: dict[str, str | None] = {}
+        for name in actual_names:
+            key = protocol_key(name)
+            protocols[key] = name if key not in protocols or protocols[key] == name else None
+        engine = capabilities.get("engine", {})
+        if not isinstance(engine, dict):
+            engine = {}
+        actual_version = re.match(r"^(\d+)\.(\d+)", str(engine.get("version", "")))
+        full_profile = (
+            capabilities.get("license_profile") in ("not-for-profit", "commercial-license")
+            and engine.get("profile") == capabilities.get("license_profile")
+            and engine.get("restricted_components_enabled") is True
+        )
+        hostname_extraction = bool(
+            capabilities.get("available")
+            and full_profile
+            and engine.get("name") == "ndpi"
+            and ("TLS" in actual_names or "HTTP" in actual_names)
+        )
+        domain_owners = Counter(
+            domain
+            for entry in bundle.entries
+            if entry.kind == "application"
+            for domain in set(entry.domains)
+        )
         result = []
-        for entry in self.bundle(version).entries:
-            mapped = (
-                protocols.get(protocol_key(entry.engine_mapping.symbol))
-                if entry.engine_mapping
-                else None
+        for entry in bundle.entries:
+            mapped = None
+            mapping = entry.engine_mapping
+            if mapping and actual_version and engine.get("name") == mapping.engine:
+                pinned = re.match(r"^(\d+)\.(\d+)", mapping.version)
+                if pinned and pinned.groups() == actual_version.groups():
+                    mapped = (
+                        (mapping.protocol_name if mapping.protocol_name in actual_names else None)
+                        if mapping.protocol_name
+                        else protocols.get(protocol_key(mapping.symbol))
+                    )
+            hostname_supported = bool(
+                entry.kind == "application" and bool(entry.domains) and hostname_extraction
             )
-            observable = bool(entry.observable and mapped and capabilities.get("available"))
-            block = bool(entry.block_validated and observable and capabilities.get("enforce"))
+            hostname_observable = bool(
+                entry.observable
+                and hostname_supported
+                and any(domain_owners[domain] == 1 for domain in entry.domains)
+            )
+            observable = bool(
+                entry.observable
+                and capabilities.get("available")
+                and (mapped or hostname_observable)
+            )
+            block = bool(
+                entry.kind == "application"
+                and entry.block_validated
+                and observable
+                and capabilities.get("enforce")
+            )
             allow = bool(
-                entry.allow_over_port_deny and block and capabilities.get("allow_over_port_deny")
+                entry.allow_over_port_deny
+                and mapped
+                and block
+                and capabilities.get("allow_over_port_deny")
             )
             result.append(
                 {
@@ -187,6 +320,8 @@ class ApplicationCatalog:
                     "name_en": entry.name.en,
                     "protocol_names": [mapped] if mapped else [],
                     "observable": observable,
+                    "hostname_observable": hostname_observable,
+                    "hostname_extraction_supported": hostname_supported,
                     "block_validated": block,
                     "allow_over_port_deny": allow,
                     "capabilities": {
@@ -201,7 +336,7 @@ class ApplicationCatalog:
             public_entry["concrete_ids"] = (
                 public_entry["children"]
                 if public_entry["kind"] == "family"
-                else [public_entry["id"]]
+                else ([public_entry["id"]] if public_entry["kind"] == "application" else [])
             )
             if public_entry["kind"] == "family":
                 public_entry["observable"] = any(
@@ -209,6 +344,11 @@ class ApplicationCatalog:
                 )
                 public_entry["capabilities"]["observable"] = public_entry["observable"]
         return result
+
+    def entries(
+        self, version: str, capabilities: dict[str, Any], *, language: str = "ru"
+    ) -> list[dict[str, Any]]:
+        return copy.deepcopy(self._entries(version, capabilities, language=language))
 
     def page(
         self,
@@ -222,18 +362,23 @@ class ApplicationCatalog:
         if not 0 <= offset <= 10000 or not 1 <= limit <= 200:
             raise ValueError("Invalid catalog pagination")
         predicate = compile_expression(parse_expression(expression, CATALOG_SCHEMA), CATALOG_SCHEMA)
-        entries = self.entries(version, capabilities, language=language)
+        entries = self._entries(version, capabilities, language=language)
         matched = [
             entry
             for entry in entries
             if predicate({**entry, "name": [entry["name_ru"], entry["name_en"]]})
         ]
+        counts = Counter(row["kind"] for row in entries)
         return {
-            "items": matched[offset : offset + limit],
+            "items": copy.deepcopy(matched[offset : offset + limit]),
             "total": len(matched),
             "offset": offset,
             "limit": limit,
             "version": version,
+            "counts_by_kind": {
+                kind: counts[kind]
+                for kind in ("application", "family", "provider", "category", "protocol")
+            },
         }
 
     def import_signed(
@@ -342,7 +487,7 @@ class ApplicationCatalog:
         return {
             "active_version": active,
             "versions": self.versions(),
-            "entries": len(self.bundle(active).entries),
+            "entries": len(self._bundle(active)[1].entries),
             "job": dict(self.job) if self.job else None,
             "sync_configured": bool(self.public_key and self.public_key.is_file()),
         }

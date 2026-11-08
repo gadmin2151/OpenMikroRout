@@ -118,6 +118,31 @@ export const messagesExtra = {
   "Клиент IPv4 / сеть": ["Клиент IPv4 / сеть", "Client IPv4 / network"],
   Распознавание: ["Распознавание", "Classification"],
   "Решение приложения": ["Решение приложения", "Application decision"],
+  "Дублировать правила": ["Дублировать правила", "Duplicate rules"],
+  "IPv4 · захват интерфейсов": [
+    "IPv4 · захват интерфейсов",
+    "IPv4 · interface capture",
+  ],
+  "Протокол DPI вне каталога": [
+    "Протокол DPI вне каталога",
+    "DPI protocol outside the catalog",
+  ],
+  "Не применяется": ["Не применяется", "Not applied"],
+  "Observe пассивно анализирует выбранные интерфейсы и клиентские сети, включая трафик самого роутера. Сетевые правила не применяются.":
+    [
+      "Observe пассивно анализирует выбранные интерфейсы и клиентские сети, включая трафик самого роутера. Сетевые правила не применяются.",
+      "Observe passively inspects the selected interfaces and client networks, including router traffic. No traffic policies are applied.",
+    ],
+  "При отказе обработчика прекращаются только наблюдения. Трафик продолжает обрабатываться обычным Firewall.":
+    [
+      "При отказе обработчика прекращаются только наблюдения. Трафик продолжает обрабатываться обычным Firewall.",
+      "A worker failure only stops observations. Traffic continues through the normal Firewall.",
+    ],
+  "Наблюдение пассивное. В выбранной области виден и трафик самого роутера. Потоки до и после NAT могут отображаться отдельно. Правила приложений не применяются.":
+    [
+      "Наблюдение пассивное. В выбранной области виден и трафик самого роутера. Потоки до и после NAT могут отображаться отдельно. Правила приложений не применяются.",
+      "Observation is passive. The selected scope also includes router traffic. Flows before and after NAT may appear separately. Application rules are not applied.",
+    ],
   "Список источников": ["Список источников", "Source address list"],
   Блокировать: ["Блокировать", "Block"],
   Разрешить: ["Разрешить", "Allow"],
@@ -129,6 +154,28 @@ export const messagesExtra = {
   Наблюдение: ["Наблюдение", "Observe"],
   Применение: ["Применение", "Enforce"],
   Семейство: ["Семейство", "Family"],
+  Семейства: ["Семейства", "Families"],
+  Протоколы: ["Протоколы", "Protocols"],
+  Провайдеры: ["Провайдеры", "Providers"],
+  Категории: ["Категории", "Categories"],
+  "Всего в каталоге": ["Всего в каталоге", "Catalog totals"],
+  Возможности: ["Возможности", "Capabilities"],
+  "Наблюдение доступно": ["Наблюдение доступно", "Observation available"],
+  "Наблюдение недоступно": ["Наблюдение недоступно", "Observation unavailable"],
+  "Основание наблюдения": ["Основание наблюдения", "Observation basis"],
+  "См. дочерние приложения": [
+    "См. дочерние приложения",
+    "See child applications",
+  ],
+  "Протокол DPI и доменные подсказки": [
+    "Протокол DPI и доменные подсказки",
+    "DPI protocol and domain hints",
+  ],
+  "Протокол DPI": ["Протокол DPI", "DPI protocol"],
+  "Имя узла · слабая подсказка": [
+    "Имя узла · слабая подсказка",
+    "Hostname · weak hint",
+  ],
   Провайдер: ["Провайдер", "Provider"],
   Правила: ["Правила", "Rules"],
   Каталог: ["Каталог", "Catalog"],

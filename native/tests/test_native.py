@@ -142,11 +142,106 @@ with tempfile.TemporaryDirectory(prefix="omr-native-test-") as name:
     data = policy()
     config.write_text(json.dumps(data))
     for host in (b"example.org", b"youtube.com"):
-        pcap(capture, packets[:3] + [packet(b"GET / HTTP/1.1\r\nHost: " + host + b"\r\n\r\n")])
+        request = b"GET / HTTP/1.1\r\nHost: " + host + b"\r\n\r\n"
+        pcap(
+            capture,
+            packets[:3]
+            + [
+                packet(request),
+                packet(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+                    reverse=True,
+                    seq=2001,
+                    ack=1001 + len(request),
+                ),
+            ],
+        )
         other = run("replay", "--policy", str(config), "--pcap", str(capture))
         assert other and all(
             item["decision"] in ("fallback", "block") for item in other["items"]
         ), other
+    # Large service catalogs use exact protocol and longest DNS-suffix indexes.
+    # A generic HTTP protocol must not hide the more specific named service.
+    services = policy()
+    services["rules"] = []
+    services["catalog"]["entries"] = [
+        {"id": "protocol.http", "kind": "protocol", "protocol_names": ["HTTP"]},
+        {"id": "app.provider", "domains": ["example.net"]},
+        {"id": "app.service", "domains": ["api.example.net"]},
+        {"id": "app.shared.one", "domains": ["shared.example.org"]},
+        {"id": "app.shared.two", "domains": ["shared.example.org"]},
+        *[
+            {"id": f"app.service.{index}", "domains": [f"service-{index}.example.org"]}
+            for index in range(3500)
+        ],
+    ]
+    config.write_text(json.dumps(services))
+    for host, expected in (
+        (b"api.example.net", "app.service"),
+        (b"sub.api.example.net", "app.service"),
+        (b"other.example.net", "app.provider"),
+        (b"notexample.net", "protocol.http"),
+        (b"shared.example.org", "protocol.http"),
+        (b"service-3499.example.org", "app.service.3499"),
+    ):
+        request = b"GET / HTTP/1.1\r\nHost: " + host + b"\r\n\r\n"
+        pcap(
+            capture,
+            packets[:3]
+            + [
+                packet(request),
+                packet(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+                    reverse=True,
+                    seq=2001,
+                    ack=1001 + len(request),
+                ),
+            ],
+        )
+        named = run("replay", "--policy", str(config), "--pcap", str(capture))
+        assert named and named["items"][0]["application_id"] == expected, (host, named)
+        assert named["items"][0]["decision"] != "allow", named
+        if expected.startswith("app."):
+            assert named["items"][0]["method"] == "hostname", named
+    # A newly visible generic protocol is not a concrete application identity
+    # and must not weaken the administrator's strict unknown-application policy.
+    services["unknown_policy"] = "block"
+    config.write_text(json.dumps(services))
+    request = b"GET / HTTP/1.1\r\nHost: outside.example.com\r\n\r\n"
+    pcap(
+        capture,
+        packets[:3]
+        + [
+            packet(request),
+            packet(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+                reverse=True,
+                seq=2001,
+                ack=1001 + len(request),
+            ),
+        ],
+    )
+    generic = run("replay", "--policy", str(config), "--pcap", str(capture))
+    assert generic and generic["items"][0]["application_id"] == "protocol.http", generic
+    assert generic["items"][0]["decision"] == "block", generic
+    # A client-controlled Host header is weak evidence, not an escape from
+    # strict Unknown blocking, even if it names a catalog service.
+    request = b"GET / HTTP/1.1\r\nHost: api.example.net\r\n\r\n"
+    pcap(capture, packets[:3] + [packet(request)])
+    weak_host = run("replay", "--policy", str(config), "--pcap", str(capture))
+    assert weak_host and weak_host["items"][0]["application_id"] == "app.service", weak_host
+    assert weak_host["items"][0]["method"] == "hostname", weak_host
+    assert weak_host["items"][0]["decision"] == "block", weak_host
+    services["rules"] = [
+        {"id": "weak-allow", "action": "allow", "application_ids": ["app.service"]}
+    ]
+    services["catalog"]["entries"][2]["allow_over_port_deny"] = True
+    config.write_text(json.dumps(services))
+    weak_allow = run("replay", "--policy", str(config), "--pcap", str(capture))
+    assert weak_allow and weak_allow["items"][0]["decision"] == "block", weak_allow
+    services["catalog"]["entries"][0]["allow_over_port_deny"] = True
+    config.write_text(json.dumps(services))
+    run("validate", "--policy", str(config), ok=False)
     # Explicit protocol mapping alone does not grant an allow capability.
     data["catalog"]["entries"][0]["allow_over_port_deny"] = False
     config.write_text(json.dumps(data))
@@ -198,7 +293,7 @@ with tempfile.TemporaryDirectory(prefix="omr-native-test-") as name:
     alias = root / "symlink.json"
     alias.symlink_to(config)
     run("validate", "--policy", str(alias), ok=False)
-    config.write_bytes(b" " * (2 * 1024 * 1024 + 1))
+    config.write_bytes(b" " * (4 * 1024 * 1024 + 1))
     run("validate", "--policy", str(config), ok=False)
 print(
     "Native policy, real nDPI BitTorrent DPI, allow/block, "

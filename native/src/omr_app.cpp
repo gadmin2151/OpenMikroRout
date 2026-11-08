@@ -21,6 +21,7 @@
 #include <libnetfilter_queue/libnetfilter_queue.h>
 #include <linux/audit.h>
 #include <linux/filter.h>
+#include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter/nfnetlink_conntrack.h>
@@ -53,7 +54,7 @@
 
 namespace omr {
 constexpr uint32_t OWN_MASK = 0x00ffffff, VALID = 0x40, PENDING = 0x80;
-constexpr size_t MAX_POLICY = 2 * 1024 * 1024, MAX_PACKET = 65535,
+constexpr size_t MAX_POLICY = 4 * 1024 * 1024, MAX_PACKET = 65535,
                  MAX_FLOWS = 4096;
 constexpr uint32_t IPC_MAGIC = 0x4f4d5231;
 volatile sig_atomic_t stopping = 0;
@@ -220,7 +221,7 @@ std::vector<Network> networks(json_object *object, const char *name) {
 struct App {
   std::string id;
   std::vector<std::string> names, domains;
-  bool allow = false;
+  bool allow = false, generic = false;
 };
 struct Rule {
   std::string id, action;
@@ -238,6 +239,7 @@ struct Policy {
   std::vector<std::string> interfaces;
   std::vector<Network> scopes;
   std::vector<App> apps;
+  std::unordered_map<std::string, size_t> protocol_index, domain_index;
   std::vector<Rule> rules;
   explicit Policy(json_object *root) {
     if (number(root, "schema", 0, 1, 1) != 1)
@@ -297,9 +299,9 @@ struct Policy {
     auto *catalog = field(root, "catalog"),
          *entries = field(catalog, "entries");
     if (!entries || !json_object_is_type(entries, json_type_array) ||
-        json_object_array_length(entries) > 2048)
+        json_object_array_length(entries) > 4096)
       throw std::runtime_error("Invalid application catalog");
-    std::set<std::string> ids;
+    std::set<std::string> ids, generic_ids;
     for (size_t i = 0; i < json_object_array_length(entries); ++i) {
       auto *entry = json_object_array_get_idx(entries, i);
       App app;
@@ -309,6 +311,15 @@ struct Policy {
       app.names = strings(entry, "protocol_names", 32);
       app.domains = strings(entry, "domains", 4096);
       app.allow = boolean(entry, "allow_over_port_deny");
+      const auto kind = text(entry, "kind", "application");
+      if (kind != "application" && kind != "protocol")
+        throw std::runtime_error("Invalid runtime application kind");
+      app.generic = kind == "protocol";
+      if (app.generic)
+        generic_ids.insert(app.id);
+      if (app.generic && app.allow)
+        throw std::runtime_error(
+            "Generic protocols cannot grant a port exception");
       for (auto &name : app.names)
         name = normalize(name);
       for (auto &domain : app.domains) {
@@ -321,6 +332,22 @@ struct Policy {
           throw std::runtime_error("Invalid literal catalog domain");
       }
       apps.push_back(std::move(app));
+    }
+    // Build once, outside the packet path. Conflicting domain ownership is
+    // deliberately unclassified instead of attributing a shared CDN to the
+    // first application in a large catalog.
+    for (size_t i = 0; i < apps.size(); ++i) {
+      for (const auto &name : apps[i].names) {
+        auto previous = protocol_index.find(name);
+        if (previous == protocol_index.end() ||
+            (apps[previous->second].generic && !apps[i].generic))
+          protocol_index[name] = i;
+      }
+      for (const auto &domain : apps[i].domains) {
+        auto [previous, inserted] = domain_index.emplace(domain, i);
+        if (!inserted && previous->second != i)
+          previous->second = SIZE_MAX;
+      }
     }
     auto *items = field(root, "rules");
     if (!items || !json_object_is_type(items, json_type_array) ||
@@ -339,7 +366,7 @@ struct Policy {
       if (rule.apps.empty())
         throw std::runtime_error("Empty application match");
       for (const auto &id : rule.apps)
-        if (!ids.count(id))
+        if (!ids.count(id) || generic_ids.count(id))
           throw std::runtime_error("Unknown catalog application");
       rule.inputs = strings(item, "in_interfaces", 64);
       rule.outputs = strings(item, "out_interfaces", 64);
@@ -351,6 +378,29 @@ struct Policy {
       rule.destinations = networks(item, "dst_addresses");
       rules.push_back(std::move(rule));
     }
+  }
+  const App *protocol(const std::string &name) const {
+    auto found = protocol_index.find(name);
+    return found == protocol_index.end() ? nullptr : &apps[found->second];
+  }
+  const App *hostname(std::string host) const {
+    std::transform(host.begin(), host.end(), host.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    if (!host.empty() && host.back() == '.')
+      host.pop_back();
+    // Longest suffix wins, with a DNS-label boundary. An ambiguous exact
+    // suffix does not fall back to a broader provider/category attribution.
+    while (!host.empty()) {
+      auto found = domain_index.find(host);
+      if (found != domain_index.end())
+        return found->second == SIZE_MAX ? nullptr : &apps[found->second];
+      auto dot = host.find('.');
+      if (dot == std::string::npos)
+        break;
+      host.erase(0, dot + 1);
+    }
+    return nullptr;
   }
 };
 struct Packet {
@@ -851,7 +901,8 @@ struct Flow {
   std::string input, output, app,
       method = "unknown", reason = "classification_pending",
       classification = "pending", decision = "fallback", rule_id, protocol_name;
-  bool pending = true, strong = false, failed = false, probe_viable = true;
+  bool pending = true, strong = false, failed = false, probe_viable = true,
+       generic = false;
   uint32_t profile = 0;
 };
 class Manager {
@@ -912,12 +963,14 @@ class Manager {
       auto app = std::find_if(
           policy_.apps.begin(), policy_.apps.end(),
           [&flow](const App &value) { return value.id == flow.app; });
-      return flow.strong && app != policy_.apps.end() && app->allow ? 2 : 0;
+      if (flow.strong && app != policy_.apps.end() && app->allow)
+        return 2;
+      return policy_.unknown_policy == "block" ? 3 : 0;
     }
     return !flow.pending &&
                    (flow.failed ? policy_.failure_policy
                                 : policy_.unknown_policy) == "block" &&
-                   flow.app.empty()
+                   (flow.app.empty() || flow.generic || !flow.strong)
                ? 3
                : 0;
   }
@@ -1062,13 +1115,7 @@ public:
                                         policy_.verdict_ms);
           flow.protocol_name = result.name.data();
           std::string normalized = normalize(flow.protocol_name);
-          const App *found = nullptr;
-          for (const auto &app : policy_.apps)
-            if (std::find(app.names.begin(), app.names.end(), normalized) !=
-                app.names.end()) {
-              found = &app;
-              break;
-            }
+          const App *found = policy_.protocol(normalized);
           // nDPI can know the transport/application with DPI confidence while
           // remaining PARTIAL to collect metadata or recognize a sub-app. Such
           // traffic must stop receiving the temporary port-denial exception as
@@ -1079,27 +1126,18 @@ public:
               (!found || !found->allow))
             flow.probe_viable = false;
           bool domain_only = false;
-          if (!found && result.hostname[0]) {
-            std::string host = result.hostname.data();
-            for (const auto &app : policy_.apps) {
-              for (const auto &domain : app.domains) {
-                if (host == domain ||
-                    (host.size() > domain.size() &&
-                     host.compare(host.size() - domain.size(), domain.size(),
-                                  domain) == 0 &&
-                     host[host.size() - domain.size() - 1] == '.')) {
-                  found = &app;
-                  domain_only = true;
-                  break;
-                }
-              }
-              if (found)
-                break;
+          if ((!found || found->generic) && result.hostname[0]) {
+            if (const auto *service =
+                    policy_.hostname(result.hostname.data())) {
+              found = service;
+              domain_only = true;
             }
           }
           if (found &&
-              (result.final || result.confidence == NDPI_CONFIDENCE_DPI)) {
+              (result.final || result.confidence == NDPI_CONFIDENCE_DPI) &&
+              (!found->generic || result.final || domain_only)) {
             flow.app = found->id;
+            flow.generic = found->generic;
             flow.strong = !domain_only && !result.hostname_evidence &&
                           result.confidence == NDPI_CONFIDENCE_DPI;
             flow.method =
@@ -1208,7 +1246,8 @@ public:
       add(item, "rule_id", flow.rule_id);
       add(item, "protocol_name", flow.protocol_name);
       add(item, "counters_complete", false);
-      add(item, "counter_source", "classification");
+      add(item, "counter_source",
+          policy_.mode == "observe" ? "capture" : "classification");
       add(item, "interface_basis",
           policy_.mode == "observe" ? "capture" : "netfilter");
       add(item, "packets", flow.packets);
@@ -1522,12 +1561,16 @@ void observe(const Policy &policy, Manager &manager, StateWriter &writer) {
       unsigned index = if_nametoindex(name.c_str());
       if (!index)
         throw std::runtime_error("Scoped observation interface is missing");
-      int fd = socket(AF_PACKET, SOCK_DGRAM | SOCK_CLOEXEC, htons(0x0800));
+      // Outgoing packets are delivered to ETH_P_ALL taps, not
+      // EtherType-specific receive handlers. SOCK_DGRAM keeps the network
+      // header at byte zero; parse_packet below admits only valid IPv4 TCP/UDP
+      // in the explicit scope.
+      int fd = socket(AF_PACKET, SOCK_DGRAM | SOCK_CLOEXEC, htons(ETH_P_ALL));
       if (fd < 0)
         throw std::runtime_error("Passive observation requires CAP_NET_RAW");
       sockaddr_ll bind_address{};
       bind_address.sll_family = AF_PACKET;
-      bind_address.sll_protocol = htons(0x0800);
+      bind_address.sll_protocol = htons(ETH_P_ALL);
       bind_address.sll_ifindex = static_cast<int>(index);
       if (bind(fd, reinterpret_cast<sockaddr *>(&bind_address),
                sizeof(bind_address))) {
