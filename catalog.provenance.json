@@ -1,0 +1,383 @@
+{
+  "capabilities_promoted_by_import": false,
+  "catalog_sha256": "5603af1139ed71d6851e1f58dd0891bc92c92e2964688e257d936fb55cc8ef0e",
+  "domain_hints": {
+    "applications": {
+      "app.bittorrent": {
+        "omitted_above_limit": 0,
+        "provider_refs": [],
+        "retained_domains": 0
+      },
+      "app.discord": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "discord"
+        ],
+        "retained_domains": 26
+      },
+      "app.discord.calls": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "discord"
+        ],
+        "retained_domains": 26
+      },
+      "app.discord.general": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "discord"
+        ],
+        "retained_domains": 26
+      },
+      "app.facebook": {
+        "omitted_above_limit": 137,
+        "provider_refs": [
+          "facebook"
+        ],
+        "retained_domains": 256
+      },
+      "app.facebook.main": {
+        "omitted_above_limit": 137,
+        "provider_refs": [
+          "facebook"
+        ],
+        "retained_domains": 256
+      },
+      "app.github": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "github"
+        ],
+        "retained_domains": 31
+      },
+      "app.github.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "github"
+        ],
+        "retained_domains": 31
+      },
+      "app.instagram": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "instagram"
+        ],
+        "retained_domains": 72
+      },
+      "app.instagram.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "instagram"
+        ],
+        "retained_domains": 72
+      },
+      "app.netflix": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "netflix"
+        ],
+        "retained_domains": 24
+      },
+      "app.netflix.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "netflix"
+        ],
+        "retained_domains": 24
+      },
+      "app.signal": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "signal"
+        ],
+        "retained_domains": 8
+      },
+      "app.signal.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "signal"
+        ],
+        "retained_domains": 8
+      },
+      "app.spotify": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "spotify"
+        ],
+        "retained_domains": 18
+      },
+      "app.spotify.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "spotify"
+        ],
+        "retained_domains": 18
+      },
+      "app.steam": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "steam"
+        ],
+        "retained_domains": 28
+      },
+      "app.steam.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "steam"
+        ],
+        "retained_domains": 28
+      },
+      "app.teams": {
+        "omitted_above_limit": 0,
+        "provider_refs": [],
+        "retained_domains": 0
+      },
+      "app.teams.calls": {
+        "omitted_above_limit": 0,
+        "provider_refs": [],
+        "retained_domains": 0
+      },
+      "app.teams.general": {
+        "omitted_above_limit": 0,
+        "provider_refs": [],
+        "retained_domains": 0
+      },
+      "app.telegram": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "telegram"
+        ],
+        "retained_domains": 21
+      },
+      "app.telegram.calls": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "telegram"
+        ],
+        "retained_domains": 21
+      },
+      "app.telegram.general": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "telegram"
+        ],
+        "retained_domains": 21
+      },
+      "app.tiktok": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "tiktok"
+        ],
+        "retained_domains": 0
+      },
+      "app.tiktok.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "tiktok"
+        ],
+        "retained_domains": 0
+      },
+      "app.twitch": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "twitch"
+        ],
+        "retained_domains": 8
+      },
+      "app.twitch.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "twitch"
+        ],
+        "retained_domains": 8
+      },
+      "app.whatsapp": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "whatsapp"
+        ],
+        "retained_domains": 11
+      },
+      "app.whatsapp.calls": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "whatsapp"
+        ],
+        "retained_domains": 11
+      },
+      "app.whatsapp.files": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "whatsapp"
+        ],
+        "retained_domains": 11
+      },
+      "app.whatsapp.general": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "whatsapp"
+        ],
+        "retained_domains": 11
+      },
+      "app.youtube": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "youtube"
+        ],
+        "retained_domains": 174
+      },
+      "app.youtube.kids": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "youtube"
+        ],
+        "retained_domains": 174
+      },
+      "app.youtube.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "youtube"
+        ],
+        "retained_domains": 174
+      },
+      "app.youtube.upload": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "youtube"
+        ],
+        "retained_domains": 174
+      },
+      "app.zoom": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "zoom"
+        ],
+        "retained_domains": 3
+      },
+      "app.zoom.main": {
+        "omitted_above_limit": 0,
+        "provider_refs": [
+          "zoom"
+        ],
+        "retained_domains": 3
+      }
+    },
+    "commit": "e8d7a10a15bf662c927a40a3aa680bae86379608",
+    "files": {
+      "discord": {
+        "bytes": 528,
+        "git_blob_sha1": "ac3be1191519a0f54800dc077f7c5a76d44e4be4",
+        "path": "data/discord",
+        "sha256": "6e57668fe3c87895036e1b35ce7110ea1872c41850e1e92258dc20517e3d6dc5"
+      },
+      "facebook": {
+        "bytes": 6391,
+        "git_blob_sha1": "5543283102d256c62801e9aeefab9f8028346ffa",
+        "path": "data/facebook",
+        "sha256": "bd860c04a95c82afa1aa86c166a50eb561a952c6915257f941fa6d58a0431da9"
+      },
+      "github": {
+        "bytes": 1867,
+        "git_blob_sha1": "4047e0cd3ce653b882a74e9e8b8af0bcce633bf5",
+        "path": "data/github",
+        "sha256": "549a8bf61fd4a673a59e0a0f8794e66e5228d6a8bc759c6f4888a287e728ccc2"
+      },
+      "github-copilot": {
+        "bytes": 359,
+        "git_blob_sha1": "6435f5a70241da0ed85706219fb08373e20ca9c4",
+        "path": "data/github-copilot",
+        "sha256": "bd8f1a7a846f1111710c31b13b45262f35220a00e8dfaf4c5830dc618ec51748"
+      },
+      "instagram": {
+        "bytes": 1326,
+        "git_blob_sha1": "056081f388daaf3cd7cedcc7b12db499284fc62d",
+        "path": "data/instagram",
+        "sha256": "e392526b75e27218f874590d0db99b5e009fb0b7679095f0eac48a4ee3fb6413"
+      },
+      "netflix": {
+        "bytes": 653,
+        "git_blob_sha1": "65af23034d79a097c546a8b7766ce13a5b855498",
+        "path": "data/netflix",
+        "sha256": "fbcf90283b3c3482e2178d450793219f9592ea60b2dfa3d16a7a9d40074aa284"
+      },
+      "npmjs": {
+        "bytes": 34,
+        "git_blob_sha1": "2f37732ea053f245ae8b7354ad55330c3d9d9a3e",
+        "path": "data/npmjs",
+        "sha256": "674294756c3e5d7f20e274f7190f28b55eb373122513d0ab5e439e29dd03be53"
+      },
+      "signal": {
+        "bytes": 104,
+        "git_blob_sha1": "641c5c15335892889eb89f3684ced59dfb32bb60",
+        "path": "data/signal",
+        "sha256": "2f36d2f4841bbb2c255b365dbbe1690fab8b6a721341d4b1660afb90f432cd01"
+      },
+      "spotify": {
+        "bytes": 671,
+        "git_blob_sha1": "e39114062f95c68035a44a25965649c93a89a831",
+        "path": "data/spotify",
+        "sha256": "02c79e71b22805e1dafa156c9370760bd7e6295af30eaf1c9004a1be2b35065b"
+      },
+      "steam": {
+        "bytes": 1688,
+        "git_blob_sha1": "391a352758ab28776d3d6f449e09123d6bd163a3",
+        "path": "data/steam",
+        "sha256": "47b8154be0745a2411d8e0fe981677e874995cc30d195ba36cc7d84237f5d743"
+      },
+      "telegram": {
+        "bytes": 252,
+        "git_blob_sha1": "aed880e37775c67556c4975ffebaf6c6681862bf",
+        "path": "data/telegram",
+        "sha256": "24a2d026dbf3a09a8ca893420a40adbad70328978df0100d9c63abecdbf01b5d"
+      },
+      "tiktok": {
+        "bytes": 1007,
+        "git_blob_sha1": "ce98eb815860bbda06ea9664ddc0305e9e7f0696",
+        "path": "data/tiktok",
+        "sha256": "1547d5be3241deb425bc195d04c4e1c00c0c46e1bf570d0e1b5eebd553ec030e"
+      },
+      "twitch": {
+        "bytes": 1039,
+        "git_blob_sha1": "293bf05ff16354e77b5a7562176052db2a733595",
+        "path": "data/twitch",
+        "sha256": "cf62540f2205459c26f4b39478dff141ee15b4c3d9f9bc6fc34a15a7545306f4"
+      },
+      "whatsapp": {
+        "bytes": 303,
+        "git_blob_sha1": "d6d1bad628a33940d45a4f225f636499e48fca8b",
+        "path": "data/whatsapp",
+        "sha256": "62def09a533350c9e5259d1d498ed1da1689ff174f436f51c065260f21f037d2"
+      },
+      "youtube": {
+        "bytes": 2444,
+        "git_blob_sha1": "77cb29fb260f4b1810759de8df0f4ceb9b83b100",
+        "path": "data/youtube",
+        "sha256": "9ffb657176fdffed567953749c137bb3d8a216ce4e839b3831b626c752902213"
+      },
+      "zoom": {
+        "bytes": 29,
+        "git_blob_sha1": "ee282692b9753a052e35bc2fc818b1d8863f74cc",
+        "path": "data/zoom",
+        "sha256": "bf9535bd84985865b4f8a8768ff9b6ec916b28e364fa157cfe30ee1ee6bb06e1"
+      }
+    },
+    "inventory_sha256": "471934fb8e2fa36e95c8d63740f246f88221395650f01180326e452f2333cd41",
+    "license": "MIT",
+    "license_notice": "MIT License\n\nCopyright (c) 2018-2019 V2Ray\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+    "repository": "https://github.com/v2fly/domain-list-community",
+    "skipped_rows": {
+      "full": 85,
+      "invalid_domain": 1,
+      "qualified_or_whitespace": 71,
+      "regexp": 4
+    }
+  },
+  "entries": 38,
+  "format": 1,
+  "input_sha256": "a8eb296b12aca88e813b167eef8e507b24e9fc515bc062dc908cd4d11a85bacd",
+  "purpose": "OpenMikroRout application catalog provenance",
+  "serial": 2026110802,
+  "signing_public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXe6vU4TVBRdp7gYokX1bgp0BSs1xi1IdMdVdELLbjlU=\n-----END PUBLIC KEY-----\n",
+  "signing_public_key_sha256": "beac863b5f755cf98a51005baadb0caa75e344b7f801eb2427d3989a6cd6ab1c",
+  "version": "2026.11.08.2"
+}
