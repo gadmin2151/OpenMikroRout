@@ -16,12 +16,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Build pinned nDPI 6 and test the production classifier
-        run: docker build --file native/Dockerfile.build --target verification --tag openmikrorout-native:ci .
+        run: docker build --file native/Dockerfile.build --target verification --build-arg OMR_SOURCE_COMMIT="$GITHUB_SHA" --tag openmikrorout-native:ci .
       - name: Verify first-packet metadata, priority, and failure recovery in disposable namespaces
         run: |
           docker run --rm --network none --privileged --memory 768m --cpus 2 \
             -e OMR_RUN_NATIVE_KERNEL_TESTS=1 openmikrorout-native:ci \
-            python native/tests/test_kernel.py --binary /source/native/build/omr-app-supervisor \
+            python native/tests/test_kernel.py --binary /verified/app/native/bin/omr-app-supervisor \
             --backend-quarantine --json
   tests:
     runs-on: ubuntu-latest

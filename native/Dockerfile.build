@@ -20,7 +20,8 @@ ENV PKG_CONFIG_PATH=/opt/omr-native/lib/pkgconfig
 ENV LD_LIBRARY_PATH=/opt/omr-native/lib
 
 FROM engine AS verification
-RUN apt-get update && apt-get install -y --no-install-recommends python3-venv && \
+ARG OMR_SOURCE_COMMIT
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv procps && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /source
 COPY requirements-dev.lock /source/requirements-dev.lock
@@ -31,6 +32,9 @@ ENV PYTHONPATH=/source
 COPY app/ /source/app/
 COPY native/ /source/native/
 RUN make -C native -B && make -C native check
+RUN python3 native/build_bundle.py --binary native/build/omr-app-supervisor \
+    --ndpi-source /build/ndpi --ndpi-prefix /opt/omr-native \
+    --source-commit "$OMR_SOURCE_COMMIT" --output /verified/app/native
 
 FROM engine AS companion
 ARG OMR_SOURCE_COMMIT
