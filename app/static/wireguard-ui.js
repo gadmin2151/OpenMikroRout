@@ -1,4 +1,5 @@
 import { t, html, locale } from "./i18n.js";
+import { newUuid } from "./uuid.js";
 import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
 import { proofForm, proof, clearProof } from "./security-ui.js?v=1";
 import { interfaceNames } from "./router-pages.js?v=10";
@@ -589,7 +590,7 @@ export async function handleWireGuardAction(button, ctx) {
             });
           const item = {
             ...(editing.item || {
-              id: crypto.randomUUID(),
+              id: newUuid(),
               private_key_id: key.id,
               public_key: key.public_key,
             }),

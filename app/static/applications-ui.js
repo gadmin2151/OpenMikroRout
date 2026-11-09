@@ -2,6 +2,7 @@ import { html, t, locale, getLanguage } from "./i18n.js";
 import { checkboxSelect } from "./checkbox-select.js";
 import { assertDraftRevision } from "./draft-guards.js";
 import { reorderRules } from "./rule-order.js";
+import { newUuid } from "./uuid.js";
 import { addressListChoices } from "./protection-ui.js?v=3";
 import { queryLimits } from "./query-expression.js";
 import {
@@ -828,7 +829,7 @@ export async function refreshApplications(ctx, { force = false } = {}) {
 }
 function blankRule() {
   return {
-    id: crypto.randomUUID(),
+    id: newUuid(),
     name: "",
     enabled: true,
     application_ids: [],
@@ -1357,7 +1358,7 @@ export async function handleApplicationsAction(control, ctx) {
       updated.push(
         ...chosen.map((rule) => ({
           ...structuredClone(rule),
-          id: crypto.randomUUID(),
+          id: newUuid(),
           name: `${rule.name.slice(0, 70)} ${t("копия")}`,
         })),
       );

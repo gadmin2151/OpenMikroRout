@@ -1,4 +1,5 @@
 import { html, t, locale } from "./i18n.js";
+import { newUuid } from "./uuid.js";
 import { checkboxSelect } from "./checkbox-select.js";
 import { interfaceNames } from "./router-pages.js?v=13";
 import {
@@ -651,7 +652,7 @@ export async function handleDiscoveryAction(button, ctx) {
     const config = structuredClone(ctx.state.config);
     config.filter_rules.unshift(
       ...["input", "forward"].map((chain) => ({
-        id: crypto.randomUUID(),
+        id: newUuid(),
         name: `Block ${button.dataset.ip}`,
         enabled: true,
         chain,

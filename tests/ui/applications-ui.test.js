@@ -582,6 +582,41 @@ test("rule mutations save only the shared draft and preserve other configuration
   );
 });
 
+test("HTTP browsers can add and duplicate application rules without randomUUID", async (t) => {
+  const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  t.after(() => {
+    if (originalCrypto)
+      Object.defineProperty(globalThis, "crypto", originalCrypto);
+    else delete globalThis.crypto;
+  });
+  let fill = 0;
+  Object.defineProperty(globalThis, "crypto", {
+    configurable: true,
+    value: { getRandomValues: (bytes) => bytes.fill(++fill) },
+  });
+
+  const f = fixture();
+  await handleApplicationsAction(action("apps-rule-new"), f.ctx);
+  handleApplicationsInput(
+    { target: { dataset: { appPicker: "app.chat.messages" }, checked: true } },
+    f.ctx,
+  );
+  f.form.fields.name = "HTTP rule";
+  await handleApplicationsAction(action("apps-rule-save"), f.ctx);
+  const [original] = f.saves[0].applications.rules;
+  selectRule(f, original.id);
+  await handleApplicationsAction(action("apps-rule-copy"), f.ctx);
+
+  const uuidV4 =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const [retained, copy] = f.saves[1].applications.rules;
+  assert.match(original.id, uuidV4);
+  assert.match(copy.id, uuidV4);
+  assert.notEqual(copy.id, original.id);
+  assert.deepEqual(retained, original);
+  assert.deepEqual(copy, { ...original, id: copy.id, name: "HTTP rule копия" });
+});
+
 test("settings opt in only eligible ordinary port denies and preserve protected rules", async () => {
   const f = fixture();
   f.state.config.filter_rules = [

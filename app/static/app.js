@@ -1,4 +1,5 @@
 import { t, html, setLanguage, locale } from "./i18n.js";
+import { newUuid } from "./uuid.js";
 import { installCheckboxSelectEvents } from "./checkbox-select.js";
 import { assertDraftRevision } from "./draft-guards.js";
 import {
@@ -920,7 +921,7 @@ function dialogFrame(
   applyAccessControls();
 }
 const defaultRule = () => ({
-  id: crypto.randomUUID(),
+  id: newUuid(),
   name: "",
   enabled: true,
   chain: "dstnat",
@@ -962,7 +963,7 @@ function openEditor(id, duplicate = false) {
   const found = state.config.rules.find((r) => r.id === id);
   draft = found ? structuredClone(found) : defaultRule();
   if (duplicate) {
-    draft.id = crypto.randomUUID();
+    draft.id = newUuid();
     draft.name += " (copy)";
   }
   editorTab = "general";
@@ -1118,7 +1119,7 @@ function openList(id) {
   }
   draftRevision = state.revision;
   const list = state.config.address_lists.find((l) => l.id === id) || {
-    id: crypto.randomUUID(),
+    id: newUuid(),
     name: "",
     addresses: [],
     comment: "",
@@ -1628,7 +1629,7 @@ async function handleAction(button) {
   }
   if (action === "editor-copy") {
     collectRule();
-    draft.id = crypto.randomUUID();
+    draft.id = newUuid();
     draft.name += " (copy)";
     editorTab = "general";
     renderEditor();

@@ -1,4 +1,5 @@
 import { t, html, locale } from "./i18n.js";
+import { newUuid } from "./uuid.js";
 import { checkboxSelect } from "./checkbox-select.js";
 import { addressListChoices } from "./protection-ui.js?v=3";
 import { assertDraftRevision, assertLinkRemoval } from "./draft-guards.js";
@@ -672,7 +673,7 @@ export function renderRouterView(view, ctx) {
 
 function newItem(ctx, kind) {
   const schema = itemSchemas[kind];
-  const item = { id: crypto.randomUUID() };
+  const item = { id: newUuid() };
   if (kind === "filter") {
     item.protection = defaultRuleProtection();
     item.negate = [];
@@ -962,7 +963,7 @@ export async function handleRouterAction(button, ctx) {
       ctx.dialog.querySelector("#router-form"),
       editing.item,
     );
-    item.id = crypto.randomUUID();
+    item.id = newUuid();
     if (item.name)
       item.name =
         item.name.slice(
